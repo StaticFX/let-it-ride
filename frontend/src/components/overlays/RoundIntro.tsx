@@ -10,10 +10,13 @@ interface RoundIntroProps {
 export function RoundIntro({ round, startingPlayerName, onDone }: RoundIntroProps) {
   const [phase, setPhase] = useState<'in' | 'hold' | 'out'>('in')
 
+  // The server holds the first card of the round for ROUND_INTRO_MS (2600ms).
+  // Finishing comfortably inside that is what keeps cards from appearing behind
+  // this card and being revealed all at once when it lifts.
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase('hold'), 100)
-    const t2 = setTimeout(() => setPhase('out'), 1800)
-    const t3 = setTimeout(onDone, 2400)
+    const t1 = setTimeout(() => setPhase('hold'), 80)
+    const t2 = setTimeout(() => setPhase('out'), 1500)
+    const t3 = setTimeout(onDone, 2000)
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
   }, [onDone])
 

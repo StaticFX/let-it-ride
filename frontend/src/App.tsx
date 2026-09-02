@@ -8,9 +8,19 @@ import { GameOver } from './components/pages/GameOver'
 import { EscapeMenu } from './components/overlays/EscapeMenu'
 import { DisconnectOverlay } from './components/overlays/DisconnectOverlay'
 import { resetDealtCards } from './components/cards/dealtCards'
+import { BUST_REVEAL_MS, BUST_SCATTER_MS } from './hooks/useGame'
+import { unlockAudio } from './audio/sfx'
 
-/** Give the bust and flip-7 animations time to land before the summary takes over. */
-const ROUND_END_DELAY_MS = { flip7: 3000, bust: 1400, none: 0 }
+/**
+ * Give the bust and flip-7 animations time to land before the summary takes
+ * over. A bust plays in two beats — call out the pair, then scatter the hand —
+ * so it needs the whole of both.
+ */
+const ROUND_END_DELAY_MS = {
+  flip7: 3000,
+  bust: BUST_REVEAL_MS + BUST_SCATTER_MS + 300,
+  none: 0,
+}
 
 function App() {
   const phase = useGameStore((s) => s.state?.phase) ?? 'LOBBY'
@@ -20,6 +30,18 @@ function App() {
 
   useEffect(() => {
     fetchCatalog().catch(() => setCatalogError('could not reach the table — is the server up?'))
+  }, [])
+
+  // Browsers will not start an AudioContext until the page has been touched,
+  // so the samples are decoded on whatever the first interaction happens to be.
+  useEffect(() => {
+    const unlock = () => unlockAudio()
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
   }, [])
 
   // Hold on the board for a beat so the last animation of the round plays out.

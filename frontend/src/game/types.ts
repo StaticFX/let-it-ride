@@ -69,11 +69,15 @@ export type GamePhase = 'LOBBY' | 'PLAYING' | 'ROUND_END' | 'GAME_END'
 export interface PendingActionView {
   cardDefId: string
   playerId: string
+  /** The only seats this card may be pointed at. */
+  validTargets: string[]
 }
 
 export interface ForcedDraws {
   playerId: string
   remaining: number
+  /** Which card queued these, e.g. 'slots'. */
+  source?: string
 }
 
 export interface GameStateView {
@@ -103,7 +107,7 @@ export interface GameStateView {
 export type GameEvent =
   | { type: 'draw'; playerId: string; card: Card }
   | { type: 'passive'; playerId: string; card: Card }
-  | { type: 'bust'; playerId: string; reason: string }
+  | { type: 'bust'; playerId: string; reason: string; card?: Card; matched?: Card }
   | { type: 'stay'; playerId: string }
   | { type: 'skip'; playerId: string }
   | { type: 'discard'; playerId: string; card: Card }
@@ -111,8 +115,9 @@ export type GameEvent =
   | { type: 'swap'; fromPlayerId: string; toPlayerId: string }
   | { type: 'freeze'; playerId: string }
   | { type: 'actionPlayed'; cardDefId: string; fromPlayerId: string; targetPlayerId: string }
-  | { type: 'secondChance'; playerId: string; card: Card }
+  | { type: 'secondChance'; playerId: string; card: Card; matched?: Card }
   | { type: 'secondChancePassed'; fromPlayerId: string; toPlayerId: string }
+  | { type: 'fizzled'; cardDefId: string; playerId: string }
   | { type: 'flip7'; playerId: string }
   | { type: 'doubleOrNothing'; playerId: string; won: boolean }
   | { type: 'slots'; playerId: string }

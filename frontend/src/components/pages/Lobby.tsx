@@ -8,6 +8,7 @@ import { SketchButton } from '../ui/Button'
 import { LobbyConfig } from './LobbyConfig'
 import { RulesPage } from '../rules/RulesPage'
 import { Countdown } from '../overlays/Countdown'
+import { SoundToggle } from '../ui/SoundToggle'
 
 const NAME_KEY = 'let-it-ride:name'
 const DEFAULT_BOTS = 3
@@ -198,6 +199,10 @@ export function Lobby() {
               play vs bots
             </SketchButton>
             <SketchButton variant="ghost" onClick={() => setShowRules(true)}>rules</SketchButton>
+          </div>
+
+          <div className="mt-6 flex justify-center">
+            <SoundToggle />
           </div>
         </div>
       </div>

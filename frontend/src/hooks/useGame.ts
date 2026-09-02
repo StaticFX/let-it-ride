@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGameStore, findAction } from '../state/gameStore'
 import { send } from '../net/client'
-import type { ActionCardInfo, GameEvent, Player } from '../game/types'
+import { play } from '../audio/sfx'
+import type { ActionCardInfo, Card, GameEvent, Player } from '../game/types'
 
 // ─── Animations ───
 
 export type GameAnimation =
   | { type: 'screenShake'; id: string }
-  | { type: 'bust'; id: string; playerId: string }
   | { type: 'impact'; id: string; targetId: string }
+  | { type: 'freeze'; id: string; playerId: string }
+  | { type: 'drawThree'; id: string; playerId: string }
   | { type: 'flip7'; id: string; playerId: string }
-  | { type: 'slots'; id: string }
   | { type: 'timeout'; id: string; playerId: string }
+  | { type: 'fizzled'; id: string; playerId: string; cardDefId: string }
+  | { type: 'secondChance'; id: string; playerId: string }
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
@@ -20,11 +23,41 @@ type AnimationSpec = DistributiveOmit<GameAnimation, 'id'>
 /** How long each animation stays on screen before it clears itself. */
 const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
   screenShake: 600,
-  bust: 1600,
   impact: 900,
+  freeze: 1800,
+  drawThree: 1400,
   flip7: 3200,
-  slots: 4800,
   timeout: 1500,
+  fizzled: 1600,
+  secondChance: 1800,
+}
+
+/**
+ * A bust plays in two beats: first the pair that clashed is called out, then the
+ * hand scatters. `card` and `matched` come straight from the server, so the
+ * table can point at the exact two cards rather than just flashing red.
+ */
+export interface BustAnimation {
+  playerId: string
+  cardId?: string
+  matchedId?: string
+  phase: 'reveal' | 'scatter'
+}
+
+export const BUST_REVEAL_MS = 1100
+export const BUST_SCATTER_MS = 1000
+
+/** A card visibly moving from one seat to another. */
+export interface StealAnimation {
+  fromPlayerId: string
+  toPlayerId: string
+  card: Card
+}
+
+/** The slot machine spins until the card it landed on actually arrives. */
+export interface SlotsAnimation {
+  playerId: string
+  card: Card | null
 }
 
 export interface TurnTimer {
@@ -36,8 +69,6 @@ export interface TurnTimer {
 export function useGame() {
   const state = useGameStore((s) => s.state)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
-  const events = useGameStore((s) => s.events)
-  const eventSeq = useGameStore((s) => s.eventSeq)
   const catalog = useGameStore((s) => s.catalog)
 
   const players: Player[] = state?.players ?? []
@@ -51,12 +82,14 @@ export function useGame() {
   const currentPlayer = players[turnIndex]
 
   // ═══════════════════════════════════════════
-  // Animation queue — everything is driven by server events
+  // Animation state — everything here is driven by server events
   // ═══════════════════════════════════════════
 
   const [animations, setAnimations] = useState<GameAnimation[]>([])
+  const [bust, setBust] = useState<BustAnimation | null>(null)
+  const [steal, setSteal] = useState<StealAnimation | null>(null)
+  const [slots, setSlots] = useState<SlotsAnimation | null>(null)
   const animationId = useRef(0)
-  const lastSeq = useRef(0)
 
   const dismissAnimation = useCallback((type: GameAnimation['type'], id?: string) => {
     setAnimations((prev) => prev.filter((a) => (id ? a.id !== id : a.type !== type)))
@@ -70,11 +103,96 @@ export function useGame() {
     }, ANIMATION_TTL_MS[spec.type])
   }, [])
 
-  useEffect(() => {
-    if (eventSeq === lastSeq.current) return
-    lastSeq.current = eventSeq
-    for (const event of events) animate(event, pushAnimation)
-  }, [eventSeq, events, pushAnimation])
+  const startBust = useCallback((event: Extract<GameEvent, { type: 'bust' }>) => {
+    setBust(() => ({
+      playerId: event.playerId,
+      cardId: event.card?.id,
+      matchedId: event.matched?.id,
+      phase: 'reveal' as const,
+    }))
+    window.setTimeout(() => {
+      setBust((prev) => (prev?.playerId === event.playerId ? { ...prev, phase: 'scatter' } : prev))
+    }, BUST_REVEAL_MS)
+    window.setTimeout(() => {
+      setBust((prev) => (prev?.playerId === event.playerId ? null : prev))
+    }, BUST_REVEAL_MS + BUST_SCATTER_MS)
+  }, [])
+
+  const startSteal = useCallback((event: Extract<GameEvent, { type: 'steal' }>) => {
+    setSteal(() => ({ fromPlayerId: event.fromPlayerId, toPlayerId: event.toPlayerId, card: event.card }))
+    window.setTimeout(() => setSteal(null), 1100)
+  }, [])
+
+  const dismissSlots = useCallback(() => setSlots(null), [])
+
+  /** Translates one server event into whatever the table should show for it. */
+  const applyEvent = useCallback(
+    (event: GameEvent) => {
+      switch (event.type) {
+        case 'bust':
+          startBust(event)
+          pushAnimation({ type: 'screenShake' })
+          play('bust')
+          break
+        case 'secondChance':
+          pushAnimation({ type: 'secondChance', playerId: event.playerId })
+          break
+        case 'freeze':
+          pushAnimation({ type: 'freeze', playerId: event.playerId })
+          play('freeze')
+          break
+        case 'steal':
+          startSteal(event)
+          break
+        case 'flip7':
+          pushAnimation({ type: 'flip7', playerId: event.playerId })
+          play('flip7')
+          break
+        case 'fizzled':
+          pushAnimation({ type: 'fizzled', playerId: event.playerId, cardDefId: event.cardDefId })
+          break
+        case 'timeout':
+          pushAnimation({ type: 'timeout', playerId: event.playerId })
+          break
+        case 'slots':
+          setSlots(() => ({ playerId: event.playerId, card: null }))
+          break
+        case 'draw':
+          // The card the slot machine spun up — land the reels on it.
+          setSlots((prev) => (prev && prev.playerId === event.playerId && !prev.card
+            ? { ...prev, card: event.card }
+            : prev))
+          // An action card announces itself; everything else is just a card.
+          play(event.card.kind === 'action' ? 'actionCard' : 'draw')
+          break
+        case 'actionPlayed':
+          if (event.cardDefId === 'drawThree') {
+            pushAnimation({ type: 'drawThree', playerId: event.targetPlayerId })
+          } else if (event.cardDefId !== 'slots' && event.cardDefId !== 'freeze') {
+            // Freeze and draw 3 have their own visuals; everything else gets
+            // the generic slam.
+            pushAnimation({ type: 'impact', targetId: event.targetPlayerId })
+          }
+          pushAnimation({ type: 'screenShake' })
+          break
+        default:
+          break
+      }
+    },
+    [pushAnimation, startBust, startSteal],
+  )
+
+  // Subscribe to the socket's event stream rather than reading it back out of
+  // render: these arrive from outside React, and reacting to them there is what
+  // keeps a burst of events from cascading renders through the whole table.
+  useEffect(
+    () =>
+      useGameStore.subscribe((next, previous) => {
+        if (next.eventSeq === previous.eventSeq) return
+        for (const event of next.events) applyEvent(event)
+      }),
+    [applyEvent],
+  )
 
   // ═══════════════════════════════════════════
   // Round intro
@@ -113,9 +231,9 @@ export function useGame() {
   const pendingDef: ActionCardInfo | undefined = findAction(catalog, pendingAction?.cardDefId)
   const isPickingTarget = !!pendingAction
   const pendingIsLocal = pendingAction?.playerId === localPlayerId
+  // The server works out who a card may legally hit; the picker offers no others.
+  const validTargets = pendingAction?.validTargets ?? []
 
-  // Remembering *which* pending card the pick was for means the choice clears
-  // itself the moment the next card comes up, with no effect to keep in sync.
   const pendingKey = pendingAction ? `${pendingAction.playerId}:${pendingAction.cardDefId}` : null
   const [choice, setChoice] = useState<{ key: string; targetId: string } | null>(null)
   const targetChosen = choice && choice.key === pendingKey ? choice.targetId : null
@@ -124,6 +242,7 @@ export function useGame() {
     (targetId: string) => {
       if (!pendingAction || !pendingKey || pendingAction.playerId !== localPlayerId) return
       if (choice?.key === pendingKey) return
+      if (!pendingAction.validTargets.includes(targetId)) return
       setChoice({ key: pendingKey, targetId })
       send({ type: 'PLAY_ACTION', targetPlayerId: targetId, cardDefId: pendingAction.cardDefId })
     },
@@ -170,6 +289,7 @@ export function useGame() {
     pendingDef,
     isPickingTarget,
     pendingIsLocal,
+    validTargets,
     targetChosen,
     pickTarget,
 
@@ -178,6 +298,10 @@ export function useGame() {
 
     animations,
     dismissAnimation,
+    bust,
+    steal,
+    slots,
+    dismissSlots,
     showRoundIntro,
     dismissRoundIntro,
     timer,
@@ -185,28 +309,3 @@ export function useGame() {
 }
 
 export type UseGameReturn = ReturnType<typeof useGame>
-
-/** Translates one server event into whatever the table should show for it. */
-function animate(event: GameEvent, push: (spec: AnimationSpec) => void): void {
-  switch (event.type) {
-    case 'bust':
-      push({ type: 'bust', playerId: event.playerId })
-      push({ type: 'screenShake' })
-      break
-    case 'flip7':
-      push({ type: 'flip7', playerId: event.playerId })
-      break
-    case 'slots':
-      push({ type: 'slots' })
-      break
-    case 'actionPlayed':
-      push({ type: 'impact', targetId: event.targetPlayerId })
-      push({ type: 'screenShake' })
-      break
-    case 'timeout':
-      push({ type: 'timeout', playerId: event.playerId })
-      break
-    default:
-      break
-  }
-}

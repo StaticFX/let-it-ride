@@ -1,4 +1,5 @@
 export { SketchButton } from './Button'
 export { SketchSlider } from './SketchSlider'
 export { SketchOption } from './SketchOption'
+export { SoundToggle } from './SoundToggle'
 export { RoughBox, RoughCircle, RoughSquiggle } from './RoughShapes'

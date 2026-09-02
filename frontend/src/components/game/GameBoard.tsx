@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Card as CardType, Player } from '../../game/types'
 import { useGame } from '../../hooks/useGame'
 import { useWindowSize } from '../../hooks/useWindowSize'
+import { findAction, useCatalog } from '../../state/gameStore'
 import { RoughBox } from '../ui/RoughShapes'
 import { PlayingCard } from '../cards/PlayingCard'
 import { CardBack } from '../cards/CardBack'
@@ -10,10 +11,14 @@ import { PlayerAvatar } from './PlayerAvatar'
 import { Scoreboard } from './Scoreboard'
 import { TurnClock } from './TurnClock'
 import { SketchButton } from '../ui/Button'
+import { SoundToggle } from '../ui/SoundToggle'
 import { RoundIntro } from '../overlays/RoundIntro'
 import { ImpactParticles } from '../overlays/ImpactParticles'
 import { Lucky7Overlay } from '../overlays/Lucky7Overlay'
 import { SlotMachine } from '../overlays/SlotMachine'
+import { FreezeBurst } from '../overlays/FreezeBurst'
+import { DrawThreeStamp } from '../overlays/DrawThreeStamp'
+import { StolenCard } from '../overlays/StolenCard'
 
 const SEAT_POSITIONS = [
   { left: '9%', top: '46%' },
@@ -24,6 +29,7 @@ const SEAT_POSITIONS = [
 
 export function GameBoard() {
   const game = useGame()
+  const catalog = useCatalog()
   const { w, h } = useWindowSize()
   const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null)
   const [inspectedCard, setInspectedCard] = useState<CardType | null>(null)
@@ -31,15 +37,15 @@ export function GameBoard() {
   const {
     players, me, meIdx, others, currentPlayer, turnIndex, round, roundStartPlayer,
     deckCount, discardCount, localPlayerId, isMyTurn, isEliminated, mustDraw,
-    isDealing, dealingPlayerId, pendingDef, isPickingTarget, pendingIsLocal,
+    isDealing, dealingPlayerId, pendingDef, isPickingTarget, pendingIsLocal, validTargets,
     targetChosen, pickTarget, hit, stay,
-    animations, dismissAnimation, showRoundIntro, dismissRoundIntro, timer,
+    animations, bust, steal, slots, dismissSlots, showRoundIntro, dismissRoundIntro, timer,
   } = game
 
   const deckCenter = { x: w / 2 - 20, y: h * 0.42 }
 
   function seatOf(playerIdx: number) {
-    if (playerIdx === meIdx) return { x: w / 2, y: h - 100 }
+    if (playerIdx === meIdx) return { x: w / 2, y: h - 120 }
     let seat = 0
     for (let i = 0; i < players.length; i++) {
       if (i === meIdx) continue
@@ -50,12 +56,18 @@ export function GameBoard() {
     return { x: (parseFloat(pos.left) / 100) * w, y: (parseFloat(pos.top) / 100) * h }
   }
 
+  function seatOfId(playerId: string) {
+    return seatOf(players.findIndex((p) => p.id === playerId))
+  }
+
   // ─── Animation lookups ───
   const hasScreenShake = animations.some((a) => a.type === 'screenShake')
-  const bustPlayerIds = animations.filter((a) => a.type === 'bust').map((a) => a.playerId)
   const impact = animations.find((a) => a.type === 'impact')
   const flip7 = animations.find((a) => a.type === 'flip7')
-  const hasSlots = animations.some((a) => a.type === 'slots')
+  const freezes = animations.filter((a) => a.type === 'freeze')
+  const drawThrees = animations.filter((a) => a.type === 'drawThree')
+  const fizzles = animations.filter((a) => a.type === 'fizzled')
+  const secondChances = animations.filter((a) => a.type === 'secondChance')
   const timedOutIds = animations.filter((a) => a.type === 'timeout').map((a) => a.playerId)
 
   const showButtons = isMyTurn && !isEliminated && !isPickingTarget
@@ -63,11 +75,55 @@ export function GameBoard() {
   const myHovered = hoveredPlayerId === me?.id
   const mySpread = isMyTurn || myHovered
 
+  /** How a card in `playerId`'s hand should be treated by the bust animation. */
+  function bustRole(playerId: string, cardId: string): 'none' | 'match' | 'other' {
+    if (bust?.playerId !== playerId || bust.phase !== 'reveal') return 'none'
+    if (!bust.cardId && !bust.matchedId) return 'none'
+    return cardId === bust.cardId || cardId === bust.matchedId ? 'match' : 'other'
+  }
+
+  const scattering = (playerId: string) => bust?.playerId === playerId && bust.phase === 'scatter'
+  const isFrozen = (playerId: string) => freezes.some((f) => f.playerId === playerId)
+
   function statusBadge(player: Player) {
     if (player.status === 'bust') return <span className="status-badge text-[var(--accent)] border border-[var(--accent)]">bust!</span>
     if (player.status === 'stayed') return <span className="status-badge border border-[var(--ink)]">out</span>
     if (!player.connected) return <span className="status-badge border border-[var(--ink-soft)] text-[var(--ink-soft)]">away</span>
     return null
+  }
+
+  function handCard(player: Player, card: CardType, idx: number, size: 'small' | 'normal', spread: boolean) {
+    const role = bustRole(player.id, card.id)
+    const scatter = scattering(player.id)
+    const fanAngle = (idx - (player.hand.length - 1) / 2) * (spread ? (size === 'normal' ? 5 : 6) : 4)
+
+    return (
+      <div
+        key={card.id}
+        onClick={canInspect ? (e) => { e.stopPropagation(); setInspectedCard(card) } : undefined}
+        className="origin-bottom cursor-pointer"
+        style={{
+          marginLeft: idx === 0 ? 0 : size === 'normal' ? (spread ? -32 : -38) : spread ? -18 : -30,
+          transform: `rotate(${fanAngle}deg) translateY(${Math.abs(fanAngle) * 0.7}px)`,
+          transition: 'margin-left 280ms ease, transform 280ms cubic-bezier(.2,.9,.3,1.3)',
+        }}
+      >
+        <div
+          className={role === 'match' ? 'relative bust-match' : role === 'other' ? 'bust-dim' : undefined}
+          style={scatter
+            ? { '--bust-spin': `${(idx % 2 === 0 ? -1 : 1) * (15 + idx * 5)}deg`, animation: `bustFlyUp 900ms ${idx * 60}ms cubic-bezier(.2,0,.6,1) forwards` } as React.CSSProperties
+            : undefined}
+        >
+          <DealtCard card={card} from={deckCenter}>
+            <PlayingCard card={card} size={size} />
+          </DealtCard>
+          {/* Name the clash on the newer of the two cards only. */}
+          {role === 'match' && card.id === bust?.cardId && (
+            <div className="bust-match-tag">same {card.label}!</div>
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -91,8 +147,9 @@ export function GameBoard() {
       </div>
 
       {/* Top-left */}
-      <div className="absolute top-7 left-[38px] z-[55]">
+      <div className="absolute top-7 left-[38px] z-[55] flex items-center gap-3">
         <h1 className="text-[38px] -rotate-[1.5deg] sway-slow">let it ride</h1>
+        <SoundToggle className="mt-1.5" />
       </div>
 
       {/* Top-right */}
@@ -100,10 +157,14 @@ export function GameBoard() {
         <small className="rotate-1 block">round {String(round).padStart(2, '0')}</small>
         <div className="display text-[30px] leading-none flex items-center gap-2.5 justify-end rotate-1 sway-mid">
           <span className="text-[var(--accent)]">→</span>
-          {isDealing ? 'dealing…' : currentPlayer?.name || '...'}
+          {isPickingTarget
+            ? players.find((p) => p.id === game.pendingAction?.playerId)?.name ?? '...'
+            : isDealing ? 'dealing…' : currentPlayer?.name || '...'}
         </div>
         <small className="rotate-1 block">
-          {isDealing ? '' : isMyTurn ? 'your move!' : isPickingTarget ? 'picking a target…' : 'to act…'}
+          {isPickingTarget
+            ? pendingIsLocal ? 'pick a target!' : 'is picking a target…'
+            : isDealing ? '' : isMyTurn ? 'your move!' : 'to act…'}
         </small>
         {timer && <TurnClock timer={timer} />}
       </div>
@@ -140,12 +201,11 @@ export function GameBoard() {
       {others.map((p, i) => {
         const seatPos = SEAT_POSITIONS[Math.min(i, SEAT_POSITIONS.length - 1)]
         const pIndex = players.findIndex((pl) => pl.id === p.id)
-        const isActive = !isDealing && pIndex === turnIndex && p.status === 'active'
+        const isActive = !isDealing && !isPickingTarget && pIndex === turnIndex && p.status === 'active'
         const isBeingDealt = dealingPlayerId === p.id
         const dimmed = (p.status === 'stayed' || p.status === 'bust') && !isBeingDealt
-        const targetable = isPickingTarget && pendingIsLocal && p.status === 'active' && !targetChosen
+        const targetable = pendingIsLocal && !targetChosen && validTargets.includes(p.id)
         const targetHovered = targetable && hoveredPlayerId === p.id
-        const busting = bustPlayerIds.includes(p.id)
         const spread = hoveredPlayerId === p.id
 
         return (
@@ -165,7 +225,7 @@ export function GameBoard() {
             }}
           >
             <div
-              className="flex flex-col items-center gap-2"
+              className={`flex flex-col items-center gap-2 ${isFrozen(p.id) ? 'frozen-seat' : ''}`}
               style={{ animation: impact?.targetId === p.id ? 'impactShake 500ms ease-out' : 'none' }}
             >
               <div className={`hover-glow ${targetHovered ? 'opacity-100' : 'opacity-0'}`} />
@@ -175,7 +235,7 @@ export function GameBoard() {
                   <div className="display text-[22px] leading-none relative">
                     {p.name}
                     {p.isBot && <small className="ml-1 font-normal">bot</small>}
-                    {busting && <div className="bust-strike" />}
+                    {bust?.playerId === p.id && <div className="bust-strike" />}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`number text-[22px] leading-none ${p.status === 'bust' ? 'text-[var(--accent)]' : ''}`}>
@@ -191,31 +251,7 @@ export function GameBoard() {
                 className="flex min-h-[86px] px-1.5 py-0.5 cursor-pointer origin-bottom transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)]"
                 style={{ transform: spread ? 'scale(1.15)' : 'scale(1)' }}
               >
-                {p.hand.map((card, idx) => {
-                  const fanAngle = (idx - (p.hand.length - 1) / 2) * (spread ? 6 : 4)
-                  return (
-                    <div
-                      key={card.id}
-                      onClick={canInspect ? (e) => { e.stopPropagation(); setInspectedCard(card) } : undefined}
-                      style={{
-                        marginLeft: idx === 0 ? 0 : spread ? -18 : -30,
-                        transform: `rotate(${fanAngle}deg) translateY(${Math.abs(fanAngle) * 0.7}px)`,
-                        transformOrigin: 'bottom center',
-                        transition: 'margin-left 280ms ease, transform 280ms cubic-bezier(.2,.9,.3,1.3)',
-                      }}
-                    >
-                      <div
-                        style={busting
-                          ? { '--bust-spin': `${(idx % 2 === 0 ? -1 : 1) * (15 + idx * 5)}deg`, animation: `bustFlyUp 900ms ${idx * 80}ms cubic-bezier(.2,0,.6,1) forwards` } as React.CSSProperties
-                          : {}}
-                      >
-                        <DealtCard card={card} from={deckCenter}>
-                          <PlayingCard card={card} size="small" dimmed={dimmed && !busting} />
-                        </DealtCard>
-                      </div>
-                    </div>
-                  )
-                })}
+                {p.hand.map((card, idx) => handCard(p, card, idx, 'small', spread))}
                 {p.passives.length > 0 && (
                   <>
                     <div className="w-2.5 shrink-0" />
@@ -244,9 +280,8 @@ export function GameBoard() {
 
       {/* My hand */}
       {me && (() => {
-        const selfTargetable = isPickingTarget && pendingIsLocal && me.status === 'active' && !targetChosen
-        const selfTargetHovered = selfTargetable && hoveredPlayerId === me.id
-        const busting = bustPlayerIds.includes(me.id)
+        const targetable = pendingIsLocal && !targetChosen && validTargets.includes(me.id)
+        const targetHovered = targetable && hoveredPlayerId === me.id
         const dimmed = !isMyTurn && !isEliminated && !isDealing
 
         return (
@@ -259,16 +294,16 @@ export function GameBoard() {
           >
             <div style={{ animation: impact?.targetId === me.id ? 'impactShake 500ms ease-out' : 'none' }}>
               <div
-                onClick={selfTargetable ? () => pickTarget(me.id) : undefined}
+                onClick={targetable ? () => pickTarget(me.id) : undefined}
                 onMouseEnter={() => setHoveredPlayerId(me.id)}
                 onMouseLeave={() => setHoveredPlayerId((id) => (id === me.id ? null : id))}
-                className="flex items-end gap-[18px] px-4 py-2 relative transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)]"
+                className={`flex items-end gap-[18px] px-4 py-2 relative transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)] ${isFrozen(me.id) ? 'frozen-seat' : ''}`}
                 style={{
-                  cursor: selfTargetable ? 'crosshair' : 'default',
-                  transform: selfTargetHovered ? 'scale(1.05)' : 'scale(1)',
+                  cursor: targetable ? 'crosshair' : 'default',
+                  transform: targetHovered ? 'scale(1.05)' : 'scale(1)',
                 }}
               >
-                <div className={`hover-glow-self ${selfTargetHovered ? 'opacity-100' : 'opacity-0'}`} />
+                <div className={`hover-glow-self ${targetHovered ? 'opacity-100' : 'opacity-0'}`} />
                 <div className="flex flex-col items-end gap-1.5 min-w-[120px]">
                   <div
                     className="flex items-center gap-2.5 transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)]"
@@ -282,7 +317,7 @@ export function GameBoard() {
                     <div>
                       <div className="display text-[26px] leading-none relative">
                         {me.name}
-                        {busting && <div className="bust-strike" />}
+                        {bust?.playerId === me.id && <div className="bust-strike" />}
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className={`number text-[28px] leading-none ${me.status === 'bust' ? 'text-[var(--accent)]' : ''}`}>
@@ -299,37 +334,13 @@ export function GameBoard() {
                   style={{
                     minHeight: mySpread ? 180 : 110,
                     transform: mySpread ? 'scale(1)' : dealingPlayerId === me.id ? 'scale(0.9)' : 'scale(0.75)',
-                    opacity: busting ? 1 : isEliminated ? 0.4 : dimmed && !myHovered ? 0.55 : 1,
+                    opacity: bust?.playerId === me.id ? 1 : isEliminated ? 0.4 : dimmed && !myHovered ? 0.55 : 1,
                     transition:
                       'transform 420ms cubic-bezier(.2,.9,.3,1.3), opacity 320ms ease, min-height 420ms cubic-bezier(.2,.9,.3,1.3)',
                     filter: dimmed && !isEliminated && !myHovered ? 'grayscale(0.6)' : 'none',
                   }}
                 >
-                  {me.hand.map((card, idx) => {
-                    const fanAngle = (idx - (me.hand.length - 1) / 2) * (mySpread ? 5 : 4)
-                    return (
-                      <div
-                        key={card.id}
-                        onClick={canInspect ? () => setInspectedCard(card) : undefined}
-                        className="origin-bottom cursor-pointer"
-                        style={{
-                          marginLeft: idx === 0 ? 0 : mySpread ? -32 : -38,
-                          transform: `rotate(${fanAngle}deg) translateY(${Math.abs(fanAngle) * 0.7}px)`,
-                          transition: 'transform 320ms cubic-bezier(.2,.9,.3,1.4), margin-left 320ms ease',
-                        }}
-                      >
-                        <div
-                          style={busting
-                            ? { '--bust-spin': `${(idx % 2 === 0 ? -1 : 1) * (15 + idx * 5)}deg`, animation: `bustFlyUp 900ms ${idx * 80}ms cubic-bezier(.2,0,.6,1) forwards` } as React.CSSProperties
-                            : {}}
-                        >
-                          <DealtCard card={card} from={deckCenter}>
-                            <PlayingCard card={card} size={mySpread ? 'normal' : 'small'} />
-                          </DealtCard>
-                        </div>
-                      </div>
-                    )
-                  })}
+                  {me.hand.map((card, idx) => handCard(me, card, idx, mySpread ? 'normal' : 'small', mySpread))}
                   {me.passives.length > 0 && (
                     <>
                       <div className="shrink-0" style={{ width: mySpread ? 18 : 12 }} />
@@ -364,9 +375,8 @@ export function GameBoard() {
 
       {/* The card waiting for a target */}
       {isPickingTarget && pendingDef && (() => {
-        const chosenIdx = targetChosen ? players.findIndex((p) => p.id === targetChosen) : -1
-        const pos = chosenIdx >= 0 ? seatOf(chosenIdx) : { x: w / 2, y: h * 0.62 }
-        const landed = chosenIdx >= 0
+        const pos = targetChosen ? seatOfId(targetChosen) : { x: w / 2, y: h * 0.62 }
+        const landed = !!targetChosen
 
         return (
           <div
@@ -394,21 +404,62 @@ export function GameBoard() {
         )
       })()}
 
-      {/* Impact */}
+      {/* Per-card animations */}
       {impact && (() => {
-        const idx = players.findIndex((p) => p.id === impact.targetId)
-        if (idx < 0) return null
-        const pos = seatOf(idx)
+        const pos = seatOfId(impact.targetId)
         return <ImpactParticles x={pos.x} y={pos.y - 60} />
       })()}
 
-      {hasSlots && <SlotMachine onDone={() => dismissAnimation('slots')} />}
+      {freezes.map((f) => {
+        const pos = seatOfId(f.playerId)
+        return <FreezeBurst key={f.id} x={pos.x} y={pos.y} />
+      })}
+
+      {drawThrees.map((d) => {
+        const pos = seatOfId(d.playerId)
+        return <DrawThreeStamp key={d.id} x={pos.x} y={pos.y - 20} />
+      })}
+
+      {steal && (
+        <StolenCard
+          card={steal.card}
+          from={seatOfId(steal.fromPlayerId)}
+          to={seatOfId(steal.toPlayerId)}
+        />
+      )}
+
+      {secondChances.map((s) => {
+        const pos = seatOfId(s.playerId)
+        return (
+          <div
+            key={s.id}
+            className="fixed z-[215] pointer-events-none display text-[26px] font-bold text-[var(--passive)] second-chance-pop whitespace-nowrap"
+            style={{ left: pos.x, top: pos.y - 70 }}
+          >
+            ♡ second life!
+          </div>
+        )
+      })}
+
+      {fizzles.map((f) => (
+        <div
+          key={f.id}
+          className="fixed z-[215] pointer-events-none text-center fizzle-note"
+          style={{ left: w / 2, top: h * 0.52 }}
+        >
+          <div className="display text-[22px] font-bold text-[var(--ink-soft)] whitespace-nowrap">
+            {findAction(catalog, f.cardDefId)?.name ?? 'that card'} had nobody to hit
+          </div>
+          <small>drawing a replacement…</small>
+        </div>
+      ))}
+
+      {slots && <SlotMachine card={slots.card} onDone={dismissSlots} />}
 
       {flip7 && (() => {
         const player = players.find((p) => p.id === flip7.playerId)
         if (!player) return null
-        const idx = players.findIndex((p) => p.id === flip7.playerId)
-        return <Lucky7Overlay cards={player.hand} startPos={seatOf(idx)} />
+        return <Lucky7Overlay cards={player.hand} startPos={seatOfId(flip7.playerId)} />
       })()}
 
       {/* Action buttons */}

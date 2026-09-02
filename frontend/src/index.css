@@ -9,6 +9,7 @@
   --card-back: #f0e9d4;
   --accent: #b04432;
   --passive: #4a6852;
+  --frost: #3d7a9e;
   --font-display: 'Kalam', cursive;
   --font-body: 'Patrick Hand', cursive;
   --font-number: 'Caveat', cursive;
@@ -429,4 +430,151 @@ label {
   25% { transform: scale(1.22) translateY(-16px) rotate(3deg); }
   55% { transform: scale(1.1) translateY(-3px) rotate(-2deg); }
   80% { transform: scale(1.18) translateY(-10px) rotate(1.5deg); }
+}
+
+/* ═══════════════════════════════════════════════
+   Card-specific animations
+   ═══════════════════════════════════════════════ */
+
+/* ─── Bust: call out the pair, then scatter the hand ─── */
+
+.bust-match {
+  animation: bustMatchPulse 550ms ease-in-out infinite alternate;
+  border-radius: 5px;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 18px 4px rgba(176, 68, 50, 0.45);
+}
+
+.bust-dim {
+  opacity: 0.3;
+  filter: grayscale(0.7);
+  transition: opacity 250ms ease, filter 250ms ease;
+}
+
+.bust-match-tag {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-6deg);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: fadeUp 260ms ease-out both;
+}
+
+@keyframes bustMatchPulse {
+  from { transform: scale(1) rotate(-1.5deg); }
+  to   { transform: scale(1.12) rotate(1.5deg); }
+}
+
+/* ─── Freeze ─── */
+
+.frost-bloom {
+  background: radial-gradient(circle, rgba(61, 122, 158, 0.42) 0%, rgba(61, 122, 158, 0.16) 45%, transparent 72%);
+  animation: frostBloom 1300ms ease-out both;
+}
+
+.frost-flake {
+  animation: frostFlake 1400ms cubic-bezier(.2, .8, .3, 1) both;
+}
+
+.frost-word {
+  animation: frostWord 1500ms cubic-bezier(.2, .9, .3, 1.2) both;
+}
+
+@keyframes frostBloom {
+  0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
+  35%  { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1.25); opacity: 0; }
+}
+
+@keyframes frostFlake {
+  0%   { transform: translate(-50%, -50%) scale(0.2) rotate(0deg); opacity: 0; }
+  30%  { opacity: 1; }
+  100% {
+    transform: translate(calc(-50% + var(--flake-x)), calc(-50% + var(--flake-y))) scale(1) rotate(220deg);
+    opacity: 0;
+  }
+}
+
+@keyframes frostWord {
+  0%   { transform: translateX(-50%) scale(0.5) rotate(-6deg); opacity: 0; }
+  25%  { transform: translateX(-50%) scale(1.1) rotate(-3deg); opacity: 1; }
+  70%  { transform: translateX(-50%) scale(1) rotate(-3deg); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1) translateY(-14px); opacity: 0; }
+}
+
+/* A frozen seat keeps a cold tint for a beat after the burst. */
+.frozen-seat {
+  filter: saturate(0.55) brightness(1.06) drop-shadow(0 0 10px rgba(61, 122, 158, 0.5));
+  transition: filter 400ms ease;
+}
+
+/* ─── Draw three ─── */
+
+.draw-three-card {
+  transform: translate(-50%, -50%) scale(0.3);
+  opacity: 0;
+  animation: drawThreeSlam 900ms cubic-bezier(.2, .9, .3, 1.25) both;
+  box-shadow: 2px 2px 0 0 var(--ink);
+}
+
+.draw-three-word {
+  animation: drawThreeWord 1300ms cubic-bezier(.2, .9, .3, 1.2) both;
+}
+
+@keyframes drawThreeSlam {
+  0%   { transform: translate(-50%, -50%) translate(0, -70px) scale(1.6) rotate(0deg); opacity: 0; }
+  40%  { transform: translate(-50%, -50%) translate(var(--card-x), 0) scale(1) rotate(var(--card-rot)); opacity: 1; }
+  75%  { transform: translate(-50%, -50%) translate(var(--card-x), 0) scale(1) rotate(var(--card-rot)); opacity: 1; }
+  100% { transform: translate(-50%, -50%) translate(var(--card-x), 10px) scale(0.85) rotate(var(--card-rot)); opacity: 0; }
+}
+
+@keyframes drawThreeWord {
+  0%   { transform: translateX(-50%) scale(0.4) rotate(-8deg); opacity: 0; }
+  20%  { transform: translateX(-50%) scale(1.15) rotate(-4deg); opacity: 1; }
+  70%  { transform: translateX(-50%) scale(1) rotate(-4deg); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1) translateY(-12px); opacity: 0; }
+}
+
+/* ─── Steal ─── */
+
+.steal-label {
+  animation: fadeUp 300ms 150ms ease-out both;
+}
+
+/* ─── Slots payout ─── */
+
+@keyframes slotPayout {
+  0%   { transform: translateY(-14px) scale(0.4) rotate(-12deg); opacity: 0; }
+  60%  { transform: translateY(0) scale(1.18) rotate(3deg); opacity: 1; }
+  100% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
+}
+
+/* ─── Second chance ─── */
+
+.second-chance-pop {
+  animation: secondChancePop 1600ms cubic-bezier(.2, .9, .3, 1.2) both;
+}
+
+@keyframes secondChancePop {
+  0%   { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+  20%  { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
+  70%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) translateY(-26px) scale(1); opacity: 0; }
+}
+
+/* ─── Fizzled card ─── */
+
+.fizzle-note {
+  animation: fizzleNote 1500ms ease-out both;
+}
+
+@keyframes fizzleNote {
+  0%   { transform: translate(-50%, -50%) scale(0.6) rotate(-4deg); opacity: 0; }
+  18%  { transform: translate(-50%, -50%) scale(1.05) rotate(-2deg); opacity: 1; }
+  65%  { transform: translate(-50%, -50%) scale(1) rotate(-2deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) translateY(-30px) scale(0.95); opacity: 0; }
 }
