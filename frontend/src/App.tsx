@@ -8,7 +8,7 @@ import { GameOver } from './components/pages/GameOver'
 import { EscapeMenu } from './components/overlays/EscapeMenu'
 import { DisconnectOverlay } from './components/overlays/DisconnectOverlay'
 import { resetDealtCards } from './components/cards/dealtCards'
-import { unlockAudio } from './audio/sfx'
+import { prefetchAudio, unlockAudio } from './audio/sfx'
 
 function App() {
   const phase = useGameStore((s) => s.state?.phase) ?? 'LOBBY'
@@ -20,9 +20,12 @@ function App() {
     fetchCatalog().catch(() => setCatalogError('could not reach the table — is the server up?'))
   }, [])
 
-  // Browsers will not start an AudioContext until the page has been touched,
-  // so the samples are decoded on whatever the first interaction happens to be.
+  // Downloading does not need a gesture — only starting the AudioContext does —
+  // so the samples are fetched up front and merely decoded on first touch.
+  // Waiting for the gesture to start the download made the very click that
+  // unlocked audio the one click that never made a sound.
   useEffect(() => {
+    prefetchAudio()
     const unlock = () => unlockAudio()
     window.addEventListener('pointerdown', unlock, { once: true })
     window.addEventListener('keydown', unlock, { once: true })

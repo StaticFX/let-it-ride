@@ -10,6 +10,13 @@
 
 const MUTE_KEY = 'let-it-ride:muted'
 const VOLUME_KEY = 'let-it-ride:volume'
+const DEFAULT_VOLUME = 0.7
+
+/** A sound asked for just before the buffers were ready still gets to play. */
+const LATE_PLAY_GRACE_MS = 500
+
+/** Bounded so a browser that never unlocks audio cannot accumulate requests. */
+const MAX_QUEUED = 8
 
 export type SoundName =
   | 'draw'
@@ -35,6 +42,30 @@ const SOURCES: Record<SoundName, string> = {
 }
 
 /**
+ * The samples are wildly different levels — measured RMS runs from 0.0056
+ * (keystroke) to 0.566 (flip 7), a hundredfold spread — so these are not taste,
+ * they are normalisation. Each gain brings its sample to roughly the same
+ * loudness, capped so peaks stay under 1.0, and is then trimmed for how much
+ * attention the sound deserves: a keystroke sits under everything, a flip 7 is
+ * meant to be the loudest thing in the round.
+ *
+ * Picking these by ear-free guesswork is what made the click and keystroke
+ * inaudible: they are the two quietest files and had been given the two
+ * lowest gains.
+ */
+const GAIN: Record<SoundName, number> = {
+  draw: 1.8,
+  actionCard: 0.4,
+  bust: 0.82,
+  freeze: 1.4,
+  flip7: 0.21,
+  goOut: 3.1,
+  roundEnded: 4.4,
+  click: 3.0,
+  keystroke: 3.9,
+}
+
+/**
  * How far each sound may wander, as a fraction of its pitch. The ones you hear
  * constantly — cards, keystrokes, clicks — need the most variation to stop
  * sounding like a metronome. Flip 7 is the one moment in a round worth hearing
@@ -52,31 +83,27 @@ const PITCH_SPREAD: Record<SoundName, number> = {
   keystroke: 0.18,
 }
 
-/** Per-sound trim, before the player's own volume. */
-const GAIN: Record<SoundName, number> = {
-  draw: 0.55,
-  actionCard: 0.8,
-  bust: 0.9,
-  freeze: 0.8,
-  flip7: 0.95,
-  goOut: 0.7,
-  roundEnded: 0.85,
-  click: 0.45,
-  keystroke: 0.3,
-}
-
 let context: AudioContext | null = null
+const encoded = new Map<SoundName, ArrayBuffer>()
 const buffers = new Map<SoundName, AudioBuffer>()
-let loading: Promise<void> | null = null
+let prefetching: Promise<void> | null = null
+let decoding: Promise<void> | null = null
 let muted = localStorage.getItem(MUTE_KEY) === '1'
 let volume = readVolume()
 
 /** The same sound twice in a row is the one thing variation cannot hide. */
 const lastRate = new Map<SoundName, number>()
 
+/** Requests that arrived before the buffers were decoded. */
+let queued: { name: SoundName; at: number }[] = []
+
 function readVolume(): number {
-  const stored = Number(localStorage.getItem(VOLUME_KEY))
-  return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : 0.7
+  const raw = localStorage.getItem(VOLUME_KEY)
+  // `Number(null)` is 0, so a browser that has never set this used to come back
+  // silent — an unset key has to fall through to the default, not to zero.
+  if (raw === null) return DEFAULT_VOLUME
+  const stored = Number(raw)
+  return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : DEFAULT_VOLUME
 }
 
 function audioContext(): AudioContext | null {
@@ -87,20 +114,41 @@ function audioContext(): AudioContext | null {
   return context
 }
 
-async function loadAll(ctx: AudioContext): Promise<void> {
+/**
+ * Downloads the samples. Deliberately not gated on a user gesture — only
+ * starting the AudioContext is, and waiting for the gesture to *begin* fetching
+ * meant the very click that unlocked audio was always silent.
+ */
+export function prefetchAudio(): void {
+  prefetching ??= Promise.all(
+    (Object.keys(SOURCES) as SoundName[]).map(async (name) => {
+      try {
+        const response = await fetch(SOURCES[name])
+        if (response.ok) encoded.set(name, await response.arrayBuffer())
+      } catch {
+        // A sound that will not load simply never plays.
+      }
+    }),
+  ).then(() => undefined)
+}
+
+async function decodeAll(ctx: AudioContext): Promise<void> {
+  prefetchAudio()
+  await prefetching
   await Promise.all(
     (Object.keys(SOURCES) as SoundName[]).map(async (name) => {
       if (buffers.has(name)) return
+      const bytes = encoded.get(name)
+      if (!bytes) return
       try {
-        const response = await fetch(SOURCES[name])
-        if (!response.ok) return
-        buffers.set(name, await ctx.decodeAudioData(await response.arrayBuffer()))
+        // decodeAudioData detaches the buffer, so hand it a copy.
+        buffers.set(name, await ctx.decodeAudioData(bytes.slice(0)))
       } catch {
-        // A sound that will not decode simply never plays; the game is silent,
-        // not broken.
+        // Undecodable on this browser; stay silent rather than break.
       }
     }),
   )
+  flushQueued()
 }
 
 /**
@@ -111,7 +159,7 @@ export function unlockAudio(): void {
   const ctx = audioContext()
   if (!ctx) return
   if (ctx.state === 'suspended') void ctx.resume()
-  loading ??= loadAll(ctx)
+  decoding ??= decodeAll(ctx)
 }
 
 export function isMuted(): boolean {
@@ -149,16 +197,7 @@ function pitchFor(name: SoundName): number {
   return rate
 }
 
-export function play(name: SoundName): void {
-  if (muted || volume === 0) return
-  const ctx = audioContext()
-  if (!ctx) return
-
-  // First real sound doubles as the unlock if nothing has interacted yet.
-  loading ??= loadAll(ctx)
-  const buffer = buffers.get(name)
-  if (!buffer || ctx.state !== 'running') return
-
+function emit(name: SoundName, ctx: AudioContext, buffer: AudioBuffer): void {
   const source = ctx.createBufferSource()
   source.buffer = buffer
   source.playbackRate.value = pitchFor(name)
@@ -168,4 +207,37 @@ export function play(name: SoundName): void {
 
   source.connect(gain).connect(ctx.destination)
   source.start()
+}
+
+function flushQueued(): void {
+  const ctx = context
+  const now = Date.now()
+  const pending = queued
+  queued = []
+  if (!ctx || ctx.state !== 'running' || muted || volume === 0) return
+  for (const request of pending) {
+    if (now - request.at > LATE_PLAY_GRACE_MS) continue
+    const buffer = buffers.get(request.name)
+    if (buffer) emit(request.name, ctx, buffer)
+  }
+}
+
+export function play(name: SoundName): void {
+  if (muted || volume === 0) return
+  const ctx = audioContext()
+  if (!ctx) return
+
+  // The first real sound doubles as the unlock if nothing has interacted yet.
+  decoding ??= decodeAll(ctx)
+  if (ctx.state === 'suspended') void ctx.resume().then(flushQueued)
+
+  const buffer = buffers.get(name)
+  if (!buffer || ctx.state !== 'running') {
+    // Still loading, or the context has not started. Hold onto it so the click
+    // that unlocked audio is not the one click that makes no sound.
+    if (queued.length < MAX_QUEUED) queued.push({ name, at: Date.now() })
+    return
+  }
+
+  emit(name, ctx, buffer)
 }
