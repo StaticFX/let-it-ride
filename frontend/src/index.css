@@ -1,0 +1,432 @@
+@import url('https://fonts.googleapis.com/css2?family=Kalam:wght@300;400;700&family=Patrick+Hand&family=Caveat:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --felt: #f6f1e3;
+  --ink: #1f1c14;
+  --ink-soft: #7a7565;
+  --card-face: #fdfaef;
+  --card-back: #f0e9d4;
+  --accent: #b04432;
+  --passive: #4a6852;
+  --font-display: 'Kalam', cursive;
+  --font-body: 'Patrick Hand', cursive;
+  --font-number: 'Caveat', cursive;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--font-body);
+  color: var(--ink);
+}
+
+/* ─── Base typography ─── */
+
+h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 2.5rem;
+  line-height: 1;
+  color: var(--ink);
+  margin: 0;
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.75rem;
+  line-height: 1.1;
+  color: var(--ink);
+  margin: 0;
+}
+
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.375rem;
+  line-height: 1.2;
+  color: var(--ink);
+  margin: 0;
+}
+
+p {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.4;
+}
+
+small, .text-muted {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+label {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--ink-soft);
+}
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.number {
+  font-family: var(--font-number);
+  font-weight: 700;
+}
+
+.content-width {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (min-width: 768px) {
+  .content-width {
+    max-width: 75%;
+  }
+}
+
+@media (min-width: 1280px) {
+  .content-width {
+    max-width: 60%;
+  }
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+.sketch-box {
+  background: var(--card-face);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 0 var(--ink);
+}
+
+.sketch-box-winner {
+  background: color-mix(in srgb, var(--accent) 3%, var(--card-face));
+  border: 2px solid var(--accent);
+}
+
+.sketch-box-light {
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.room-code-border {
+  border-bottom: 2px dashed color-mix(in srgb, var(--ink) 25%, transparent);
+}
+
+/* ─── Game board utilities ─── */
+
+.game-shell {
+  width: 100%;
+  height: 100dvh;
+  background: var(--felt);
+  position: relative;
+  overflow: hidden;
+  font-family: var(--font-body);
+  color: var(--ink);
+}
+
+.hover-glow {
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(31,28,20,0.12) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 300ms ease;
+}
+
+.hover-glow-self {
+  position: absolute;
+  inset: -50px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(31,28,20,0.1) 0%, transparent 70%);
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
+.bust-strike {
+  position: absolute;
+  top: 50%;
+  left: -5%;
+  width: 110%;
+  height: 3px;
+  background: var(--accent);
+  transform-origin: left center;
+  animation: strikeReveal 400ms 300ms ease-out forwards;
+  transform: scaleX(0);
+}
+
+.status-badge {
+  font-family: var(--font-display);
+  font-size: 13px;
+  padding: 0 6px;
+  border-radius: 2px;
+  font-weight: 700;
+  transform: rotate(-2deg);
+}
+
+.card-fan-transition {
+  transform-origin: bottom center;
+  transition: margin-left 280ms ease, transform 280ms cubic-bezier(.2,.9,.3,1.3);
+}
+
+.card-fan-transition-slow {
+  transform-origin: bottom center;
+  transition: transform 320ms cubic-bezier(.2,.9,.3,1.4), margin-left 320ms ease;
+}
+
+.card-inspect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(246, 241, 227, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: inspectFadeIn 200ms ease-out;
+}
+
+.card-inspect-pop {
+  transform: scale(2.8);
+  animation: inspectCardPop 300ms cubic-bezier(.2,.9,.3,1.3) both;
+  pointer-events: none;
+}
+
+/* ─── Common animations as classes ─── */
+.sway-slow { animation: swayMore 3.3s ease-in-out infinite; }
+.sway-mid { animation: swayMore 2.8s ease-in-out infinite; }
+.sway-fast { animation: swayMore 2.2s ease-in-out infinite; }
+.sway-card { animation: swayMore 1.8s ease-in-out infinite; }
+.shake { animation: screenShake 500ms ease-out; }
+
+/* ─── Game board layout helpers ─── */
+.action-buttons {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  z-index: 90;
+  display: flex;
+  gap: 18px;
+  transition: transform 520ms cubic-bezier(.2,.9,.25,1.25), opacity 360ms ease;
+}
+
+.action-buttons.visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.action-buttons.hidden {
+  transform: translateX(-50%) translateY(120px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sketch-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid color-mix(in srgb, var(--ink) 25%, transparent);
+  padding: 8px 4px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  color: var(--ink);
+  outline: none;
+}
+
+.divider-line {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.pick-target-label {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  text-align: center;
+  animation: swayMore 2.2s ease-in-out infinite;
+}
+
+.page-shell {
+  width: 100%;
+  min-height: 100dvh;
+  background: var(--felt);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: var(--font-body);
+  color: var(--ink);
+  padding: 24px;
+}
+
+/* Card sway */
+@keyframes sway {
+  0%, 100% { transform: rotate(-0.6deg) translateY(0); }
+  50% { transform: rotate(0.6deg) translateY(-1px); }
+}
+
+@keyframes swayMore {
+  0%, 100% { transform: rotate(-1.2deg); }
+  50% { transform: rotate(1.2deg); }
+}
+
+/* Nudge on impact */
+@keyframes nudge {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-3px, 2px); }
+  40% { transform: translate(2px, -2px); }
+  60% { transform: translate(-1px, 1px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* Spin for target reticle */
+@keyframes spinSlow {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* Target pulse */
+@keyframes targetPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.04); opacity: 0.85; }
+}
+
+/* Drift for passives */
+@keyframes drift {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-3px) rotate(1deg); }
+}
+
+/* Dash dance for discard */
+@keyframes dashDance {
+  to { stroke-dashoffset: -22; }
+}
+
+/* Fade in */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.4s ease-out both;
+}
+
+/* Screen shake */
+@keyframes screenShake {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  10% { transform: translate(-5px, 2px) rotate(-0.3deg); }
+  20% { transform: translate(4px, -3px) rotate(0.2deg); }
+  30% { transform: translate(-3px, 1px) rotate(-0.15deg); }
+  40% { transform: translate(3px, -2px) rotate(0.1deg); }
+  55% { transform: translate(-2px, 1px); }
+  70% { transform: translate(1px, -1px); }
+  85% { transform: translate(-1px, 0); }
+}
+
+/* Bust: cards fly up and scatter */
+@keyframes bustFlyUp {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  35% { opacity: 1; }
+  100% { transform: translateY(-280px) rotate(var(--bust-spin, -20deg)); opacity: 0; }
+}
+
+/* Action card: rise up in Z then slam down */
+@keyframes cardRiseSlam {
+  0% { transform: translate(-50%, -50%) rotate(-12deg) scale(0.65); filter: none; }
+  35% { transform: translate(-50%, calc(-50% - 90px)) rotate(-3deg) scale(1.6); filter: drop-shadow(0 30px 40px rgba(0,0,0,0.35)); }
+  60% { transform: translate(-50%, calc(-50% - 90px)) rotate(0deg) scale(1.55); filter: drop-shadow(0 25px 35px rgba(0,0,0,0.3)); }
+  82% { transform: translate(-50%, calc(-50% + 4px)) rotate(1deg) scale(1.05); filter: none; }
+  92% { transform: translate(-50%, calc(-50% - 2px)) rotate(0deg) scale(0.97); filter: none; }
+  100% { transform: translate(-50%, -50%) rotate(0deg) scale(1); filter: none; }
+}
+
+/* Target player shakes on action impact */
+@keyframes impactShake {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-8px, 5px); }
+  20% { transform: translate(7px, -4px); }
+  35% { transform: translate(-6px, 3px); }
+  50% { transform: translate(5px, -3px); }
+  65% { transform: translate(-3px, 2px); }
+  80% { transform: translate(2px, -1px); }
+}
+
+/* Particles burst out from impact */
+@keyframes particleFly {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--px), var(--py)) scale(0); opacity: 0; }
+}
+
+/* Card inspection fade in */
+@keyframes inspectFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Card inspection pop */
+@keyframes inspectCardPop {
+  from { transform: scale(1.8); opacity: 0.5; }
+  to { transform: scale(2.8); opacity: 1; }
+}
+
+/* Bust strikethrough reveal */
+@keyframes strikeReveal {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* Slot machine */
+@keyframes slotMachineEntry {
+  from { transform: scale(0.3) rotate(-8deg); opacity: 0; }
+  to { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+@keyframes slotMachineExit {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.6) translateY(-30px); opacity: 0; }
+}
+
+@keyframes slotReelSpin {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(calc(-1 * var(--reel-len) * 58px)); }
+}
+
+@keyframes slotLand {
+  0% { transform: translateY(-14px); opacity: 0.6; }
+  50% { transform: translateY(4px); }
+  75% { transform: translateY(-2px); }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slotFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slotHandlePull {
+  0% { transform: rotate(0deg); }
+  30% { transform: rotate(25deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Lucky 7 — cards dance at center */
+@keyframes lucky7Dance {
+  0%, 100% { transform: scale(1.15) translateY(0); }
+  25% { transform: scale(1.22) translateY(-16px) rotate(3deg); }
+  55% { transform: scale(1.1) translateY(-3px) rotate(-2deg); }
+  80% { transform: scale(1.18) translateY(-10px) rotate(1.5deg); }
+}

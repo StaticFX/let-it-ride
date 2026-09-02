@@ -1,0 +1,29 @@
+# Node
+node_modules
+frontend/dist
+dist-ssr
+*.local
+
+# Gradle / JVM
+.gradle
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+*.hprof
+
+# Env & secrets
+.env
+.env.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editors
+.idea
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+*.iml

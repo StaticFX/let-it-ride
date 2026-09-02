@@ -1,0 +1,5 @@
+export { GameBoard } from './GameBoard'
+export { PlayerAvatar } from './PlayerAvatar'
+export { Scoreboard } from './Scoreboard'
+export { Pencil } from './Pencil'
+export { TurnClock } from './TurnClock'

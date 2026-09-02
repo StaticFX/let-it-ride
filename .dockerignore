@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/build
+.gradle
+.git
+.github
+.idea
+.env
+.env.*
+**/.DS_Store
+docs
+features
+*.md

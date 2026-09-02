@@ -1,0 +1,16 @@
+export const theme = {
+  feltOuter: '#f6f1e3',
+  ink: '#1f1c14',
+  inkSoft: '#7a7565',
+  cardFace: '#fdfaef',
+  cardBack: '#f0e9d4',
+  actionAccent: '#b04432',
+  passiveAccent: '#4a6852',
+  fontDisplay: '"Kalam", cursive',
+  fontBody: '"Patrick Hand", cursive',
+  fontNumber: '"Caveat", cursive',
+  buttonBg: '#fdfaef',
+  buttonBorder: '#1f1c14',
+  buttonText: '#1f1c14',
+  strokeWidth: 2.0,
+}
