@@ -24,13 +24,24 @@ the deck itself is never sent to a client, only its size.
 
 ### Docker (what you want on a homelab)
 
+[`docker-compose.yml`](docker-compose.yml) is ready to go — set `<owner>` and:
+
+```sh
+docker compose up -d
+```
+
+Or without compose:
+
 ```sh
 docker run -d --name let-it-ride --restart unless-stopped \
   -p 8080:8080 ghcr.io/<owner>/let-it-ride:latest
 ```
 
 Then open `http://<host>:8080`. Nothing to configure; `PORT` and `JAVA_OPTS` are
-the only knobs.
+the only knobs, and there are no volumes because there is nothing to persist.
+
+Behind a reverse proxy, make sure `/ws` is allowed to upgrade — the compose file
+has snippets for Traefik, Caddy and nginx.
 
 Images are built for `linux/amd64` and `linux/arm64` and pushed by
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) once the backend tests and

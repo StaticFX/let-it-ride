@@ -67,9 +67,15 @@ jobs:
 
   publish:
     name: Publish image
-    # Only images that passed both suites are ever pushed.
+    # Only images that passed both suites are ever pushed — and only for the
+    # default branch, a release tag, or a manual run. Publishing a multi-arch
+    # image for every feature-branch push is a lot of build minutes for a tag
+    # nobody pulls.
     needs: [backend, frontend]
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -116,6 +122,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Skips the SLSA attestation pass, which also keeps the published
+          # manifest to the two real platforms instead of adding unknown/unknown.
+          provenance: false
 
       - name: Smoke test the published image
         # By digest, so this is exactly the artifact that was just pushed.

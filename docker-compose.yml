@@ -1,0 +1,79 @@
+# Let It Ride — single stateless container, no database, no volumes.
+#
+#   docker compose up -d
+#
+# Replace <owner> with your GitHub username/org, or pin a tag such as
+# `:v1.0.0` or `:sha-abc1234` instead of `:latest`.
+
+services:
+  let-it-ride:
+    image: ghcr.io/<owner>/let-it-ride:latest
+    container_name: let-it-ride
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      PORT: 8080
+      # The JVM sizes its heap from the container limit below, not the host.
+      JAVA_OPTS: -XX:MaxRAMPercentage=75.0
+
+    # Rooms are held in memory and vanish with the container. That is the whole
+    # storage story — so the filesystem can stay read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    security_opt:
+      - no-new-privileges:true
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+    # The image ships its own healthcheck (GET /api/health), so `docker compose
+    # ps` reports healthy once the server is actually accepting games.
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+# ─────────────────────────────────────────────────────────────
+# Building from this checkout instead of pulling a published image:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# ...or just swap the `image:` line above for:
+#
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#
+# ─────────────────────────────────────────────────────────────
+# Behind a reverse proxy, the WebSocket at /ws must be allowed to upgrade —
+# that is the one thing that will silently break the game if it is missed.
+#
+# Traefik (add to the service):
+#     labels:
+#       - "traefik.enable=true"
+#       - "traefik.http.routers.letitride.rule=Host(`cards.example.com`)"
+#       - "traefik.http.services.letitride.loadbalancer.server.port=8080"
+#
+# Caddy:
+#     cards.example.com {
+#         reverse_proxy let-it-ride:8080
+#     }
+#
+# nginx:
+#     location / {
+#         proxy_pass         http://127.0.0.1:8080;
+#         proxy_http_version 1.1;
+#         proxy_set_header   Upgrade    $http_upgrade;
+#         proxy_set_header   Connection "upgrade";
+#         proxy_set_header   Host       $host;
+#         proxy_read_timeout 3600s;   # idle lobbies must outlive the default 60s
+#     }

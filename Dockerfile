@@ -4,8 +4,12 @@
 # 1. Build the SPA
 #    Pinned to the same bun we develop against — bump it here and in
 #    .github/workflows/ci.yml together.
+#
+#    --platform=$BUILDPLATFORM: a JS bundle is the same bytes everywhere, so
+#    this runs once on the native runner instead of once per target platform,
+#    with the arm64 pass crawling through QEMU.
 # ─────────────────────────────────────────────
-FROM oven/bun:1.3.6 AS frontend
+FROM --platform=$BUILDPLATFORM oven/bun:1.3.6 AS frontend
 
 WORKDIR /app/frontend
 
@@ -18,8 +22,12 @@ RUN bun run build
 
 # ─────────────────────────────────────────────
 # 2. Build the Kotlin server, with the SPA baked into its resources
+#
+#    Also native-only. The output is a jar — JVM bytecode does not care what
+#    it was compiled on, and compiling Kotlin under emulation is by far the
+#    most expensive thing this build could possibly do.
 # ─────────────────────────────────────────────
-FROM eclipse-temurin:17-jdk AS backend
+FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jdk AS backend
 
 WORKDIR /app
 
@@ -35,7 +43,8 @@ COPY --from=frontend /app/frontend/dist frontend/dist
 RUN ./gradlew --no-daemon :backend:buildFatJar
 
 # ─────────────────────────────────────────────
-# 3. Runtime
+# 3. Runtime — the only stage that is actually built per architecture, and it
+#    is one COPY on top of a JRE.
 # ─────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine
 
