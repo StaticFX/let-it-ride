@@ -2,18 +2,19 @@
 
 # ─────────────────────────────────────────────
 # 1. Build the SPA
+#    Pinned to the same bun we develop against — bump it here and in
+#    .github/workflows/ci.yml together.
 # ─────────────────────────────────────────────
-FROM node:22-alpine AS frontend
+FROM oven/bun:1.3.6 AS frontend
 
-RUN npm install -g pnpm@11
 WORKDIR /app/frontend
 
 # Dependencies first so a source-only change does not reinstall them.
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
 
 COPY frontend/ ./
-RUN pnpm build
+RUN bun run build
 
 # ─────────────────────────────────────────────
 # 2. Build the Kotlin server, with the SPA baked into its resources

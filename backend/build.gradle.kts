@@ -50,7 +50,7 @@ tasks.test {
 /**
  * The built SPA is copied into the jar's resources at `web/`, so a single
  * container serves both the API and the frontend. `frontend/dist` is produced
- * by `pnpm build` (see the Dockerfile / `./gradlew buildFrontend`).
+ * by `bun run build` (see the Dockerfile / `./gradlew buildFrontend`).
  */
 val frontendDist = rootProject.layout.projectDirectory.dir("frontend/dist")
 
@@ -58,7 +58,7 @@ tasks.register<Exec>("buildFrontend") {
     group = "build"
     description = "Builds the Vite frontend into frontend/dist."
     workingDir = rootProject.layout.projectDirectory.dir("frontend").asFile
-    commandLine("sh", "-c", "pnpm install --frozen-lockfile && pnpm build")
+    commandLine("sh", "-c", "bun install --frozen-lockfile && bun run build")
 }
 
 tasks.processResources {

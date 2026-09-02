@@ -50,7 +50,7 @@ Two terminals:
 
 ```sh
 ./gradlew :backend:run                 # rules on :8080
-pnpm --dir frontend dev                # UI on :5173, proxying /api and /ws
+bun --cwd frontend run dev             # UI on :5173, proxying /api and /ws
 ```
 
 ## Layout
@@ -97,9 +97,9 @@ Flip 7 are documented in [`docs/RULES-AUDIT.md`](docs/RULES-AUDIT.md).
 ## Testing
 
 ```sh
-./gradlew :backend:test        # engine
-pnpm --dir frontend typecheck
-pnpm --dir frontend lint
+./gradlew :backend:test              # engine
+bun --cwd frontend run typecheck
+bun --cwd frontend run lint
 ```
 
 The engine suite plays complete games with every deck preset, every house rule
