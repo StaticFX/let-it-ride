@@ -69,6 +69,8 @@ export type GamePhase = 'LOBBY' | 'PLAYING' | 'ROUND_END' | 'GAME_END'
 export interface PendingActionView {
   cardDefId: string
   playerId: string
+  /** The physical card's id — unique per copy, unlike cardDefId. */
+  cardId: string
   /** The only seats this card may be pointed at. */
   validTargets: string[]
 }
@@ -100,6 +102,12 @@ export interface GameStateView {
   roundDeltas: Record<string, number>
   /** Epoch millis the current actor runs out of time, if they are on a clock. */
   turnDeadline?: number
+  /** Epoch millis the round's title card stops showing; nothing is dealt until then. */
+  roundIntroUntil?: number
+  /** Epoch millis the round's closing card appears. */
+  roundOutroFrom?: number
+  /** Epoch millis the closing card gives way to the scoreboard. */
+  roundOutroUntil?: number
 }
 
 // ─── Events ───
@@ -120,7 +128,7 @@ export type GameEvent =
   | { type: 'fizzled'; cardDefId: string; playerId: string }
   | { type: 'flip7'; playerId: string }
   | { type: 'doubleOrNothing'; playerId: string; won: boolean }
-  | { type: 'slots'; playerId: string }
+  | { type: 'slots'; playerId: string; card?: Card }
   | { type: 'timeout'; playerId: string }
   | { type: 'deckReshuffled'; cards: number }
   | { type: 'roundScored'; deltas: Record<string, number>; winnerId?: string }

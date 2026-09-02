@@ -8,23 +8,11 @@ import { GameOver } from './components/pages/GameOver'
 import { EscapeMenu } from './components/overlays/EscapeMenu'
 import { DisconnectOverlay } from './components/overlays/DisconnectOverlay'
 import { resetDealtCards } from './components/cards/dealtCards'
-import { BUST_REVEAL_MS, BUST_SCATTER_MS } from './hooks/useGame'
 import { unlockAudio } from './audio/sfx'
-
-/**
- * Give the bust and flip-7 animations time to land before the summary takes
- * over. A bust plays in two beats — call out the pair, then scatter the hand —
- * so it needs the whole of both.
- */
-const ROUND_END_DELAY_MS = {
-  flip7: 3000,
-  bust: BUST_REVEAL_MS + BUST_SCATTER_MS + 300,
-  none: 0,
-}
 
 function App() {
   const phase = useGameStore((s) => s.state?.phase) ?? 'LOBBY'
-  const events = useGameStore((s) => s.events)
+  const outroUntil = useGameStore((s) => s.state?.roundOutroUntil)
   const catalog = useGameStore((s) => s.catalog)
   const [catalogError, setCatalogError] = useState<string | null>(null)
 
@@ -44,21 +32,18 @@ function App() {
     }
   }, [])
 
-  // Hold on the board for a beat so the last animation of the round plays out.
-  const [displayPhase, setDisplayPhase] = useState(phase)
+  // The round's closing beats — the last animation, then the outro card — run
+  // on the table, so the scoreboard waits for the window the server set.
+  const [clock, setClock] = useState(() => Date.now())
   useEffect(() => {
-    if (displayPhase === phase) return
-    const closingRound = phase === 'ROUND_END' || phase === 'GAME_END'
-    const delay = !closingRound
-      ? ROUND_END_DELAY_MS.none
-      : events.some((e) => e.type === 'flip7')
-        ? ROUND_END_DELAY_MS.flip7
-        : events.some((e) => e.type === 'bust')
-          ? ROUND_END_DELAY_MS.bust
-          : ROUND_END_DELAY_MS.none
-    const timer = setTimeout(() => setDisplayPhase(phase), delay)
-    return () => clearTimeout(timer)
-  }, [phase, displayPhase, events])
+    if (!outroUntil) return
+    const interval = window.setInterval(() => setClock(Date.now()), 80)
+    return () => window.clearInterval(interval)
+  }, [outroUntil])
+
+  const closing = phase === 'ROUND_END' || phase === 'GAME_END'
+  const holdingTable = closing && !!outroUntil && clock < outroUntil
+  const displayPhase = holdingTable ? 'PLAYING' : phase
 
   // Cards animate in from the deck once each; a new round deals a fresh set.
   useEffect(() => {

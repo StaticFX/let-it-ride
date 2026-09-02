@@ -1,68 +1,68 @@
 import { useEffect, useState } from 'react'
-import { theme } from '../../theme'
 
 interface RoundIntroProps {
   round: number
   startingPlayerName: string
-  onDone: () => void
+  /** Epoch millis the card must be gone by — the server deals nothing until then. */
+  untilMs: number
 }
 
-export function RoundIntro({ round, startingPlayerName, onDone }: RoundIntroProps) {
+const FADE_OUT_MS = 500
+
+/**
+ * The round's title card. Its window is set by the server, which refuses to
+ * deal anything while it is up, so the card can never be talking over cards
+ * being dealt behind it.
+ */
+export function RoundIntro({ round, startingPlayerName, untilMs }: RoundIntroProps) {
   const [phase, setPhase] = useState<'in' | 'hold' | 'out'>('in')
 
-  // The server holds the first card of the round for ROUND_INTRO_MS (2600ms).
-  // Finishing comfortably inside that is what keeps cards from appearing behind
-  // this card and being revealed all at once when it lifts.
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase('hold'), 80)
-    const t2 = setTimeout(() => setPhase('out'), 1500)
-    const t3 = setTimeout(onDone, 2000)
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
-  }, [onDone])
+    const settle = window.setTimeout(() => setPhase('hold'), 80)
+    const leave = window.setTimeout(
+      () => setPhase('out'),
+      Math.max(200, untilMs - Date.now() - FADE_OUT_MS),
+    )
+    return () => {
+      window.clearTimeout(settle)
+      window.clearTimeout(leave)
+    }
+  }, [untilMs])
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 200,
-      display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      background: `${theme.feltOuter}cc`,
-      opacity: phase === 'out' ? 0 : 1,
-      transition: phase === 'in'
-        ? 'opacity 300ms ease-out'
-        : 'opacity 500ms ease-in',
-      pointerEvents: 'none',
-    }}>
-      <div style={{
-        fontFamily: theme.fontDisplay,
-        fontSize: 80,
-        fontWeight: 700,
-        color: theme.ink,
-        lineHeight: 1,
-        transform: phase === 'hold'
-          ? 'scale(1) translateY(0)'
-          : phase === 'in'
-            ? 'scale(0.8) translateY(20px)'
-            : 'scale(1.1) translateY(-10px)',
-        opacity: phase === 'hold' ? 1 : 0,
-        transition: phase === 'in'
-          ? 'transform 400ms cubic-bezier(.2,.9,.3,1.3), opacity 300ms ease-out'
-          : 'transform 400ms ease-in, opacity 400ms ease-in',
-      }}>
+    <div
+      className="fixed inset-0 z-[200] flex flex-col items-center justify-center pointer-events-none backdrop-blur-[12px] bg-[var(--felt)]/80"
+      style={{
+        opacity: phase === 'out' ? 0 : 1,
+        transition: phase === 'in' ? 'opacity 300ms ease-out' : `opacity ${FADE_OUT_MS}ms ease-in`,
+      }}
+    >
+      <div
+        className="display text-[80px] font-bold leading-none"
+        style={{
+          transform: phase === 'hold'
+            ? 'scale(1) translateY(0)'
+            : phase === 'in'
+              ? 'scale(0.8) translateY(20px)'
+              : 'scale(1.1) translateY(-10px)',
+          opacity: phase === 'hold' ? 1 : 0,
+          transition: phase === 'in'
+            ? 'transform 400ms cubic-bezier(.2,.9,.3,1.3), opacity 300ms ease-out'
+            : 'transform 400ms ease-in, opacity 400ms ease-in',
+        }}
+      >
         round {round}
       </div>
-      <div style={{
-        fontFamily: theme.fontBody,
-        fontSize: 22,
-        color: theme.inkSoft,
-        marginTop: 12,
-        transform: phase === 'hold' ? 'translateY(0)' : 'translateY(10px)',
-        opacity: phase === 'hold' ? 1 : 0,
-        transition: phase === 'in'
-          ? 'transform 400ms cubic-bezier(.2,.9,.3,1.3) 150ms, opacity 300ms ease-out 150ms'
-          : 'transform 300ms ease-in, opacity 300ms ease-in',
-      }}>
+      <div
+        className="text-[22px] text-[var(--ink-soft)] mt-3"
+        style={{
+          transform: phase === 'hold' ? 'translateY(0)' : 'translateY(10px)',
+          opacity: phase === 'hold' ? 1 : 0,
+          transition: phase === 'in'
+            ? 'transform 400ms cubic-bezier(.2,.9,.3,1.3) 150ms, opacity 300ms ease-out 150ms'
+            : 'transform 300ms ease-in, opacity 300ms ease-in',
+        }}
+      >
         {startingPlayerName} starts
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { theme } from '../../theme'
 import { useElementSize } from '../../hooks/useElementSize'
+import { play } from '../../audio/sfx'
 import { RoughBox } from './RoughShapes'
 
 interface SketchButtonProps {
@@ -30,7 +31,12 @@ export function SketchButton({ children, onClick, disabled, variant = 'primary',
       onMouseLeave={() => { setHovered(false); setPressed(false) }}
       onMouseDown={() => setPressed(true)}
       onMouseUp={() => setPressed(false)}
-      onClick={onClick}
+      onClick={() => {
+        // Every button in the game routes through here, so the click is wired
+        // once rather than at each call site.
+        play('click')
+        onClick?.()
+      }}
       className={className}
       style={{
         background: 'transparent',

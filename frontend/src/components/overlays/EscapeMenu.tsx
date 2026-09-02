@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useGameStore } from '../../state/gameStore'
 import { leaveGame } from '../../net/client'
 import { SketchButton } from '../ui/Button'
+import { VolumeControl } from '../ui/VolumeControl'
 import { RulesPage } from '../rules/RulesPage'
 
 export function EscapeMenu() {
@@ -63,7 +64,12 @@ export function EscapeMenu() {
         `}
       >
         <h2 className="mb-1 -rotate-1">paused</h2>
-        <p className="text-muted mb-6">what do you want to do?</p>
+        <p className="text-muted mb-5">what do you want to do?</p>
+
+        <div className="mb-5">
+          <VolumeControl />
+        </div>
+
         <div className="flex flex-col gap-2.5">
           <SketchButton variant="primary" onClick={resume}>resume</SketchButton>
           <SketchButton variant="ghost" onClick={() => setShowRules(true)}>rules</SketchButton>

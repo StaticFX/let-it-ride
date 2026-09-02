@@ -154,8 +154,16 @@ export function useGame() {
         case 'timeout':
           pushAnimation({ type: 'timeout', playerId: event.playerId })
           break
+        case 'stay':
+          play('goOut')
+          break
+        case 'roundScored':
+          play('roundEnded')
+          break
         case 'slots':
-          setSlots(() => ({ playerId: event.playerId, card: null }))
+          // The server announces the card up front so the reels can land on it
+          // and the machine can be gone before it is dealt.
+          setSlots(() => ({ playerId: event.playerId, card: event.card ?? null }))
           break
         case 'draw':
           // The card the slot machine spun up — land the reels on it.
@@ -195,25 +203,25 @@ export function useGame() {
   )
 
   // ═══════════════════════════════════════════
-  // Round intro
-  // ═══════════════════════════════════════════
-
-  const [introDismissedFor, setIntroDismissedFor] = useState(0)
-  const showRoundIntro = phase === 'PLAYING' && round >= 1 && introDismissedFor !== round
-  const dismissRoundIntro = useCallback(() => setIntroDismissedFor(round), [round])
-
-  // ═══════════════════════════════════════════
-  // Turn clock
+  // Clocks — the server hands out absolute deadlines and the client just
+  // renders against them, so animations cannot drift out of step with play.
   // ═══════════════════════════════════════════
 
   const deadline = state?.turnDeadline
+  const introUntil = state?.roundIntroUntil
+  const outroFrom = state?.roundOutroFrom
+  const outroUntil = state?.roundOutroUntil
   const [clock, setClock] = useState(() => Date.now())
 
+  const ticking = !!deadline || !!introUntil || !!outroUntil
   useEffect(() => {
-    if (!deadline) return
+    if (!ticking) return
     const interval = window.setInterval(() => setClock(Date.now()), 100)
     return () => window.clearInterval(interval)
-  }, [deadline])
+  }, [ticking])
+
+  const showRoundIntro = phase === 'PLAYING' && !!introUntil && clock < introUntil
+  const showRoundOutro = !!outroFrom && !!outroUntil && clock >= outroFrom && clock < outroUntil
 
   const totalMs = (state?.config.turnTimeSeconds ?? 30) * 1000
   const timer: TurnTimer | null = deadline
@@ -234,7 +242,10 @@ export function useGame() {
   // The server works out who a card may legally hit; the picker offers no others.
   const validTargets = pendingAction?.validTargets ?? []
 
-  const pendingKey = pendingAction ? `${pendingAction.playerId}:${pendingAction.cardDefId}` : null
+  // Keyed on the physical card, not its type: two strikes in one round share a
+  // cardDefId, and keying on that left the second one permanently "already
+  // picked" so no seat could be clicked.
+  const pendingKey = pendingAction?.cardId ?? null
   const [choice, setChoice] = useState<{ key: string; targetId: string } | null>(null)
   const targetChosen = choice && choice.key === pendingKey ? choice.targetId : null
 
@@ -303,7 +314,9 @@ export function useGame() {
     slots,
     dismissSlots,
     showRoundIntro,
-    dismissRoundIntro,
+    showRoundOutro,
+    introUntil,
+    outroUntil,
     timer,
   }
 }

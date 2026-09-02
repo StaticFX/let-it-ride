@@ -13,6 +13,7 @@ import { TurnClock } from './TurnClock'
 import { SketchButton } from '../ui/Button'
 import { SoundToggle } from '../ui/SoundToggle'
 import { RoundIntro } from '../overlays/RoundIntro'
+import { RoundOutro } from '../overlays/RoundOutro'
 import { ImpactParticles } from '../overlays/ImpactParticles'
 import { Lucky7Overlay } from '../overlays/Lucky7Overlay'
 import { SlotMachine } from '../overlays/SlotMachine'
@@ -39,7 +40,8 @@ export function GameBoard() {
     deckCount, discardCount, localPlayerId, isMyTurn, isEliminated, mustDraw,
     isDealing, dealingPlayerId, pendingDef, isPickingTarget, pendingIsLocal, validTargets,
     targetChosen, pickTarget, hit, stay,
-    animations, bust, steal, slots, dismissSlots, showRoundIntro, dismissRoundIntro, timer,
+    animations, bust, steal, slots, dismissSlots,
+    showRoundIntro, showRoundOutro, introUntil, outroUntil, timer,
   } = game
 
   const deckCenter = { x: w / 2 - 20, y: h * 0.42 }
@@ -128,11 +130,21 @@ export function GameBoard() {
 
   return (
     <div className={`game-shell ${hasScreenShake ? 'shake' : ''}`}>
-      {showRoundIntro && (
+      {showRoundIntro && introUntil && (
         <RoundIntro
           round={round}
           startingPlayerName={players[roundStartPlayer]?.name ?? '...'}
-          onDone={dismissRoundIntro}
+          untilMs={introUntil}
+        />
+      )}
+
+      {showRoundOutro && outroUntil && (
+        <RoundOutro
+          round={round}
+          winner={players.find((p) => p.id === game.state?.roundWinnerId) ?? null}
+          points={game.state?.roundDeltas[game.state?.roundWinnerId ?? ''] ?? 0}
+          flip7={!!game.state?.flip7PlayerId}
+          untilMs={outroUntil}
         />
       )}
 
@@ -218,10 +230,12 @@ export function GameBoard() {
               position: 'absolute',
               ...seatPos,
               transform: `translate(-50%, -50%) scale(${isBeingDealt ? 1.12 : targetHovered ? 1.15 : 1})`,
-              zIndex: isActive || isBeingDealt || targetHovered ? 10 : targetable ? 5 : 3,
+              // A targetable seat has to sit above the local player's bar
+              // (z-8), or on a short window the bar swallows the click.
+              zIndex: targetable ? 30 : isActive || isBeingDealt ? 10 : 3,
               opacity: dimmed ? 0.45 : isPickingTarget && !targetable ? 0.3 : 1,
               transition: 'opacity 280ms, transform 350ms cubic-bezier(.2,.9,.3,1.3)',
-              cursor: targetable ? 'crosshair' : 'default',
+              cursor: targetable ? 'crosshair' : isPickingTarget ? 'not-allowed' : 'default',
             }}
           >
             <div
@@ -243,6 +257,11 @@ export function GameBoard() {
                     </span>
                     {statusBadge(p)}
                     {timedOutIds.includes(p.id) && <span className="status-badge border border-[var(--ink-soft)]">timed out</span>}
+                    {isPickingTarget && pendingIsLocal && !targetable && p.status === 'active' && (
+                      <span className="status-badge border border-[var(--ink-soft)] text-[var(--ink-soft)]">
+                        {p.hand.length === 0 ? 'no cards' : 'no target'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

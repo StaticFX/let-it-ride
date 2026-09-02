@@ -9,6 +9,7 @@ import { LobbyConfig } from './LobbyConfig'
 import { RulesPage } from '../rules/RulesPage'
 import { Countdown } from '../overlays/Countdown'
 import { SoundToggle } from '../ui/SoundToggle'
+import { SketchInput } from '../ui/SketchInput'
 
 const NAME_KEY = 'let-it-ride:name'
 const DEFAULT_BOTS = 3
@@ -167,13 +168,13 @@ export function Lobby() {
 
           <div className="text-left mb-6">
             <label>what's your name?</label>
-            <input
+            <SketchInput
               type="text"
               value={playerName}
               onChange={(e) => rememberName(e.target.value)}
               placeholder="scribble it here…"
               maxLength={16}
-              className="sketch-input mt-1"
+              className="mt-1"
             />
           </div>
 
@@ -216,14 +217,14 @@ export function Lobby() {
         <div className="max-w-[400px] w-full text-center">
           <h1 className="text-4xl mb-2">join a game</h1>
           <p className="text-muted mb-6">ask the host for the code</p>
-          <input
+          <SketchInput
             type="text"
             value={joinCode}
             onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
             onKeyDown={(e) => e.key === 'Enter' && join()}
             placeholder="_ _ _ _"
             maxLength={4}
-            className="sketch-input text-center text-4xl tracking-[0.5em] font-bold mb-4"
+            className="text-center text-4xl tracking-[0.5em] font-bold mb-4"
           />
           {(localError || error) && <p className="text-[var(--accent)] mb-4">{localError ?? error}</p>}
           <div className="flex gap-3.5">

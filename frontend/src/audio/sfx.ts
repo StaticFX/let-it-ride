@@ -9,8 +9,18 @@
  */
 
 const MUTE_KEY = 'let-it-ride:muted'
+const VOLUME_KEY = 'let-it-ride:volume'
 
-export type SoundName = 'draw' | 'actionCard' | 'bust' | 'freeze' | 'flip7'
+export type SoundName =
+  | 'draw'
+  | 'actionCard'
+  | 'bust'
+  | 'freeze'
+  | 'flip7'
+  | 'goOut'
+  | 'roundEnded'
+  | 'click'
+  | 'keystroke'
 
 const SOURCES: Record<SoundName, string> = {
   draw: '/sounds/draw-card.m4a',
@@ -18,12 +28,17 @@ const SOURCES: Record<SoundName, string> = {
   bust: '/sounds/bust.m4a',
   freeze: '/sounds/freeze.m4a',
   flip7: '/sounds/flip7.m4a',
+  goOut: '/sounds/go-out.m4a',
+  roundEnded: '/sounds/round-ended.m4a',
+  click: '/sounds/button-click.m4a',
+  keystroke: '/sounds/keystroke.m4a',
 }
 
 /**
- * How far each sound may wander, as a fraction of its pitch. Cards are drawn
- * constantly so they need the most variation to stop sounding like a metronome;
- * flip 7 is the one moment in a round worth hearing exactly the same every time.
+ * How far each sound may wander, as a fraction of its pitch. The ones you hear
+ * constantly — cards, keystrokes, clicks — need the most variation to stop
+ * sounding like a metronome. Flip 7 is the one moment in a round worth hearing
+ * exactly the same every time, and the round-end sting is a full stop.
  */
 const PITCH_SPREAD: Record<SoundName, number> = {
   draw: 0.14,
@@ -31,23 +46,38 @@ const PITCH_SPREAD: Record<SoundName, number> = {
   bust: 0.06,
   freeze: 0.07,
   flip7: 0,
+  goOut: 0.08,
+  roundEnded: 0,
+  click: 0.11,
+  keystroke: 0.18,
 }
 
+/** Per-sound trim, before the player's own volume. */
 const GAIN: Record<SoundName, number> = {
   draw: 0.55,
   actionCard: 0.8,
   bust: 0.9,
   freeze: 0.8,
   flip7: 0.95,
+  goOut: 0.7,
+  roundEnded: 0.85,
+  click: 0.45,
+  keystroke: 0.3,
 }
 
 let context: AudioContext | null = null
 const buffers = new Map<SoundName, AudioBuffer>()
 let loading: Promise<void> | null = null
 let muted = localStorage.getItem(MUTE_KEY) === '1'
+let volume = readVolume()
 
 /** The same sound twice in a row is the one thing variation cannot hide. */
 const lastRate = new Map<SoundName, number>()
+
+function readVolume(): number {
+  const stored = Number(localStorage.getItem(VOLUME_KEY))
+  return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : 0.7
+}
 
 function audioContext(): AudioContext | null {
   if (context) return context
@@ -93,6 +123,19 @@ export function setMuted(next: boolean): void {
   localStorage.setItem(MUTE_KEY, next ? '1' : '0')
 }
 
+export function getVolume(): number {
+  return volume
+}
+
+export function setVolume(next: number): void {
+  volume = Math.min(1, Math.max(0, next))
+  localStorage.setItem(VOLUME_KEY, String(volume))
+  // Dragging to zero is the same intent as muting, and dragging back up is the
+  // same as unmuting — otherwise the slider looks broken while muted.
+  if (volume === 0) setMuted(true)
+  else if (muted) setMuted(false)
+}
+
 function pitchFor(name: SoundName): number {
   const spread = PITCH_SPREAD[name]
   if (spread === 0) return 1
@@ -107,7 +150,7 @@ function pitchFor(name: SoundName): number {
 }
 
 export function play(name: SoundName): void {
-  if (muted) return
+  if (muted || volume === 0) return
   const ctx = audioContext()
   if (!ctx) return
 
@@ -121,7 +164,7 @@ export function play(name: SoundName): void {
   source.playbackRate.value = pitchFor(name)
 
   const gain = ctx.createGain()
-  gain.gain.value = GAIN[name]
+  gain.gain.value = GAIN[name] * volume
 
   source.connect(gain).connect(ctx.destination)
   source.start()
