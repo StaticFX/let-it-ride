@@ -176,10 +176,12 @@ export function GameBoard() {
 
       {/* It is your move — say so with the whole screen, not just the corner */}
       <div
-        className={`turn-vignette ${isMyTurn ? 'opacity-100' : 'opacity-0'} ${clockIsClose ? 'urgent' : ''}`}
+        className={`turn-vignette ${isMyTurn ? 'is-active' : ''} ${clockIsClose ? 'is-urgent' : ''}`}
         data-testid="turn-vignette"
         data-active={isMyTurn}
-      />
+      >
+        <div className="turn-vignette-glow" />
+      </div>
 
       {/* Outer frame */}
       <div className="absolute inset-0 pointer-events-none z-[1]">
