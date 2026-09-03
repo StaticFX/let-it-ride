@@ -42,8 +42,8 @@ const SOURCES: Record<SoundName, string> = {
 }
 
 /**
- * The samples are wildly different levels — measured RMS runs from 0.0056
- * (keystroke) to 0.566 (flip 7), a hundredfold spread — so these are not taste,
+ * The samples are wildly different levels — measured RMS runs from 0.0079
+ * (keystroke) to 0.566 (flip 7), a seventyfold spread — so these are not taste,
  * they are normalisation. Each gain brings its sample to roughly the same
  * loudness, capped so peaks stay under 1.0, and is then trimmed for how much
  * attention the sound deserves: a keystroke sits under everything, a flip 7 is
@@ -52,6 +52,12 @@ const SOURCES: Record<SoundName, string> = {
  * Picking these by ear-free guesswork is what made the click and keystroke
  * inaudible: they are the two quietest files and had been given the two
  * lowest gains.
+ *
+ * Measure against the mono buffer [toMono] produces, not the raw file. Four of
+ * the samples were stereo with a dead right channel, and an RMS taken over the
+ * interleaved samples counted that silence as signal — it read a factor of √2
+ * low and earned those four a gain √2 too high. Playing out of one ear happened
+ * to cancel it; centring them does not, so their gains came down to match.
  */
 const GAIN: Record<SoundName, number> = {
   draw: 1.8,
@@ -59,11 +65,17 @@ const GAIN: Record<SoundName, number> = {
   bust: 0.82,
   freeze: 1.4,
   flip7: 0.21,
-  goOut: 3.1,
-  roundEnded: 4.4,
-  click: 3.0,
-  keystroke: 3.9,
+  goOut: 2.19,
+  roundEnded: 3.11,
+  click: 2.12,
+  keystroke: 2.76,
 }
+
+/**
+ * Below this a channel is encoder noise rather than content. The dead sides of
+ * the stereo samples peak at 0.0002; anything real is orders of magnitude up.
+ */
+const SILENT_PEAK = 0.001
 
 /**
  * How far each sound may wander, as a fraction of its pitch. The ones you hear
@@ -132,6 +144,36 @@ export function prefetchAudio(): void {
   ).then(() => undefined)
 }
 
+/**
+ * Collapses a sample to one channel, so it plays out of both ears.
+ *
+ * A mono buffer is copied to both outputs at full level on the way to the
+ * speakers, which is what the samples that were already mono have always done.
+ * The rest were not really stereo: they are mono recordings saved into a stereo
+ * container with a silent right channel, so they only ever came out of the left.
+ *
+ * Averaging every channel would drop those 6dB, because the dead side would
+ * drag the sum down — so channels carrying no signal are left out of the
+ * divisor. A genuinely stereo sample still averages the normal way.
+ */
+function toMono(ctx: AudioContext, buffer: AudioBuffer): AudioBuffer {
+  if (buffer.numberOfChannels === 1) return buffer
+
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c))
+  const live = channels.filter((data) => data.some((sample) => Math.abs(sample) > SILENT_PEAK))
+  // An entirely silent sample has nothing to weigh; treat it as a normal mix.
+  const contributing = live.length > 0 ? live : channels
+
+  const mono = ctx.createBuffer(1, buffer.length, buffer.sampleRate)
+  const out = mono.getChannelData(0)
+  for (let i = 0; i < buffer.length; i++) {
+    let sum = 0
+    for (const data of contributing) sum += data[i]
+    out[i] = sum / contributing.length
+  }
+  return mono
+}
+
 async function decodeAll(ctx: AudioContext): Promise<void> {
   prefetchAudio()
   await prefetching
@@ -142,7 +184,7 @@ async function decodeAll(ctx: AudioContext): Promise<void> {
       if (!bytes) return
       try {
         // decodeAudioData detaches the buffer, so hand it a copy.
-        buffers.set(name, await ctx.decodeAudioData(bytes.slice(0)))
+        buffers.set(name, toMono(ctx, await ctx.decodeAudioData(bytes.slice(0))))
       } catch {
         // Undecodable on this browser; stay silent rather than break.
       }

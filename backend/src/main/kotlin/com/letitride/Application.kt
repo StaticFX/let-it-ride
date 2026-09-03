@@ -8,8 +8,10 @@ import com.letitride.server.CreateRoomResponse
 import com.letitride.server.RoomInfoResponse
 import com.letitride.server.RoomRegistry
 import com.letitride.server.ServerMessage
+import com.letitride.server.TEST_HOOKS_ENV
 import com.letitride.server.buildCatalog
 import com.letitride.server.newPlayerId
+import com.letitride.server.testHooksEnabled
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -74,10 +76,18 @@ fun Application.module() {
     val registry = RoomRegistry(appJson, this)
     val hasBundledFrontend = javaClass.classLoader.getResource("web/index.html") != null
 
+    // Off in every shipped image. The end-to-end suite turns it on so a run can
+    // pin a room's seed and replay the same deal card for card.
+    val testHooks = testHooksEnabled()
+    if (testHooks) log.warn("$TEST_HOOKS_ENV is on — clients may pin a room's shuffle. Never do this in production.")
+
     routing {
         route("/api") {
             get("/health") {
-                call.respondText("""{"status":"ok","rooms":${registry.size()}}""", io.ktor.http.ContentType.Application.Json)
+                call.respondText(
+                    """{"status":"ok","rooms":${registry.size()},"testHooks":$testHooks}""",
+                    io.ktor.http.ContentType.Application.Json,
+                )
             }
 
             get("/catalog") { call.respond(buildCatalog()) }
@@ -89,7 +99,7 @@ fun Application.module() {
                     call.respond(HttpStatusCode.BadRequest, ApiError("a name is required"))
                     return@post
                 }
-                val room = registry.create()
+                val room = registry.create(seed = request?.seed?.takeIf { testHooks })
                 call.respond(CreateRoomResponse(roomCode = room.code, playerId = newPlayerId()))
             }
 

@@ -32,6 +32,8 @@ export function RoundIntro({ round, startingPlayerName, untilMs }: RoundIntroPro
   return (
     <div
       className="fixed inset-0 z-[200] flex flex-col items-center justify-center pointer-events-none backdrop-blur-[12px] bg-[var(--felt)]/80"
+      data-testid="round-intro"
+      data-round={round}
       style={{
         opacity: phase === 'out' ? 0 : 1,
         transition: phase === 'in' ? 'opacity 300ms ease-out' : `opacity ${FADE_OUT_MS}ms ease-in`,

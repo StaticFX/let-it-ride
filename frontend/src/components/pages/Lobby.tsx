@@ -69,6 +69,20 @@ export function Lobby() {
     ? screen === 'settings' ? 'settings' : 'room'
     : screen === 'join' ? 'join' : 'choose'
 
+  // Leaving lands on the front door however you go: the pause menu and the
+  // disconnect overlay both call `leaveGame()` without going through `leave()`,
+  // and somebody who came in by code would otherwise be handed back the join
+  // screen by a button that said "back to menu".
+  const wasInSession = useRef(false)
+  useEffect(() => {
+    if (inSession) {
+      wasInSession.current = true
+    } else if (wasInSession.current) {
+      wasInSession.current = false
+      setScreen('choose')
+    }
+  }, [inSession])
+
   // Filling a bot table is two steps: host the room, then ask for bots — one
   // per state update, so the server confirms each seat before the next.
   useEffect(() => {
@@ -139,7 +153,7 @@ export function Lobby() {
   // ── Settings ──
   if (view === 'settings' && config) {
     return (
-      <div className="page-shell justify-start pt-12">
+      <div className="page-shell justify-start pt-12" data-testid="settings-screen" data-host={isHost}>
         <div className="content-width">
           <h1 className="text-4xl mb-1 text-center sway-slow">~ settings ~</h1>
           <p className="text-muted text-center mb-6">
@@ -148,7 +162,7 @@ export function Lobby() {
           <div className={`mb-6 ${isHost ? '' : 'pointer-events-none opacity-70'}`}>
             <LobbyConfig config={config} onChange={updateConfig} />
           </div>
-          <SketchButton variant="ghost" onClick={() => setScreen('room')}>← done</SketchButton>
+          <SketchButton variant="ghost" testId="settings-done" onClick={() => setScreen('room')}>← done</SketchButton>
         </div>
       </div>
     )
@@ -157,7 +171,7 @@ export function Lobby() {
   // ── Start ──
   if (view === 'choose' && connection !== 'connected' && connection !== 'connecting') {
     return (
-      <div className="page-shell justify-center">
+      <div className="page-shell justify-center" data-testid="title-screen">
         <div className="max-w-[400px] w-full text-center">
           <div className="flex justify-center mb-4">
             <CardBack size="deck" style={{ transform: 'rotate(-12deg)', opacity: 0.6 }} />
@@ -170,6 +184,7 @@ export function Lobby() {
             <label>what's your name?</label>
             <SketchInput
               type="text"
+              data-testid="name-input"
               value={playerName}
               onChange={(e) => rememberName(e.target.value)}
               placeholder="scribble it here…"
@@ -178,13 +193,13 @@ export function Lobby() {
             />
           </div>
 
-          {(localError || error) && <p className="text-[var(--accent)] mb-4">{localError ?? error}</p>}
+          {(localError || error) && <p className="text-[var(--accent)] mb-4" data-testid="lobby-error">{localError ?? error}</p>}
 
           <div className="flex gap-3.5 mb-4">
-            <SketchButton variant="primary" onClick={() => host()} disabled={!playerName.trim() || busy}>
+            <SketchButton variant="primary" testId="host-game" onClick={() => host()} disabled={!playerName.trim() || busy}>
               host a game
             </SketchButton>
-            <SketchButton variant="ghost" onClick={() => setScreen('join')} disabled={!playerName.trim()}>
+            <SketchButton variant="ghost" testId="join-game" onClick={() => setScreen('join')} disabled={!playerName.trim()}>
               join a game
             </SketchButton>
           </div>
@@ -196,10 +211,10 @@ export function Lobby() {
           </div>
 
           <div className="flex gap-3.5">
-            <SketchButton variant="ghost" onClick={() => host(DEFAULT_BOTS)} disabled={!playerName.trim() || busy}>
+            <SketchButton variant="ghost" testId="play-vs-bots" onClick={() => host(DEFAULT_BOTS)} disabled={!playerName.trim() || busy}>
               play vs bots
             </SketchButton>
-            <SketchButton variant="ghost" onClick={() => setShowRules(true)}>rules</SketchButton>
+            <SketchButton variant="ghost" testId="open-rules" onClick={() => setShowRules(true)}>rules</SketchButton>
           </div>
 
           <div className="mt-6 flex justify-center">
@@ -213,12 +228,13 @@ export function Lobby() {
   // ── Join code ──
   if (view === 'join' && connection !== 'connected' && connection !== 'connecting') {
     return (
-      <div className="page-shell justify-center">
+      <div className="page-shell justify-center" data-testid="join-screen">
         <div className="max-w-[400px] w-full text-center">
           <h1 className="text-4xl mb-2">join a game</h1>
           <p className="text-muted mb-6">ask the host for the code</p>
           <SketchInput
             type="text"
+            data-testid="join-code-input"
             value={joinCode}
             onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
             onKeyDown={(e) => e.key === 'Enter' && join()}
@@ -226,10 +242,10 @@ export function Lobby() {
             maxLength={4}
             className="text-center text-4xl tracking-[0.5em] font-bold mb-4"
           />
-          {(localError || error) && <p className="text-[var(--accent)] mb-4">{localError ?? error}</p>}
+          {(localError || error) && <p className="text-[var(--accent)] mb-4" data-testid="lobby-error">{localError ?? error}</p>}
           <div className="flex gap-3.5">
-            <SketchButton variant="ghost" onClick={() => { setScreen('choose'); setLocalError(null) }}>← back</SketchButton>
-            <SketchButton variant="primary" onClick={join} disabled={busy}>join!</SketchButton>
+            <SketchButton variant="ghost" testId="join-back" onClick={() => { setScreen('choose'); setLocalError(null) }}>← back</SketchButton>
+            <SketchButton variant="primary" testId="join-submit" onClick={join} disabled={busy}>join!</SketchButton>
           </div>
         </div>
       </div>
@@ -239,11 +255,11 @@ export function Lobby() {
   // ── Connecting ──
   if (connection === 'connecting' || !state || !config || !preset) {
     return (
-      <div className="page-shell justify-center">
+      <div className="page-shell justify-center" data-testid="connecting-screen">
         <div className="text-center">
           <h2 className="mb-3 sway-mid">connecting…</h2>
           <p className="text-muted mb-6">finding the table</p>
-          <SketchButton variant="ghost" onClick={leave}>cancel</SketchButton>
+          <SketchButton variant="ghost" testId="connect-cancel" onClick={leave}>cancel</SketchButton>
         </div>
       </div>
     )
@@ -258,7 +274,7 @@ export function Lobby() {
   const missing = Math.max(0, minPlayers - players.length)
 
   return (
-    <div className="page-shell justify-start pt-12">
+    <div className="page-shell justify-start pt-12" data-testid="waiting-room" data-host={isHost}>
       {countdown && <Countdown onDone={startGame} />}
 
       <div className="max-w-[460px] w-full">
@@ -275,7 +291,7 @@ export function Lobby() {
               className="mt-3 bg-transparent border-none cursor-pointer block mx-auto"
             >
               <label>room code: </label>
-              <span className="display text-4xl tracking-[0.25em] room-code-border pb-1 select-all">{roomCode}</span>
+              <span data-testid="room-code" className="display text-4xl tracking-[0.25em] room-code-border pb-1 select-all">{roomCode}</span>
               <small className="block mt-2">{copied ? 'copied!' : 'share it with your friends'}</small>
             </button>
           )}
@@ -288,11 +304,12 @@ export function Lobby() {
           <div className="flex items-center justify-between mb-3">
             <p>
               <span className="text-muted">deck: </span>
-              <span className="display text-xl">{preset.name}</span>
+              <span className="display text-xl" data-testid="table-deck-name">{preset.name}</span>
               <small className="ml-1.5">({preset.cardCount} cards)</small>
             </p>
             <button
               onClick={() => setShowDeckCards(!showDeckCards)}
+              data-testid="toggle-deck-cards"
               className="bg-transparent border-none cursor-pointer display text-base text-[var(--accent)]"
             >
               {showDeckCards ? 'hide cards' : 'see cards'}
@@ -314,26 +331,26 @@ export function Lobby() {
 
           <p className="mb-1">
             <span className="text-muted">goal: </span>
-            <span className="display text-xl">{winLabel}</span>
+            <span className="display text-xl" data-testid="table-goal">{winLabel}</span>
           </p>
           <p className="mb-1">
             <span className="text-muted">turn timer: </span>
-            <span className="display text-xl">{config.turnTimeSeconds}s</span>
+            <span className="display text-xl" data-testid="table-timer">{config.turnTimeSeconds}s</span>
           </p>
           {config.ruleIds.length > 0 && (
             <p>
               <span className="text-muted">house rules: </span>
-              <span className="display text-xl">
+              <span className="display text-xl" data-testid="table-house-rules">
                 {config.ruleIds.map((id) => findRule(catalog, id)?.name ?? id).join(', ')}
               </span>
             </p>
           )}
 
           <div className="mt-4 flex gap-3.5">
-            <SketchButton variant="ghost" onClick={() => setScreen('settings')}>
+            <SketchButton variant="ghost" testId="open-settings" onClick={() => setScreen('settings')}>
               {isHost ? 'change settings' : 'see settings'}
             </SketchButton>
-            <SketchButton variant="ghost" onClick={() => setShowRules(true)}>rules</SketchButton>
+            <SketchButton variant="ghost" testId="open-rules" onClick={() => setShowRules(true)}>rules</SketchButton>
           </div>
         </div>
 
@@ -344,7 +361,14 @@ export function Lobby() {
             <p className="text-muted text-lg py-3 italic">waiting for friends…</p>
           ) : (
             players.map((p, i) => (
-              <div key={p.id} className="flex items-center gap-2 py-1.5 display text-xl">
+              <div
+                key={p.id}
+                data-testid="lobby-player"
+                data-player-id={p.id}
+                data-player-name={p.name}
+                data-bot={p.isBot}
+                className="flex items-center gap-2 py-1.5 display text-xl"
+              >
                 <small>{i + 1}.</small>
                 <span className="flex-1">{p.name}</span>
                 {p.isBot && <small className="font-normal">bot</small>}
@@ -352,6 +376,7 @@ export function Lobby() {
                 {isHost && p.id !== state.hostId && (
                   <button
                     onClick={() => send({ type: 'KICK', playerId: p.id })}
+                    data-testid="kick-player"
                     className="bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] px-1.5 -rotate-1"
                   >
                     kick
@@ -363,6 +388,7 @@ export function Lobby() {
           {isHost && players.length < maxPlayers && (
             <button
               onClick={() => send({ type: 'ADD_BOT' })}
+              data-testid="add-bot"
               className="mt-2 bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] -rotate-1"
             >
               + add a bot
@@ -370,17 +396,19 @@ export function Lobby() {
           )}
         </div>
 
-        {error && <p className="text-[var(--accent)] text-center mb-3">{error}</p>}
+        {error && <p className="text-[var(--accent)] text-center mb-3" data-testid="lobby-error">{error}</p>}
 
         <div className="flex gap-3.5">
           {isHost ? (
-            <SketchButton variant="primary" onClick={() => setCountdown(true)} disabled={missing > 0}>
+            <SketchButton variant="primary" testId="start-game" onClick={() => setCountdown(true)} disabled={missing > 0}>
               {missing > 0 ? `need ${missing} more` : 'let it ride!'}
             </SketchButton>
           ) : (
-            <p className="flex-1 flex items-center justify-center text-muted text-lg">waiting for host to start…</p>
+            <p className="flex-1 flex items-center justify-center text-muted text-lg" data-testid="waiting-for-host">
+              waiting for host to start…
+            </p>
           )}
-          <SketchButton variant="ghost" onClick={leave}>leave</SketchButton>
+          <SketchButton variant="ghost" testId="leave-room" onClick={leave}>leave</SketchButton>
         </div>
       </div>
     </div>

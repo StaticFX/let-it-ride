@@ -17,7 +17,7 @@ export function DisconnectOverlay() {
 
   if (reconnecting) {
     return (
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[600] sketch-box rounded px-4 py-2">
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[600] sketch-box rounded px-4 py-2" data-testid="reconnecting">
         <p className="text-muted sway-mid">reconnecting…</p>
       </div>
     )
@@ -26,11 +26,11 @@ export function DisconnectOverlay() {
   if (!lost) return null
 
   return (
-    <div className="fixed inset-0 z-[600] bg-black/30 flex items-center justify-center">
+    <div className="fixed inset-0 z-[600] bg-black/30 flex items-center justify-center" data-testid="disconnected" data-kicked={kicked}>
       <div className="sketch-box rounded p-8 text-center max-w-[320px]">
         <h2 className="mb-2 -rotate-1">{kicked ? 'removed' : 'disconnected'}</h2>
         <p className="text-muted mb-6">{error}</p>
-        <SketchButton variant="primary" onClick={leaveGame}>back to menu</SketchButton>
+        <SketchButton variant="primary" testId="back-to-menu" onClick={leaveGame}>back to menu</SketchButton>
       </div>
     </div>
   )

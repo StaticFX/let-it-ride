@@ -14,7 +14,12 @@ export function GameOver() {
   const isLocalWinner = winner?.id === localPlayerId
 
   return (
-    <div className="page-shell justify-center">
+    <div
+      className="page-shell justify-center"
+      data-testid="game-over"
+      data-winner-id={state.gameWinnerId ?? ''}
+      data-winner-name={winner?.name ?? ''}
+    >
       <div className="max-w-[460px] w-full text-center">
         <small>game over</small>
         <h1 className="text-5xl mb-1 animate-[swayMore_3s_ease-in-out_infinite]">
@@ -29,7 +34,15 @@ export function GameOver() {
         <div className="sketch-box text-left rounded p-4 mb-6">
           <h3 className="mb-2 -rotate-1">~ final standings ~</h3>
           {sorted.map((p, i) => (
-            <div key={p.id} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'opacity-70' : ''}`}>
+            <div
+              key={p.id}
+              data-testid="standings-row"
+              data-player-id={p.id}
+              data-player-name={p.name}
+              data-score={p.score}
+              data-rank={i + 1}
+              className={`flex items-center justify-between py-1.5 ${i > 0 ? 'opacity-70' : ''}`}
+            >
               <div className="flex items-center gap-2">
                 <small className="w-5">{i + 1}.</small>
                 <span className="display text-xl">{p.name}</span>
@@ -52,7 +65,7 @@ export function GameOver() {
           </div>
         )}
 
-        <SketchButton variant="primary" onClick={leaveGame}>play again!</SketchButton>
+        <SketchButton variant="primary" testId="play-again" onClick={leaveGame}>play again!</SketchButton>
       </div>
     </div>
   )

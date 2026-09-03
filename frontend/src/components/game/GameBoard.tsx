@@ -9,6 +9,7 @@ import { CardBack } from '../cards/CardBack'
 import { DealtCard } from '../cards/DealtCard'
 import { PlayerAvatar } from './PlayerAvatar'
 import { Scoreboard } from './Scoreboard'
+import { TableNote } from './TableNote'
 import { TurnClock } from './TurnClock'
 import { SketchButton } from '../ui/Button'
 import { SoundToggle } from '../ui/SoundToggle'
@@ -28,6 +29,13 @@ const SEAT_POSITIONS = [
   { left: '91%', top: '46%' },
 ]
 
+/**
+ * How much clock is left before the countdown stops being a detail in the
+ * corner and moves to the middle of the table, where everyone is already
+ * looking.
+ */
+const CLOCK_CLOSE_MS = 10_000
+
 export function GameBoard() {
   const game = useGame()
   const catalog = useCatalog()
@@ -45,6 +53,8 @@ export function GameBoard() {
   } = game
 
   const deckCenter = { x: w / 2 - 20, y: h * 0.42 }
+  /** Where a card being played is held up before it is sent at a seat. */
+  const cardStage = { x: w / 2, y: h * 0.62 }
 
   function seatOf(playerIdx: number) {
     if (playerIdx === meIdx) return { x: w / 2, y: h - 120 }
@@ -66,6 +76,7 @@ export function GameBoard() {
   const hasScreenShake = animations.some((a) => a.type === 'screenShake')
   const impact = animations.find((a) => a.type === 'impact')
   const flip7 = animations.find((a) => a.type === 'flip7')
+  const smashes = animations.filter((a) => a.type === 'smash')
   const freezes = animations.filter((a) => a.type === 'freeze')
   const drawThrees = animations.filter((a) => a.type === 'drawThree')
   const fizzles = animations.filter((a) => a.type === 'fizzled')
@@ -76,6 +87,9 @@ export function GameBoard() {
   const canInspect = !isPickingTarget
   const myHovered = hoveredPlayerId === me?.id
   const mySpread = isMyTurn || myHovered
+  // Once the clock is nearly out it stops being a corner detail and goes up
+  // over the deck instead — one clock, in the place worth looking at.
+  const clockIsClose = !!timer && !isDealing && timer.remainingMs <= CLOCK_CLOSE_MS
 
   /** How a card in `playerId`'s hand should be treated by the bust animation. */
   function bustRole(playerId: string, cardId: string): 'none' | 'match' | 'other' {
@@ -103,6 +117,10 @@ export function GameBoard() {
       <div
         key={card.id}
         onClick={canInspect ? (e) => { e.stopPropagation(); setInspectedCard(card) } : undefined}
+        data-testid="hand-card"
+        data-card-id={card.id}
+        data-card-kind={card.kind}
+        data-card-label={card.label}
         className="origin-bottom cursor-pointer"
         style={{
           marginLeft: idx === 0 ? 0 : size === 'normal' ? (spread ? -32 : -38) : spread ? -18 : -30,
@@ -129,7 +147,15 @@ export function GameBoard() {
   }
 
   return (
-    <div className={`game-shell ${hasScreenShake ? 'shake' : ''}`}>
+    <div
+      className={`game-shell ${hasScreenShake ? 'shake' : ''}`}
+      data-testid="game-board"
+      data-round={round}
+      data-my-turn={isMyTurn}
+      data-dealing={isDealing}
+      data-picking-target={isPickingTarget}
+      data-my-status={me?.status ?? 'none'}
+    >
       {showRoundIntro && introUntil && (
         <RoundIntro
           round={round}
@@ -147,6 +173,13 @@ export function GameBoard() {
           untilMs={outroUntil}
         />
       )}
+
+      {/* It is your move — say so with the whole screen, not just the corner */}
+      <div
+        className={`turn-vignette ${isMyTurn ? 'opacity-100' : 'opacity-0'} ${clockIsClose ? 'urgent' : ''}`}
+        data-testid="turn-vignette"
+        data-active={isMyTurn}
+      />
 
       {/* Outer frame */}
       <div className="absolute inset-0 pointer-events-none z-[1]">
@@ -166,24 +199,43 @@ export function GameBoard() {
 
       {/* Top-right */}
       <div className="absolute top-7 right-[38px] z-[55] text-right flex flex-col items-end gap-1">
-        <small className="rotate-1 block">round {String(round).padStart(2, '0')}</small>
-        <div className="display text-[30px] leading-none flex items-center gap-2.5 justify-end rotate-1 sway-mid">
+        <small className="rotate-1 block" data-testid="round-label">round {String(round).padStart(2, '0')}</small>
+        <div className="display text-[30px] leading-none flex items-center gap-2.5 justify-end rotate-1 sway-mid" data-testid="turn-name">
           <span className="text-[var(--accent)]">→</span>
           {isPickingTarget
             ? players.find((p) => p.id === game.pendingAction?.playerId)?.name ?? '...'
             : isDealing ? 'dealing…' : currentPlayer?.name || '...'}
         </div>
-        <small className="rotate-1 block">
+        <small className="rotate-1 block" data-testid="turn-prompt">
           {isPickingTarget
             ? pendingIsLocal ? 'pick a target!' : 'is picking a target…'
             : isDealing ? '' : isMyTurn ? 'your move!' : 'to act…'}
         </small>
-        {timer && <TurnClock timer={timer} />}
+        {timer && !clockIsClose && <TurnClock timer={timer} />}
       </div>
+
+      {/* The last ten seconds, up where the deck is */}
+      {timer && clockIsClose && (
+        <div
+          className="absolute left-1/2 z-[60] flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1 pointer-events-none"
+          style={{ top: h * 0.42 - 96 }}
+          data-testid="deck-clock"
+        >
+          <TurnClock timer={timer} size="lg" />
+          <small className={`display whitespace-nowrap ${timer.remainingMs <= 5000 ? 'text-[var(--accent)]' : ''}`}>
+            {isMyTurn ? 'your move — quick!' : `${currentPlayer?.name ?? 'someone'} is running out`}
+          </small>
+        </div>
+      )}
 
       {/* Center piles */}
       <div className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 flex items-center gap-[38px] z-[4]">
-        <div className={`relative ${isMyTurn ? 'cursor-pointer' : 'cursor-default'}`} onClick={isMyTurn ? hit : undefined}>
+        <div
+          className={`relative ${isMyTurn ? 'cursor-pointer' : 'cursor-default'}`}
+          onClick={isMyTurn ? hit : undefined}
+          data-testid="draw-pile"
+          data-count={deckCount}
+        >
           {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
@@ -201,7 +253,7 @@ export function GameBoard() {
             {String(deckCount).padStart(2, '0')} · draw
           </div>
         </div>
-        <div className="relative w-[108px] h-[152px] flex items-center justify-center">
+        <div className="relative w-[108px] h-[152px] flex items-center justify-center" data-testid="discard-pile" data-count={discardCount}>
           <RoughBox width={108} height={152} stroke="var(--ink)" strokeWidth={1.8} roughness={2.0} dashed boil={false} />
           <div className="display text-[17px] text-[var(--ink-soft)] text-center leading-tight -rotate-3">
             discard<br />{discardCount}
@@ -226,6 +278,15 @@ export function GameBoard() {
             onClick={targetable ? () => pickTarget(p.id) : undefined}
             onMouseEnter={() => setHoveredPlayerId(p.id)}
             onMouseLeave={() => setHoveredPlayerId((id) => (id === p.id ? null : id))}
+            data-testid="seat"
+            data-player-id={p.id}
+            data-player-name={p.name}
+            data-status={p.status}
+            data-hand-value={p.handValue}
+            data-hand-size={p.hand.length}
+            data-passive-count={p.passives.length}
+            data-targetable={targetable}
+            data-bot={p.isBot}
             style={{
               position: 'absolute',
               ...seatPos,
@@ -278,6 +339,9 @@ export function GameBoard() {
                       <div
                         key={card.id}
                         onClick={canInspect ? (e) => { e.stopPropagation(); setInspectedCard(card) } : undefined}
+                        data-testid="passive-card"
+                        data-card-id={card.id}
+                        data-card-def-id={card.defId}
                         className="card-fan-transition opacity-85 cursor-pointer"
                         style={{
                           marginLeft: idx === 0 ? 0 : -30,
@@ -316,6 +380,15 @@ export function GameBoard() {
                 onClick={targetable ? () => pickTarget(me.id) : undefined}
                 onMouseEnter={() => setHoveredPlayerId(me.id)}
                 onMouseLeave={() => setHoveredPlayerId((id) => (id === me.id ? null : id))}
+                data-testid="seat"
+                data-self="true"
+                data-player-id={me.id}
+                data-player-name={me.name}
+                data-status={me.status}
+                data-hand-value={me.handValue}
+                data-hand-size={me.hand.length}
+                data-passive-count={me.passives.length}
+                data-targetable={targetable}
                 className={`flex items-end gap-[18px] px-4 py-2 relative transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)] ${isFrozen(me.id) ? 'frozen-seat' : ''}`}
                 style={{
                   cursor: targetable ? 'crosshair' : 'default',
@@ -367,6 +440,9 @@ export function GameBoard() {
                         <div
                           key={card.id}
                           onClick={canInspect ? () => setInspectedCard(card) : undefined}
+                          data-testid="passive-card"
+                          data-card-id={card.id}
+                          data-card-def-id={card.defId}
                           className="card-fan-transition-slow opacity-85 cursor-pointer"
                           style={{
                             marginLeft: idx === 0 ? 0 : -38,
@@ -392,22 +468,35 @@ export function GameBoard() {
         <Scoreboard players={players} currentPlayerId={currentPlayer?.id || ''} localPlayerId={localPlayerId} />
       </div>
 
-      {/* The card waiting for a target */}
+      {/* What is being played, opposite the running score */}
+      {game.state && (
+        <div className="absolute right-[38px] bottom-9 z-[55]">
+          <TableNote config={game.state.config} />
+        </div>
+      )}
+
+      {/* The card waiting for a target. Once a seat is picked it only winds up —
+          the trip across the table is the smash below, which the server starts
+          and which every client sees, not just the one that did the picking. */}
       {isPickingTarget && pendingDef && (() => {
-        const pos = targetChosen ? seatOfId(targetChosen) : { x: w / 2, y: h * 0.62 }
-        const landed = !!targetChosen
+        const committed = !!targetChosen
 
         return (
           <div
             className="fixed z-[200] pointer-events-none flex flex-col items-center gap-2.5"
+            data-testid="pending-action"
+            data-card-def-id={pendingDef.id}
+            data-card-id={game.pendingAction?.cardId ?? ''}
+            data-mine={pendingIsLocal}
+            data-chosen={targetChosen ?? ''}
             style={{
-              left: pos.x,
-              top: landed ? pos.y - 60 : pos.y,
-              transform: `translate(-50%, -50%) rotate(${landed ? -12 : 0}deg) scale(${landed ? 0.65 : 1.8})`,
-              transition: 'left 500ms cubic-bezier(.2,.9,.3,1.3), top 500ms cubic-bezier(.2,.9,.3,1.3), transform 500ms cubic-bezier(.2,.9,.3,1.3)',
+              left: cardStage.x,
+              top: cardStage.y,
+              transform: `translate(-50%, -50%) rotate(${committed ? -7 : 0}deg) scale(${committed ? 2 : 1.8})`,
+              transition: 'transform 260ms cubic-bezier(.3,.8,.4,1.3)',
             }}
           >
-            <div style={{ animation: landed ? 'none' : 'swayMore 1.8s ease-in-out infinite' }}>
+            <div style={{ animation: committed ? 'none' : 'swayMore 1.8s ease-in-out infinite' }}>
               <PlayingCard
                 card={{ id: 'pending', kind: 'action', label: pendingDef.name, value: 0, defId: pendingDef.id }}
                 size="deck"
@@ -422,6 +511,34 @@ export function GameBoard() {
           </div>
         )
       })()}
+
+      {/* …and the card coming down on whoever it was pointed at */}
+      {smashes.map((s) => {
+        const def = findAction(catalog, s.cardDefId)
+        if (!def) return null
+        const seat = seatOfId(s.targetId)
+
+        return (
+          <div
+            key={s.id}
+            className="fixed z-[210] pointer-events-none smash-card"
+            data-testid="smash-card"
+            data-card-def-id={s.cardDefId}
+            data-target-id={s.targetId}
+            style={{
+              left: seat.x,
+              top: seat.y - 40,
+              '--smash-dx': `${cardStage.x - seat.x}px`,
+              '--smash-dy': `${cardStage.y - (seat.y - 40)}px`,
+            } as React.CSSProperties}
+          >
+            <PlayingCard
+              card={{ id: `smash-${s.id}`, kind: 'action', label: def.name, value: 0, defId: def.id }}
+              size="deck"
+            />
+          </div>
+        )
+      })}
 
       {/* Per-card animations */}
       {impact && (() => {
@@ -482,14 +599,14 @@ export function GameBoard() {
       })()}
 
       {/* Action buttons */}
-      <div className={`action-buttons ${showButtons ? 'visible' : 'hidden'}`}>
-        <SketchButton variant="primary" onClick={hit}>let it ride!</SketchButton>
-        <SketchButton variant="ghost" onClick={stay} disabled={mustDraw}>go out</SketchButton>
+      <div className={`action-buttons ${showButtons ? 'visible' : 'hidden'}`} data-testid="action-buttons" data-visible={showButtons}>
+        <SketchButton variant="primary" testId="hit" onClick={hit}>let it ride!</SketchButton>
+        <SketchButton variant="ghost" testId="stay" onClick={stay} disabled={mustDraw}>go out</SketchButton>
       </div>
 
       {/* Inspection */}
       {inspectedCard && (
-        <div onClick={() => setInspectedCard(null)} className="card-inspect-overlay">
+        <div onClick={() => setInspectedCard(null)} className="card-inspect-overlay" data-testid="card-inspect">
           <div className="card-inspect-pop">
             <PlayingCard card={inspectedCard} size="deck" />
           </div>

@@ -55,7 +55,7 @@ function App() {
 
   if (catalogError) {
     return (
-      <div className="page-shell justify-center">
+      <div className="page-shell justify-center" data-testid="catalog-error">
         <div className="text-center">
           <h2 className="mb-2 -rotate-1 text-[var(--accent)]">no connection</h2>
           <p className="text-muted">{catalogError}</p>
@@ -66,7 +66,7 @@ function App() {
 
   if (!catalog) {
     return (
-      <div className="page-shell justify-center">
+      <div className="page-shell justify-center" data-testid="catalog-loading">
         <p className="text-muted sway-mid">shuffling…</p>
       </div>
     )

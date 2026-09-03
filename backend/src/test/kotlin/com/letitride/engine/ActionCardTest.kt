@@ -175,7 +175,10 @@ class ActionCardTest {
         val result = tr(state, GameAction.ForcedDraw)
         state = result.state
         assertTrue(result.events.any { it is GameEvent.Slots })
-        assertEquals(ForcedDraws("b", 1), state.forcedDraws, "slots' own draw runs first")
+        assertEquals(
+            ForcedDraws("b", 1, source = SLOTS_SOURCE), state.forcedDraws,
+            "slots' own draw runs first, tagged so the room can pace the reels",
+        )
         assertEquals(listOf(ForcedDraws("b", 1)), state.forcedDrawStack, "the original draw is preserved")
     }
 

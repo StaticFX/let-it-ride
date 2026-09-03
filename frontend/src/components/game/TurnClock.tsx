@@ -1,42 +1,49 @@
 import type { TurnTimer } from '../../hooks/useGame'
 
-const SIZE = 44
-const RADIUS = 18
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS
+const SIZES = {
+  sm: { box: 44, radius: 18, stroke: 3, digits: 'text-lg' },
+  lg: { box: 86, radius: 36, stroke: 5, digits: 'text-[40px]' },
+}
 
 /** The turn clock. Runs out → the backend sends the player out automatically. */
-export function TurnClock({ timer, label }: { timer: TurnTimer; label?: string }) {
+export function TurnClock({ timer, label, size = 'sm' }: {
+  timer: TurnTimer
+  label?: string
+  size?: keyof typeof SIZES
+}) {
   const seconds = Math.ceil(timer.remainingMs / 1000)
   const urgent = timer.remainingMs <= 5000
+  const { box, radius, stroke, digits } = SIZES[size]
+  const circumference = 2 * Math.PI * radius
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative" style={{ width: SIZE, height: SIZE }}>
-        <svg width={SIZE} height={SIZE} className="-rotate-90">
+    <div className="flex items-center gap-2" data-testid="turn-clock" data-seconds={seconds} data-urgent={urgent}>
+      <div className="relative" style={{ width: box, height: box }}>
+        <svg width={box} height={box} className="-rotate-90">
           <circle
-            cx={SIZE / 2}
-            cy={SIZE / 2}
-            r={RADIUS}
+            cx={box / 2}
+            cy={box / 2}
+            r={radius}
             fill="none"
             stroke="var(--ink)"
             strokeOpacity={0.15}
-            strokeWidth={3}
+            strokeWidth={stroke}
           />
           <circle
-            cx={SIZE / 2}
-            cy={SIZE / 2}
-            r={RADIUS}
+            cx={box / 2}
+            cy={box / 2}
+            r={radius}
             fill="none"
             stroke={urgent ? 'var(--accent)' : 'var(--ink)'}
-            strokeWidth={3}
+            strokeWidth={stroke}
             strokeLinecap="round"
-            strokeDasharray={CIRCUMFERENCE}
-            strokeDashoffset={CIRCUMFERENCE * (1 - timer.fraction)}
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - timer.fraction)}
             className="transition-[stroke-dashoffset] duration-100 ease-linear"
           />
         </svg>
         <div
-          className={`absolute inset-0 flex items-center justify-center number text-lg leading-none ${
+          className={`absolute inset-0 flex items-center justify-center number ${digits} leading-none ${
             urgent ? 'text-[var(--accent)] animate-[swayMore_0.6s_ease-in-out_infinite]' : ''
           }`}
         >

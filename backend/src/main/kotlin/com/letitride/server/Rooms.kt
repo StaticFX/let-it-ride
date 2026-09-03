@@ -16,6 +16,7 @@ import com.letitride.engine.Player
 import com.letitride.engine.PlayerStatus
 import com.letitride.engine.Rng
 import com.letitride.engine.SECOND_LIFE
+import com.letitride.engine.SLOTS_SOURCE
 import com.letitride.engine.defaultGameConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -33,14 +34,71 @@ import kotlin.random.Random
 
 private const val TICK_MS = 150L
 private const val DEAL_STEP_MS = 750L
+
+/**
+ * The client plays a "round N" title card before the table is visible, and the
+ * room refuses to do anything at all until it has passed. The deadline is sent
+ * to the client rather than agreed by convention, so the animation and the deal
+ * cannot drift apart however slow the client is.
+ */
+private const val ROUND_INTRO_MS = 2800L
+
+/** The pause between the title card lifting and the first card being dealt. */
+private const val POST_INTRO_MS = 300L
+
+/**
+ * The closing beats of a round: whatever animation ended it, then a title card,
+ * then the scoreboard. The room does not gate on these — the round is already
+ * over — it just tells the client how long to hold the table.
+ */
+private const val OUTRO_CARD_MS = 1700L
+internal const val OUTRO_AFTER_BUST_MS = 2200L
+internal const val OUTRO_AFTER_FLIP7_MS = 3100L
+
 private const val FORCED_DRAW_STEP_MS = 800L
+
+/** How long the slot machine spins before the card it landed on is dealt. */
+private const val SLOTS_SPIN_MS = 2400L
+
 private const val BOT_THINK_MS = 900L
 private const val BOT_PICK_MS = 950L
 private const val EMPTY_ROOM_TTL_MS = 10 * 60 * 1000L
 
+/**
+ * How long the room will wait on a client that said it was animating and then
+ * went quiet. This is a backstop, not a schedule: a client that acks normally
+ * never comes near it. It has to clear the longest animation the client can
+ * play by a comfortable margin, or a slow machine gets cut off mid-bust.
+ */
+internal const val ANIMATION_GATE_MAX_MS = 5000L
+
 private val BOT_NAMES = listOf("Ace", "Bluff", "Chips", "Dice", "Echo", "Faro")
 
 class Connection(val playerId: String, val outbound: Channel<String>)
+
+/**
+ * A batch of events one client is still animating.
+ *
+ * The room deliberately does not know what the animation is or how long it
+ * runs — those belong to the client, and the two drifting apart is exactly what
+ * this replaces. It knows only who to wait for and when to stop waiting.
+ */
+private data class AnimationGate(
+    val id: Long,
+    val ackPlayerId: String,
+    val openedAt: Long,
+    val deadline: Long,
+)
+
+/**
+ * How long the closing animation needs before the round's title card goes up.
+ * A round that simply ran out of players has nothing to wait for.
+ */
+internal fun outroPreambleFor(events: List<GameEvent>): Long = when {
+    events.any { it is GameEvent.Flip7 } -> OUTRO_AFTER_FLIP7_MS
+    events.any { it is GameEvent.Bust } -> OUTRO_AFTER_BUST_MS
+    else -> 0L
+}
 
 /**
  * One in-memory game. The room owns the authoritative [GameState]; clients only
@@ -50,7 +108,8 @@ class Connection(val playerId: String, val outbound: Channel<String>)
  */
 class Room(
     val code: String,
-    seed: Long,
+    /** Fixes every shuffle this room makes; a room is replayable from it alone. */
+    val seed: Long,
     private val json: Json,
     parentScope: CoroutineScope,
 ) {
@@ -70,6 +129,11 @@ class Room(
     private var promptKey: String? = null
     private var nextStepAt: Long = 0
     private var botCounter = 0
+    private var roundIntroUntil: Long? = null
+    private var roundOutroFrom: Long? = null
+    private var roundOutroUntil: Long? = null
+    private var gate: AnimationGate? = null
+    private var gateCounter = 0L
 
     @Volatile
     var emptySince: Long? = System.currentTimeMillis()
@@ -122,6 +186,9 @@ class Room(
             if (hostId == playerId) {
                 hostId = state.players.firstOrNull { connections.containsKey(it.id) && !it.isBot }?.id
             }
+            // Waiting on an animation in a tab that has gone is waiting for the
+            // ceiling; release the table now instead.
+            if (gate?.ackPlayerId == playerId) closeGate(System.currentTimeMillis())
             if (connections.isEmpty()) emptySince = System.currentTimeMillis()
         }
         broadcast(events)
@@ -149,10 +216,30 @@ class Room(
                     return
                 }
 
-                ClientMessage.Hit -> applyLocked(GameAction.Hit(playerId))
-                ClientMessage.Stay -> applyLocked(GameAction.Stay(playerId))
+                is ClientMessage.AnimationDone -> {
+                    val open = gate
+                    if (open == null || open.id != message.gateId || open.ackPlayerId != playerId) return
+                    closeGate(System.currentTimeMillis())
+                    // Nothing new happened — but the table has to hear that the
+                    // gate lifted, and the clock it gave back.
+                    emptyList()
+                }
+
+                // Moves made while the table is animating are dropped rather
+                // than applied late. The client already hides the buttons; this
+                // is what makes a mistimed or stale click harmless.
+                ClientMessage.Hit -> {
+                    if (gate != null) return
+                    applyLocked(GameAction.Hit(playerId))
+                }
+
+                ClientMessage.Stay -> {
+                    if (gate != null) return
+                    applyLocked(GameAction.Stay(playerId))
+                }
 
                 is ClientMessage.PlayAction -> {
+                    if (gate != null) return
                     val pending = state.pendingAction
                     if (pending == null || pending.playerId != playerId) return
                     applyLocked(
@@ -212,33 +299,72 @@ class Room(
     // Pacing
     // ═══════════════════════════════════════════
 
+    /**
+     * Runs whatever the table owes: the next card of the deal, the next forced
+     * draw, a bot's move, or a clock that ran out. Returns null when the tick
+     * did nothing, so an idle table costs no traffic — waiting on a human is
+     * the overwhelmingly common case and it must not stream state at them.
+     */
     private suspend fun tick() {
-        val events: List<GameEvent> = mutex.withLock {
+        val events: List<GameEvent>? = mutex.withLock {
             val now = System.currentTimeMillis()
             val snapshot = state
 
             if (snapshot.phase != GamePhase.PLAYING) {
+                val wasTimed = turnDeadline != null || gate != null
                 promptKey = null
                 turnDeadline = null
-                return@withLock emptyList()
+                // A round that ended mid-animation hands the pacing over to the
+                // outro window; holding a gate past it would strand the room.
+                gate = null
+                return@withLock if (wasTimed) emptyList() else null
             }
 
             val prompt = promptOf(snapshot)
+            var deadlineMoved = false
             if (prompt != promptKey) {
                 promptKey = prompt
-                nextStepAt = now + stepDelayFor(prompt)
-                turnDeadline = deadlineFor(prompt, snapshot, now)
+                nextStepAt = now + stepDelayFor(prompt, snapshot)
+                val next = deadlineFor(prompt, snapshot, now)
+                deadlineMoved = next != turnDeadline
+                turnDeadline = next
             }
 
-            // The clock is checked before the pacing gate — a human who never
-            // answers has to be timed out no matter what else is scheduled.
+            // The round's title card owns the table: no dealing, no bots, no
+            // clock until it has finished.
+            val introUntil = roundIntroUntil
+            if (introUntil != null) {
+                if (now < introUntil) return@withLock null
+                roundIntroUntil = null
+                // A short beat between the card lifting and the first deal.
+                nextStepAt = now + POST_INTRO_MS
+                return@withLock emptyList()
+            }
+
+            // The clock is checked before the pacing gates — a human who never
+            // answers has to be timed out no matter what else is scheduled. An
+            // animation nobody can act through is not their thinking time,
+            // though, so it does not count against them.
             val deadline = turnDeadline
-            if (deadline != null && now >= deadline) {
+            if (deadline != null && now >= deadline && gate == null) {
                 turnDeadline = null
                 return@withLock timeoutNow(snapshot)
             }
 
-            if (now < nextStepAt) return@withLock emptyList()
+            // Nothing moves while a client is still animating the last batch.
+            // This is the whole point of the gate: the step delays below are a
+            // floor, and the animation finishing is what actually releases it.
+            val animating = gate
+            if (animating != null) {
+                if (now < animating.deadline) return@withLock null
+                // The client went quiet. Step anyway rather than let one tab
+                // hold the table, and let it catch up from the next state.
+                closeGate(now)
+                return@withLock emptyList()
+            }
+
+            // Only the clock moved; the table still needs to hear about it.
+            if (now < nextStepAt) return@withLock if (deadlineMoved) emptyList() else null
 
             val stepped = when {
                 prompt.startsWith("deal:") -> applyLocked(GameAction.DealTo(prompt.removePrefix("deal:")))
@@ -259,11 +385,11 @@ class Room(
             }
 
             // A human's turn simply waits; only paced work reschedules.
-            if (stepped == null) return@withLock emptyList()
-            nextStepAt = now + stepDelayFor(promptOf(state))
+            if (stepped == null) return@withLock if (deadlineMoved) emptyList() else null
+            nextStepAt = now + stepDelayFor(promptOf(state), state)
             stepped
         }
-        broadcast(events)
+        if (events != null) broadcast(events)
     }
 
     private fun timeoutNow(snapshot: GameState): List<GameEvent> {
@@ -282,8 +408,10 @@ class Room(
         return "turn:${snapshot.currentPlayer?.id ?: "none"}"
     }
 
-    private fun stepDelayFor(prompt: String): Long = when {
+    private fun stepDelayFor(prompt: String, snapshot: GameState): Long = when {
         prompt.startsWith("deal:") -> DEAL_STEP_MS
+        // A slots draw waits for the reels; every other forced draw is a flick.
+        prompt.startsWith("forced:") && snapshot.forcedDraws?.source == SLOTS_SOURCE -> SLOTS_SPIN_MS
         prompt.startsWith("forced:") -> FORCED_DRAW_STEP_MS
         prompt.startsWith("pick:") -> BOT_PICK_MS
         else -> BOT_THINK_MS
@@ -343,12 +471,14 @@ class Room(
 
     private fun botPick(snapshot: GameState, botId: String): List<GameEvent> {
         val pending = snapshot.pendingAction ?: return emptyList()
-        val others = snapshot.players.filter { it.status == PlayerStatus.ACTIVE && it.id != botId }
-        // Whatever the card does, the player with the most on the table is the
-        // one worth pointing it at.
-        val target = others.maxByOrNull { it.handValue }?.id ?: botId
         Catalog.action(pending.cardDefId) ?: return emptyList()
-        return applyLocked(GameAction.PlayAction(botId, target, pending.cardDefId))
+        // Whatever the card does, the legal target with the most on the table is
+        // the one worth pointing it at — and anyone else is preferred to itself.
+        val candidates = pending.validTargets.mapNotNull { snapshot.player(it) }
+        val target = candidates.filter { it.id != botId }.maxByOrNull { it.handValue }
+            ?: candidates.firstOrNull()
+            ?: return emptyList()
+        return applyLocked(GameAction.PlayAction(botId, target.id, pending.cardDefId))
     }
 
     // ═══════════════════════════════════════════
@@ -357,12 +487,102 @@ class Room(
 
     /** Must be called with [mutex] held. */
     private fun applyLocked(action: GameAction): List<GameEvent> {
+        val before = state
         val result = Engine.transition(state, action, rng)
         state = result.state
+        markRoundBoundaries(before, result.state, result.events)
+        openGate(action, before, result.events)
         return result.events
     }
 
-    private fun view(): GameStateView = state.toView(code, hostId, turnDeadline)
+    /**
+     * Holds the table on the batch about to be broadcast. Any batch with
+     * something in it gates: the room has no idea which events the client draws
+     * something for, and asking it to keep that list in step with the frontend
+     * is the coupling this whole mechanism exists to remove. A batch the client
+     * has no animation for is acked the moment it lands, which costs a round
+     * trip and nothing else.
+     *
+     * Only a round still in play is gated. A round that just ended already has
+     * its closing window, and holding it here would fight that.
+     */
+    private fun openGate(action: GameAction, before: GameState, events: List<GameEvent>) {
+        if (events.isEmpty() || state.phase != GamePhase.PLAYING) return
+        val acker = ackPlayerFor(action, before) ?: return
+        val now = System.currentTimeMillis()
+        gateCounter += 1
+        gate = AnimationGate(gateCounter, acker, now, now + ANIMATION_GATE_MAX_MS)
+    }
+
+    /**
+     * Who times this batch. The player it happened to is the one watching it
+     * closely, so they own it — but a bot cannot ack and neither can a seat
+     * whose socket has gone, and a table of bots that gated on nobody would be
+     * back to guessing. The host's client keeps time in that case; it is
+     * watching the same animation from the same events.
+     *
+     * Null means nobody is connected to wait for, and the step delays alone
+     * pace the table.
+     */
+    private fun ackPlayerFor(action: GameAction, before: GameState): String? {
+        val actor = when (action) {
+            is GameAction.Hit -> action.playerId
+            is GameAction.Stay -> action.playerId
+            is GameAction.PlayAction -> action.fromPlayerId
+            is GameAction.Timeout -> action.playerId
+            is GameAction.DealTo -> action.playerId
+            GameAction.ForcedDraw -> before.forcedDraws?.playerId
+            else -> null
+        }
+        val human = actor != null &&
+            before.player(actor)?.isBot == false &&
+            connections.containsKey(actor)
+        return if (human) actor else hostId?.takeIf { connections.containsKey(it) }
+    }
+
+    /** Must be called with [mutex] held. */
+    private fun closeGate(now: Long) {
+        val open = gate ?: return
+        gate = null
+        // The player could not act while the table was animating, so the time
+        // it took is given back rather than counted against their clock.
+        turnDeadline = turnDeadline?.plus(now - open.openedAt)
+    }
+
+    /**
+     * Opens the title-card window when a round starts and the closing window
+     * when it ends. Both are absolute timestamps the client renders against.
+     */
+    private fun markRoundBoundaries(before: GameState, after: GameState, events: List<GameEvent>) {
+        val now = System.currentTimeMillis()
+
+        val roundOpening = after.phase == GamePhase.PLAYING &&
+            after.dealQueue.isNotEmpty() &&
+            after.dealQueue.size == after.players.size
+        if (roundOpening) {
+            roundIntroUntil = now + ROUND_INTRO_MS
+            roundOutroFrom = null
+            roundOutroUntil = null
+        } else if (after.phase != GamePhase.PLAYING) {
+            roundIntroUntil = null
+        }
+
+        if (before.phase == GamePhase.PLAYING && after.phase == GamePhase.ROUND_END) {
+            val preamble = outroPreambleFor(events)
+            roundOutroFrom = now + preamble
+            roundOutroUntil = now + preamble + OUTRO_CARD_MS
+        }
+    }
+
+    private fun view(): GameStateView = state.toView(
+        code,
+        hostId,
+        turnDeadline,
+        roundIntroUntil,
+        roundOutroFrom,
+        roundOutroUntil,
+        gate?.let { AnimationGateView(it.id, it.ackPlayerId, it.deadline) },
+    )
 
     private suspend fun broadcast(events: List<GameEvent>) {
         val message = ServerMessage.State(view(), events)
@@ -413,10 +633,11 @@ class RoomRegistry(private val json: Json, private val scope: CoroutineScope) {
 
     fun get(code: String): Room? = rooms[code.uppercase()]
 
-    fun create(): Room {
+    /** [seed] fixes the room's shuffles; the caller decides whether that is allowed. */
+    fun create(seed: Long? = null): Room {
         var code = generateCode()
         while (rooms.containsKey(code)) code = generateCode()
-        val room = Room(code, random.nextLong(), json, scope)
+        val room = Room(code, seed ?: random.nextLong(), json, scope)
         rooms[code] = room
         return room
     }

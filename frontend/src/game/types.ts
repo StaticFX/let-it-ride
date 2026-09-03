@@ -69,10 +69,10 @@ export type GamePhase = 'LOBBY' | 'PLAYING' | 'ROUND_END' | 'GAME_END'
 export interface PendingActionView {
   cardDefId: string
   playerId: string
-  /** The physical card's id — unique per copy, unlike cardDefId. */
-  cardId: string
-  /** The only seats this card may be pointed at. */
-  validTargets: string[]
+  /** The physical card's id — unique per copy, unlike cardDefId. Older servers omit it. */
+  cardId?: string
+  /** The only seats this card may be pointed at. Older servers omit it. */
+  validTargets?: string[]
 }
 
 export interface ForcedDraws {
@@ -80,6 +80,20 @@ export interface ForcedDraws {
   remaining: number
   /** Which card queued these, e.g. 'slots'. */
   source?: string
+}
+
+/**
+ * A batch of events this table is still animating. The server will not move
+ * again until `ackPlayerId`'s client sends `ANIM_DONE` for this id — or until
+ * `timeoutAt` passes, so a tab that never answers cannot hold the room.
+ *
+ * Durations live here, not on the server: it waits to be told, it does not
+ * guess. Older servers omit the field entirely, and nothing gates.
+ */
+export interface AnimationGate {
+  id: number
+  ackPlayerId: string
+  timeoutAt: number
 }
 
 export interface GameStateView {
@@ -108,6 +122,8 @@ export interface GameStateView {
   roundOutroFrom?: number
   /** Epoch millis the closing card gives way to the scoreboard. */
   roundOutroUntil?: number
+  /** The animation the table is currently held on, if any. */
+  animationGate?: AnimationGate
 }
 
 // ─── Events ───
@@ -145,6 +161,7 @@ export type ClientMessage =
   | { type: 'KICK'; playerId: string }
   | { type: 'ADD_BOT' }
   | { type: 'PING' }
+  | { type: 'ANIM_DONE'; gateId: number }
 
 export type ServerMessage =
   | { type: 'WELCOME'; playerId: string; roomCode: string; isHost: boolean }

@@ -52,6 +52,7 @@ export function EscapeMenu() {
     <div
       className={`fixed inset-0 z-[500] bg-black/25 transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
       onClick={resume}
+      data-testid="escape-menu"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -71,9 +72,9 @@ export function EscapeMenu() {
         </div>
 
         <div className="flex flex-col gap-2.5">
-          <SketchButton variant="primary" onClick={resume}>resume</SketchButton>
-          <SketchButton variant="ghost" onClick={() => setShowRules(true)}>rules</SketchButton>
-          <SketchButton variant="ghost" onClick={leave}>leave game</SketchButton>
+          <SketchButton variant="primary" testId="pause-resume" onClick={resume}>resume</SketchButton>
+          <SketchButton variant="ghost" testId="pause-rules" onClick={() => setShowRules(true)}>rules</SketchButton>
+          <SketchButton variant="ghost" testId="pause-leave" onClick={leave}>leave game</SketchButton>
         </div>
       </div>
     </div>

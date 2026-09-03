@@ -79,12 +79,18 @@ backend/
       Rooms.kt   in-memory rooms, the pacing clock, and the bots
       Dto.kt     the wire types (the client's view redacts the deck)
     Application.kt
-  src/test/kotlin/     81 tests, including full games under every preset
+  src/test/kotlin/     87 tests, including full games under every preset
 frontend/
   src/game/types.ts    mirrors the wire types; decides nothing
   src/net/client.ts    REST + WebSocket, with reconnect
   src/state/           a mirror of server state, nothing more
+  src/audio/sfx.ts     Web Audio playback, pitch-varied per hit
   src/components/
+  public/sounds/       the effect samples
+e2e/
+  tests/               Playwright specs, run against the packaged jar
+  support/             page objects, a raw socket player, the pinned seeds
+  scripts/find-seeds.ts  finds a seed that reproduces a given round
 docs/RULES-AUDIT.md    what was wrong with the rules, and what changed
 features/             the original feature notes this was built against
 ```
@@ -102,6 +108,9 @@ the round scores nothing. Go out when you like and bank what you have.
 - **Turn clock** — run out of time and you go out. If you were holding an action
   card, a random player gets it.
 
+Sound is on by default. Mute from the title corner or the lobby, and set the
+volume from the pause menu (Esc); both stick in `localStorage`.
+
 Full rules are in the app (the *rules* button) and the deviations from published
 Flip 7 are documented in [`docs/RULES-AUDIT.md`](docs/RULES-AUDIT.md).
 
@@ -111,8 +120,28 @@ Flip 7 are documented in [`docs/RULES-AUDIT.md`](docs/RULES-AUDIT.md).
 ./gradlew :backend:test              # engine
 bun --cwd frontend run typecheck
 bun --cwd frontend run lint
+bun --cwd e2e run test               # the whole thing, in a browser
 ```
 
 The engine suite plays complete games with every deck preset, every house rule
 and 25 different shuffles, asserting after every transition that no card was
 created or destroyed and that no surviving hand holds a duplicate.
+
+The end-to-end suite ([`e2e/`](e2e/README.md)) builds the jar, serves it, and
+drives it in Chromium — clicking what a player clicks. It covers the lobby, two
+browsers at one table, a game played to the final standings, reconnecting after
+the socket drops, and the turn clock running out. Action-card targeting, busting
+and flip 7 are reached on purpose: a room's shuffles come from its seed, and the
+suite's server accepts one, so those rounds play out the same way every time.
+
+```sh
+cd e2e && bun install && bun run install-browsers   # once
+bun run test
+E2E_SKIP_BUILD=1 bun run test        # reuse the jar you already built
+bun run test:headed                  # watch it happen
+```
+
+> The seed hook is gated behind `LETITRIDE_TEST_HOOKS=1` and is off in every
+> published image — CI checks `/api/health` reports `"testHooks":false` on the
+> artifact it just pushed. A server that honoured a client's seed would let
+> anyone deal themselves a deck they already know.

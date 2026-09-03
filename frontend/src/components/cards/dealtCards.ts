@@ -4,10 +4,19 @@
  */
 const seen = new Set<string>()
 
-export function markDealt(cardId: string): boolean {
-  if (seen.has(cardId)) return false
+/** Whether [cardId] has already played its entrance. */
+export function hasDealt(cardId: string): boolean {
+  return seen.has(cardId)
+}
+
+/**
+ * Records that [cardId] is playing its entrance. Called when the animation
+ * actually starts rather than when it is set up — an entrance that gets torn
+ * down before its first frame has not been seen, and must be allowed to run
+ * again.
+ */
+export function markDealt(cardId: string): void {
   seen.add(cardId)
-  return true
 }
 
 export function resetDealtCards(): void {

@@ -121,10 +121,17 @@ data class PendingAction(
     val playerId: String,
     /** The physical card, so it can be moved to the discard pile once resolved. */
     val card: Card,
+    /** Who this card could actually be played on, worked out when it was drawn. */
+    val validTargets: List<String> = emptyList(),
 )
 
 @Serializable
-data class ForcedDraws(val playerId: String, val remaining: Int)
+data class ForcedDraws(
+    val playerId: String,
+    val remaining: Int,
+    /** Which card queued these, so the room can pace its animation. */
+    val source: String? = null,
+)
 
 @Serializable
 data class GameState(

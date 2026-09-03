@@ -93,12 +93,14 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
         <label>how to win:</label>
         <div className="flex gap-2 mt-1 mb-4">
           <SketchOption
+            testId="win-rounds"
             selected={config.winCondition === 'rounds'}
             onClick={() => patch({ winCondition: 'rounds' })}
           >
             {config.totalRounds} rounds
           </SketchOption>
           <SketchOption
+            testId="win-score"
             selected={config.winCondition === 'first_to_score'}
             onClick={() => patch({ winCondition: 'first_to_score' })}
           >
@@ -108,6 +110,7 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
 
         {config.winCondition === 'rounds' ? (
           <SketchSlider
+            testId="rounds-slider"
             label="rounds"
             min={1}
             max={20}
@@ -117,6 +120,7 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
           />
         ) : (
           <SketchSlider
+            testId="target-score-slider"
             label="target score"
             min={50}
             max={1000}
@@ -129,6 +133,7 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
         <Separator />
 
         <SketchSlider
+          testId="turn-timer-slider"
           label="turn timer (seconds)"
           min={10}
           max={120}
@@ -148,6 +153,8 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
               <button
                 key={rule.id}
                 onClick={() => toggleRule(rule.id)}
+                data-testid={`rule-${rule.id}`}
+                data-active={active}
                 className={`flex items-start gap-2.5 text-left bg-transparent border-none cursor-pointer p-1 rounded transition-opacity ${
                   active ? 'opacity-100' : 'opacity-55'
                 }`}

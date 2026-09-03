@@ -10,9 +10,11 @@ interface SketchButtonProps {
   disabled?: boolean
   variant?: 'primary' | 'ghost'
   className?: string
+  /** Stable handle for the end-to-end suite; the label is decoration. */
+  testId?: string
 }
 
-export function SketchButton({ children, onClick, disabled, variant = 'primary', className = '' }: SketchButtonProps) {
+export function SketchButton({ children, onClick, disabled, variant = 'primary', className = '', testId }: SketchButtonProps) {
   const [hovered, setHovered] = useState(false)
   const [pressed, setPressed] = useState(false)
   const { ref, size } = useElementSize<HTMLButtonElement>()
@@ -26,6 +28,7 @@ export function SketchButton({ children, onClick, disabled, variant = 'primary',
   return (
     <button
       ref={ref}
+      data-testid={testId}
       disabled={disabled}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); setPressed(false) }}

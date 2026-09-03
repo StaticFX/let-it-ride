@@ -18,9 +18,19 @@ sealed class GameEvent {
     @SerialName("passive")
     data class PassiveGained(val playerId: String, val card: Card) : GameEvent()
 
+    /**
+     * [card] is what tipped them over and [matched] is the card already in hand
+     * it collided with, so the table can point at the pair rather than just
+     * announcing a bust.
+     */
     @Serializable
     @SerialName("bust")
-    data class Bust(val playerId: String, val reason: String) : GameEvent()
+    data class Bust(
+        val playerId: String,
+        val reason: String,
+        val card: Card? = null,
+        val matched: Card? = null,
+    ) : GameEvent()
 
     @Serializable
     @SerialName("stay")
@@ -57,7 +67,12 @@ sealed class GameEvent {
     /** Second chance consumed: the duplicate was discarded instead of busting. */
     @Serializable
     @SerialName("secondChance")
-    data class SecondChance(val playerId: String, val card: Card) : GameEvent()
+    data class SecondChance(val playerId: String, val card: Card, val matched: Card? = null) : GameEvent()
+
+    /** An action card was drawn that nobody at the table could be hit with. */
+    @Serializable
+    @SerialName("fizzled")
+    data class Fizzled(val cardDefId: String, val playerId: String) : GameEvent()
 
     /** A surplus second chance was handed to a player who did not have one. */
     @Serializable
@@ -72,9 +87,14 @@ sealed class GameEvent {
     @SerialName("doubleOrNothing")
     data class DoubleOrNothing(val playerId: String, val won: Boolean) : GameEvent()
 
+    /**
+     * [card] is the card the spin is about to produce. It is announced up front
+     * so the reels can land on it and the machine can be gone before the card
+     * is actually dealt — otherwise the card arrives mid-animation.
+     */
     @Serializable
     @SerialName("slots")
-    data class Slots(val playerId: String) : GameEvent()
+    data class Slots(val playerId: String, val card: Card? = null) : GameEvent()
 
     @Serializable
     @SerialName("timeout")

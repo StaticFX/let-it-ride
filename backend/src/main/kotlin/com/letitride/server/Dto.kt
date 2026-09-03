@@ -22,7 +22,36 @@ import kotlinx.serialization.Serializable
 // ═══════════════════════════════════════════
 
 @Serializable
-data class PendingActionView(val cardDefId: String, val playerId: String)
+data class PendingActionView(
+    val cardDefId: String,
+    val playerId: String,
+    /**
+     * The physical card's id. The client keys its "already picked" state on
+     * this: two strikes in one round share a cardDefId, and keying on that
+     * left the second one unclickable.
+     */
+    val cardId: String,
+    /** The only seats this card may be pointed at; the picker offers no others. */
+    val validTargets: List<String>,
+)
+
+/**
+ * A batch of events the client is still animating. Nothing else happens at the
+ * table until the animation reports itself finished, which is what stops a card
+ * landing on top of a bust or a freeze that is still playing.
+ *
+ * Exactly one client owns each gate. Durations live entirely in the client —
+ * the server never guesses how long a bust takes, it only refuses to move until
+ * it is told, and gives up at [timeoutAt] so a hung tab cannot own the room.
+ */
+@Serializable
+data class AnimationGateView(
+    val id: Long,
+    /** The one client whose ack releases the table; everyone else just watches. */
+    val ackPlayerId: String,
+    /** Epoch millis the server stops waiting and steps anyway. */
+    val timeoutAt: Long,
+)
 
 /**
  * The client's view of a game. The deck is deliberately reduced to a count —
@@ -50,9 +79,28 @@ data class GameStateView(
     val roundDeltas: Map<String, Int> = emptyMap(),
     /** Epoch millis the current actor's clock runs out, or null when nothing is timed. */
     val turnDeadline: Long? = null,
+    /**
+     * Epoch millis the round's title card stops showing. Nothing is dealt until
+     * it passes, so the client and the deal cannot drift apart.
+     */
+    val roundIntroUntil: Long? = null,
+    /** Epoch millis the round's closing card appears, after the last animation. */
+    val roundOutroFrom: Long? = null,
+    /** Epoch millis the closing card gives way to the scoreboard. */
+    val roundOutroUntil: Long? = null,
+    /** The animation the table is currently held on, if any. */
+    val animationGate: AnimationGateView? = null,
 )
 
-fun GameState.toView(roomCode: String, hostId: String?, turnDeadline: Long?) = GameStateView(
+fun GameState.toView(
+    roomCode: String,
+    hostId: String?,
+    turnDeadline: Long?,
+    roundIntroUntil: Long? = null,
+    roundOutroFrom: Long? = null,
+    roundOutroUntil: Long? = null,
+    animationGate: AnimationGateView? = null,
+) = GameStateView(
     roomCode = roomCode,
     hostId = hostId,
     phase = phase,
@@ -63,7 +111,9 @@ fun GameState.toView(roomCode: String, hostId: String?, turnDeadline: Long?) = G
     config = config,
     deckCount = deck.size,
     discardCount = discard.size,
-    pendingAction = pendingAction?.let { PendingActionView(it.cardDefId, it.playerId) },
+    pendingAction = pendingAction?.let {
+        PendingActionView(it.cardDefId, it.playerId, it.card.id, it.validTargets)
+    },
     forcedDraws = forcedDraws,
     dealQueue = dealQueue,
     roundWinnerId = roundWinnerId,
@@ -71,6 +121,10 @@ fun GameState.toView(roomCode: String, hostId: String?, turnDeadline: Long?) = G
     flip7PlayerId = flip7PlayerId,
     roundDeltas = roundDeltas,
     turnDeadline = turnDeadline,
+    roundIntroUntil = roundIntroUntil,
+    roundOutroFrom = roundOutroFrom,
+    roundOutroUntil = roundOutroUntil,
+    animationGate = animationGate,
 )
 
 // ═══════════════════════════════════════════
@@ -114,6 +168,16 @@ sealed class ClientMessage {
     @Serializable
     @SerialName("PING")
     data object Ping : ClientMessage()
+
+    /**
+     * The client finished animating the batch [gateId] was opened for. Only the
+     * gate's own [AnimationGateView.ackPlayerId] releases it; a stale or
+     * forwarded id is ignored, so a client cannot skip somebody else's
+     * animation by guessing.
+     */
+    @Serializable
+    @SerialName("ANIM_DONE")
+    data class AnimationDone(val gateId: Long) : ClientMessage()
 }
 
 @Serializable
@@ -151,7 +215,24 @@ sealed class ServerMessage {
 // ═══════════════════════════════════════════
 
 @Serializable
-data class CreateRoomRequest(val name: String)
+data class CreateRoomRequest(
+    val name: String,
+    /**
+     * Fixes the room's shuffles so a run can be replayed card for card. Ignored
+     * unless the server was started with test hooks on — see [TEST_HOOKS_ENV].
+     */
+    val seed: Long? = null,
+)
+
+/**
+ * Set to `1`/`true` to let clients pin a room's seed. Only the end-to-end suite
+ * turns this on: a public server that honoured it would let anyone deal
+ * themselves a known deck.
+ */
+const val TEST_HOOKS_ENV = "LETITRIDE_TEST_HOOKS"
+
+fun testHooksEnabled(env: (String) -> String? = System::getenv): Boolean =
+    env(TEST_HOOKS_ENV)?.lowercase() in setOf("1", "true", "yes")
 
 @Serializable
 data class CreateRoomResponse(val roomCode: String, val playerId: String)

@@ -2,15 +2,15 @@ import { theme } from '../../theme'
 import { useElementSize } from '../../hooks/useElementSize'
 import { RoughBox } from './RoughShapes'
 
-export function SketchOption({ selected, onClick, children }: {
-  selected: boolean; onClick: () => void; children: React.ReactNode
+export function SketchOption({ selected, onClick, children, testId }: {
+  selected: boolean; onClick: () => void; children: React.ReactNode; testId?: string
 }) {
   const ink = theme.ink
   const sw = theme.strokeWidth
   const { ref, size } = useElementSize<HTMLButtonElement>()
 
   return (
-    <button ref={ref} onClick={onClick} style={{
+    <button ref={ref} onClick={onClick} data-testid={testId} data-selected={selected} style={{
       flex: 1, position: 'relative',
       padding: '10px 12px',
       fontFamily: theme.fontDisplay, fontSize: 17, fontWeight: 700,

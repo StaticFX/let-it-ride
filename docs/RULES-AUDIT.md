@@ -137,6 +137,26 @@ They are now selectable in the lobby.
 `turnTimeSeconds` was configurable and had a slider, but nothing counted down.
 The server now runs the clock (see below).
 
+### Action cards could be drawn with nobody to play them on
+
+A **steal**, **strike** or **swap** turned up before anyone was holding cards —
+which on the opening deal is guaranteed — parked the table on a target pick that
+could not change anything, and then resolved into nothing.
+
+Every action card now declares who it may legally be pointed at:
+
+| card | may target |
+|---|---|
+| freeze, draw 3, hex | anyone still in the round, including yourself |
+| strike | anyone still in the round **holding cards** |
+| steal, swap | someone **else** still in the round holding cards |
+| double or nothing, slots | always yourself |
+
+The server sends that list with the pending card, so the picker only lights up
+seats the card can actually hit and a crafted request gets snapped to a legal
+one. If the list comes out empty the card is discarded and the drawer is dealt a
+replacement, rather than losing their card to a no-op.
+
 ---
 
 ## 2. Deliberate differences from Flip 7

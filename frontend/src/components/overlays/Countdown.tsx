@@ -10,7 +10,7 @@ export function Countdown({ onDone }: { onDone: () => void }) {
   }, [count, onDone])
 
   return (
-    <div className="fixed inset-0 z-[400] bg-[var(--felt)]/85 flex items-center justify-center">
+    <div className="fixed inset-0 z-[400] bg-[var(--felt)]/85 flex items-center justify-center" data-testid="countdown" data-count={count}>
       <div className="text-center">
         <div className={`display text-[120px] leading-none transition-colors duration-300 animate-[swayMore_0.8s_ease-in-out_infinite] ${count <= 2 ? 'text-[var(--accent)]' : ''}`}>
           {count || 'GO!'}

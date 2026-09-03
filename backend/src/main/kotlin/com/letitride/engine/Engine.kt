@@ -86,11 +86,11 @@ class Ctx(state: GameState, val rng: Rng) {
 
     // ─── Commands available to card effects ───
 
-    fun bust(playerId: String, reason: String) {
+    fun bust(playerId: String, reason: String, card: Card? = null, matched: Card? = null) {
         val player = player(playerId) ?: return
         if (player.status == PlayerStatus.BUST) return
         update(playerId) { it.copy(status = PlayerStatus.BUST, bustReason = reason) }
-        emit(GameEvent.Bust(playerId, reason))
+        emit(GameEvent.Bust(playerId, reason, card, matched))
     }
 
     fun skip(playerId: String) {
@@ -162,10 +162,10 @@ class Ctx(state: GameState, val rng: Rng) {
         emit(GameEvent.PassiveGained(playerId, card))
     }
 
-    fun pushForcedDraws(playerId: String, count: Int) {
+    fun pushForcedDraws(playerId: String, count: Int, source: String? = null) {
         val previous = state.forcedDraws
         state = state.copy(
-            forcedDraws = ForcedDraws(playerId, count),
+            forcedDraws = ForcedDraws(playerId, count, source),
             forcedDrawStack = if (previous != null) state.forcedDrawStack + previous else state.forcedDrawStack,
         )
     }
@@ -192,27 +192,28 @@ class Ctx(state: GameState, val rng: Rng) {
         if (player.status != PlayerStatus.ACTIVE) return false
         val result = checkBust(player) ?: return false
         if (result.reason == BUST_DUPLICATE && result.duplicate != null && hasPassive(playerId, SECOND_LIFE.id)) {
-            consumeSecondChance(playerId, result.duplicate)
+            consumeSecondChance(playerId, result.duplicate, result.matched)
             return false
         }
-        bust(playerId, result.reason)
+        bust(playerId, result.reason, result.duplicate, result.matched)
         return true
     }
 
-    fun consumeSecondChance(playerId: String, duplicate: Card) {
+    fun consumeSecondChance(playerId: String, duplicate: Card, matched: Card? = null) {
         consumePassive(playerId, SECOND_LIFE.id)
         discardFromHand(playerId, duplicate)
-        emit(GameEvent.SecondChance(playerId, duplicate))
+        emit(GameEvent.SecondChance(playerId, duplicate, matched))
     }
 
     // ─── Bust rules ───
 
-    data class BustResult(val reason: String, val duplicate: Card? = null)
+    data class BustResult(val reason: String, val duplicate: Card? = null, val matched: Card? = null)
 
     fun checkBust(player: Player): BustResult? {
-        val seen = mutableSetOf<String>()
+        val seen = mutableMapOf<String, Card>()
         for (card in player.hand) {
-            if (!seen.add(card.label)) return BustResult(BUST_DUPLICATE, card)
+            val clash = seen.put(card.label, card)
+            if (clash != null) return BustResult(BUST_DUPLICATE, card, clash)
         }
         val threshold = rules.bustThreshold
         if (threshold != null && player.handValue > threshold) return BustResult(BUST_THRESHOLD)
@@ -500,9 +501,29 @@ object Engine {
             }
         }
 
+        // A steal with nobody holding cards — most often on the opening deal —
+        // has nothing it could possibly do. Rather than parking the table on a
+        // pick that changes nothing, bin it and deal a replacement.
+        val targets = def.validTargets(ctx.state, playerId)
+        if (targets.isEmpty()) return fizzle(ctx, def, card, playerId)
+
         ctx.state = ctx.state.copy(
-            pendingAction = PendingAction(cardDefId = def.id, playerId = playerId, card = card),
+            pendingAction = PendingAction(
+                cardDefId = def.id,
+                playerId = playerId,
+                card = card,
+                validTargets = targets,
+            ),
         )
+        return DrawOutcome.PAUSED
+    }
+
+    /** Discards a card that cannot do anything and gives the drawer another one. */
+    private fun fizzle(ctx: Ctx, def: ActionCardDef, card: Card, playerId: String): DrawOutcome {
+        ctx.toDiscard(card)
+        ctx.emit(GameEvent.Fizzled(def.id, playerId))
+        if (ctx.player(playerId)?.status != PlayerStatus.ACTIVE) return DrawOutcome.CONTINUE
+        ctx.pushForcedDraws(playerId, 1)
         return DrawOutcome.PAUSED
     }
 
@@ -518,9 +539,9 @@ object Engine {
             val duplicate = bust.duplicate
             // Second chance only ever covers duplicates, never a threshold bust.
             if (bust.reason == Ctx.BUST_DUPLICATE && duplicate != null && ctx.hasPassive(playerId, SECOND_LIFE.id)) {
-                ctx.consumeSecondChance(playerId, duplicate)
+                ctx.consumeSecondChance(playerId, duplicate, bust.matched)
             } else {
-                ctx.bust(playerId, bust.reason)
+                ctx.bust(playerId, bust.reason, duplicate ?: card, bust.matched)
                 return DrawOutcome.BUSTED
             }
         }
@@ -551,14 +572,16 @@ object Engine {
             return
         }
 
-        // "Womp womp" overrides the pick; otherwise the target must still be in the round.
-        val targetId = if (ctx.rules.forceSelfTarget) fromId else requestedTargetId
-        val target = ctx.player(targetId)
-        val resolvedTarget = when {
-            target == null -> fromId
-            target.status != PlayerStatus.ACTIVE && target.id != fromId -> fromId
-            else -> target.id
+        // "Womp womp" overrides the pick. Otherwise the pick has to be one the
+        // card could actually be played on — a client asking for anything else
+        // gets the first legal target instead.
+        val allowed = if (ctx.rules.forceSelfTarget) listOf(fromId) else def.validTargets(ctx.state, fromId)
+        if (allowed.isEmpty()) {
+            fizzle(ctx, def, pending.card, fromId)
+            afterAction(ctx)
+            return
         }
+        val resolvedTarget = if (requestedTargetId in allowed) requestedTargetId else allowed.first()
 
         runAction(ctx, def, pending.card, fromId, resolvedTarget)
         afterAction(ctx)

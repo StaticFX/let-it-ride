@@ -202,9 +202,9 @@ export function RulesPage({ onClose, config }: RulesPageProps) {
   }[flip]
 
   return (
-    <div className="fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-auto">
+    <div className="fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-auto" data-testid="rules-page" data-page={page + 1}>
       <div className="flex items-center justify-between w-full max-w-[640px] px-6 pt-6 z-20">
-        <button onClick={onClose} className="bg-transparent border-none cursor-pointer display text-xl font-bold px-2 py-1">
+        <button onClick={onClose} data-testid="rules-back" className="bg-transparent border-none cursor-pointer display text-xl font-bold px-2 py-1">
           ← back
         </button>
         <small>{page + 1} / {pages.length}</small>
@@ -224,6 +224,7 @@ export function RulesPage({ onClose, config }: RulesPageProps) {
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex gap-6 items-center z-30">
         <button
           onClick={() => page > 0 && goToPage(page - 1)}
+          data-testid="rules-prev"
           disabled={page === 0 || isFlipping}
           className={`bg-transparent border-none display text-[28px] font-bold px-4 py-2 -rotate-2 transition-colors ${
             page === 0 || isFlipping ? 'text-[var(--ink)]/20 cursor-default' : 'cursor-pointer'
@@ -234,6 +235,7 @@ export function RulesPage({ onClose, config }: RulesPageProps) {
         <div className="display text-lg font-bold text-[var(--ink-soft)]">{page + 1}</div>
         <button
           onClick={() => page < pages.length - 1 && goToPage(page + 1)}
+          data-testid="rules-next"
           disabled={page === pages.length - 1 || isFlipping}
           className={`bg-transparent border-none display text-[28px] font-bold px-4 py-2 rotate-1 transition-colors ${
             page === pages.length - 1 || isFlipping ? 'text-[var(--ink)]/20 cursor-default' : 'cursor-pointer'

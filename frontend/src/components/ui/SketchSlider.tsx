@@ -2,8 +2,9 @@ import { useState, useRef, useCallback } from 'react'
 import { theme } from '../../theme'
 import { RoughBox } from './RoughShapes'
 
-export function SketchSlider({ min, max, step, value, onChange, label }: {
-  min: number; max: number; step: number; value: number; onChange: (v: number) => void; label?: string
+export function SketchSlider({ min, max, step, value, onChange, label, testId }: {
+  min: number; max: number; step: number; value: number; onChange: (v: number) => void
+  label?: string; testId?: string
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -50,6 +51,10 @@ export function SketchSlider({ min, max, step, value, onChange, label }: {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        data-testid={testId}
+        data-value={value}
+        data-min={min}
+        data-max={max}
         style={{
           position: 'relative', height: 32, cursor: 'pointer',
           display: 'flex', alignItems: 'center',

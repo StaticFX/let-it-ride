@@ -14,7 +14,7 @@ export function DeckPresetPile({ preset, selected, onClick }: {
   onClick: () => void
 }) {
   return (
-    <button onClick={onClick} className={`
+    <button onClick={onClick} data-testid={`deck-${preset.id}`} data-selected={selected} className={`
       flex flex-col items-center gap-2 px-2 py-2
       bg-transparent border-none cursor-pointer
       transition-all duration-200 ease-out

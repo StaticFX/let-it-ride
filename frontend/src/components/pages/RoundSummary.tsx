@@ -15,7 +15,13 @@ export function RoundSummary() {
   const winner = players.find((p) => p.id === roundWinnerId) ?? null
 
   return (
-    <div className="page-shell pt-10">
+    <div
+      className="page-shell pt-10"
+      data-testid="round-summary"
+      data-round={round}
+      data-winner-id={roundWinnerId ?? ''}
+      data-flip7-id={flip7PlayerId ?? ''}
+    >
       <div className="content-width">
         <div className="text-center mb-8">
           <small>round {String(round).padStart(2, '0')} complete</small>
@@ -45,6 +51,11 @@ export function RoundSummary() {
             return (
               <div
                 key={player.id}
+                data-testid="summary-row"
+                data-player-id={player.id}
+                data-player-name={player.name}
+                data-points={points}
+                data-busted={busted}
                 className={`rounded p-4 relative ${isWinner ? 'sketch-box-winner' : 'sketch-box'} ${busted ? 'opacity-55' : ''}`}
               >
                 <div className="flex items-center justify-between mb-2">
@@ -84,11 +95,11 @@ export function RoundSummary() {
         </div>
 
         {isHost ? (
-          <SketchButton variant="primary" onClick={() => send({ type: 'NEXT_ROUND' })}>
+          <SketchButton variant="primary" testId="next-round" onClick={() => send({ type: 'NEXT_ROUND' })}>
             {state.gameWinnerId ? 'see the results →' : 'next round →'}
           </SketchButton>
         ) : (
-          <p className="text-center text-muted">waiting for host…</p>
+          <p className="text-center text-muted" data-testid="waiting-for-host">waiting for host…</p>
         )}
       </div>
     </div>

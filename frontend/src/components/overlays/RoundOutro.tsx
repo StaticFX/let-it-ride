@@ -40,6 +40,10 @@ export function RoundOutro({ round, winner, points, flip7, untilMs }: RoundOutro
   return (
     <div
       className="fixed inset-0 z-[240] flex flex-col items-center justify-center pointer-events-none backdrop-blur-[10px] bg-[var(--felt)]/75"
+      data-testid="round-outro"
+      data-round={round}
+      data-winner={winner?.name ?? ''}
+      data-flip7={flip7}
       style={{
         opacity: phase === 'out' ? 0 : 1,
         transition: phase === 'in' ? 'opacity 260ms ease-out' : `opacity ${FADE_OUT_MS}ms ease-in`,
