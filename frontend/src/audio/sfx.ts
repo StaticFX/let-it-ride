@@ -21,24 +21,43 @@ const MAX_QUEUED = 8
 export type SoundName =
   | 'draw'
   | 'actionCard'
+  | 'actionLanded'
   | 'bust'
   | 'freeze'
   | 'flip7'
   | 'goOut'
   | 'roundEnded'
+  | 'timerRunningOut'
   | 'click'
   | 'keystroke'
 
-const SOURCES: Record<SoundName, string> = {
+/**
+ * A sound is one file, or several to choose between. The click is the only one
+ * you hear often enough for a single sample to start sounding like a machine —
+ * pitch alone was carrying all of that variation, and two takes do it better
+ * than any amount of resampling.
+ */
+const SOURCES: Record<SoundName, string | string[]> = {
   draw: '/sounds/draw-card.m4a',
+  /** An action card came off the deck. */
   actionCard: '/sounds/action-card.m4a',
+  /** ...and landed on somebody. */
+  actionLanded: '/sounds/given-action-card-to-player.wav',
   bust: '/sounds/bust.m4a',
   freeze: '/sounds/freeze.m4a',
   flip7: '/sounds/flip7.m4a',
   goOut: '/sounds/go-out.m4a',
   roundEnded: '/sounds/round-ended.m4a',
-  click: '/sounds/button-click.m4a',
+  timerRunningOut: '/sounds/timer-less-than-10s.wav',
+  click: ['/sounds/button-clicks/Click_1.wav', '/sounds/button-clicks/Click_2.wav'],
   keystroke: '/sounds/keystroke.m4a',
+}
+
+const NAMES = Object.keys(SOURCES) as SoundName[]
+
+function variantsOf(name: SoundName): string[] {
+  const source = SOURCES[name]
+  return Array.isArray(source) ? source : [source]
 }
 
 /**
@@ -58,16 +77,25 @@ const SOURCES: Record<SoundName, string> = {
  * interleaved samples counted that silence as signal — it read a factor of √2
  * low and earned those four a gain √2 too high. Playing out of one ear happened
  * to cancel it; centring them does not, so their gains came down to match.
+ *
+ * The three newest samples are recorded far hotter than the originals — RMS
+ * 0.08 to 0.16 against the keystroke's 0.0079 — so they are the only ones with
+ * a gain below 1. Each is set to the same loudness as the sound it stands
+ * beside: the card landing with the bust, the click where the old click was,
+ * and the clock under everything, because it plays for five seconds while the
+ * table carries on.
  */
 const GAIN: Record<SoundName, number> = {
   draw: 1.8,
   actionCard: 0.4,
+  actionLanded: 0.48,
   bust: 0.82,
   freeze: 1.4,
   flip7: 0.21,
   goOut: 2.19,
   roundEnded: 3.11,
-  click: 2.12,
+  timerRunningOut: 0.25,
+  click: 0.27,
   keystroke: 2.76,
 }
 
@@ -86,18 +114,24 @@ const SILENT_PEAK = 0.001
 const PITCH_SPREAD: Record<SoundName, number> = {
   draw: 0.14,
   actionCard: 0.09,
+  actionLanded: 0.07,
   bust: 0.06,
   freeze: 0.07,
   flip7: 0,
   goOut: 0.08,
   roundEnded: 0,
-  click: 0.11,
+  // A tune rather than a knock: resampling this one would be audible as
+  // something being played wrong, not as the same thing said twice.
+  timerRunningOut: 0,
+  // Less than it was, because the two takes are now doing most of the work.
+  click: 0.07,
   keystroke: 0.18,
 }
 
 let context: AudioContext | null = null
-const encoded = new Map<SoundName, ArrayBuffer>()
-const buffers = new Map<SoundName, AudioBuffer>()
+/** Downloaded bytes and decoded samples, one entry per take — see [SOURCES]. */
+const encoded = new Map<string, ArrayBuffer>()
+const buffers = new Map<SoundName, AudioBuffer[]>()
 let prefetching: Promise<void> | null = null
 let decoding: Promise<void> | null = null
 let muted = localStorage.getItem(MUTE_KEY) === '1'
@@ -105,6 +139,9 @@ let volume = readVolume()
 
 /** The same sound twice in a row is the one thing variation cannot hide. */
 const lastRate = new Map<SoundName, number>()
+
+/** ...and the same take twice in a row, for a sound that has more than one. */
+const lastTake = new Map<SoundName, number>()
 
 /** Requests that arrived before the buffers were decoded. */
 let queued: { name: SoundName; at: number }[] = []
@@ -133,10 +170,10 @@ function audioContext(): AudioContext | null {
  */
 export function prefetchAudio(): void {
   prefetching ??= Promise.all(
-    (Object.keys(SOURCES) as SoundName[]).map(async (name) => {
+    NAMES.flatMap(variantsOf).map(async (url) => {
       try {
-        const response = await fetch(SOURCES[name])
-        if (response.ok) encoded.set(name, await response.arrayBuffer())
+        const response = await fetch(url)
+        if (response.ok) encoded.set(url, await response.arrayBuffer())
       } catch {
         // A sound that will not load simply never plays.
       }
@@ -178,16 +215,25 @@ async function decodeAll(ctx: AudioContext): Promise<void> {
   prefetchAudio()
   await prefetching
   await Promise.all(
-    (Object.keys(SOURCES) as SoundName[]).map(async (name) => {
+    NAMES.map(async (name) => {
       if (buffers.has(name)) return
-      const bytes = encoded.get(name)
-      if (!bytes) return
-      try {
-        // decodeAudioData detaches the buffer, so hand it a copy.
-        buffers.set(name, toMono(ctx, await ctx.decodeAudioData(bytes.slice(0))))
-      } catch {
-        // Undecodable on this browser; stay silent rather than break.
-      }
+      // A take that will not decode is left out rather than taking the whole
+      // sound down with it: one of two clicks is still a click.
+      const takes = await Promise.all(
+        variantsOf(name).map(async (url) => {
+          const bytes = encoded.get(url)
+          if (!bytes) return null
+          try {
+            // decodeAudioData detaches the buffer, so hand it a copy.
+            return toMono(ctx, await ctx.decodeAudioData(bytes.slice(0)))
+          } catch {
+            // Undecodable on this browser; stay silent rather than break.
+            return null
+          }
+        }),
+      )
+      const decoded = takes.filter((take): take is AudioBuffer => take !== null)
+      if (decoded.length > 0) buffers.set(name, decoded)
     }),
   )
   flushQueued()
@@ -239,9 +285,19 @@ function pitchFor(name: SoundName): number {
   return rate
 }
 
-function emit(name: SoundName, ctx: AudioContext, buffer: AudioBuffer): void {
+/** Which take to play, never the one that was just played. */
+function takeFor(name: SoundName, takes: AudioBuffer[]): AudioBuffer {
+  if (takes.length === 1) return takes[0]
+  const previous = lastTake.get(name)
+  let index = Math.floor(Math.random() * takes.length)
+  if (index === previous) index = (index + 1) % takes.length
+  lastTake.set(name, index)
+  return takes[index]
+}
+
+function emit(name: SoundName, ctx: AudioContext, takes: AudioBuffer[]): void {
   const source = ctx.createBufferSource()
-  source.buffer = buffer
+  source.buffer = takeFor(name, takes)
   source.playbackRate.value = pitchFor(name)
 
   const gain = ctx.createGain()
@@ -259,8 +315,8 @@ function flushQueued(): void {
   if (!ctx || ctx.state !== 'running' || muted || volume === 0) return
   for (const request of pending) {
     if (now - request.at > LATE_PLAY_GRACE_MS) continue
-    const buffer = buffers.get(request.name)
-    if (buffer) emit(request.name, ctx, buffer)
+    const takes = buffers.get(request.name)
+    if (takes) emit(request.name, ctx, takes)
   }
 }
 
@@ -273,13 +329,13 @@ export function play(name: SoundName): void {
   decoding ??= decodeAll(ctx)
   if (ctx.state === 'suspended') void ctx.resume().then(flushQueued)
 
-  const buffer = buffers.get(name)
-  if (!buffer || ctx.state !== 'running') {
+  const takes = buffers.get(name)
+  if (!takes || ctx.state !== 'running') {
     // Still loading, or the context has not started. Hold onto it so the click
     // that unlocked audio is not the one click that makes no sound.
     if (queued.length < MAX_QUEUED) queued.push({ name, at: Date.now() })
     return
   }
 
-  emit(name, ctx, buffer)
+  emit(name, ctx, takes)
 }

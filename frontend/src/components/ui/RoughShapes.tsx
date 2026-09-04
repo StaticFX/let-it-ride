@@ -125,7 +125,7 @@ export function RoughCircle({
 
 // --- RoughSeal ---
 
-export type SealShape = 'circle' | 'hexagon' | 'shield' | 'scallop'
+export type SealShape = 'circle' | 'hexagon' | 'shield' | 'scallop' | 'spike'
 
 interface RoughSealProps {
   size: number
@@ -141,6 +141,8 @@ interface RoughSealProps {
  * The stamp a passive card's sigil is struck inside. The shape is doing the
  * same job the colour is — telling one card from another before either is read
  * — so it is drawn from the catalog rather than being the same ring every time.
+ * A shield guards, a token pays, a scallop is a keepsake, and a spiked one is a
+ * card you would rather not be holding.
  *
  * Struck twice, slightly out of register, the way a real stamp lands.
  */
@@ -183,6 +185,20 @@ export function RoughSeal({
             } else {
               d += ` L ${x} ${y}`
             }
+          }
+          return `${d} Z`
+        }
+        case 'spike': {
+          // A scallop turned inside out: the same ring of points, but pinched
+          // between them rather than bulging, so the edge bites.
+          const points = 18
+          let d = ''
+          for (let i = 0; i < points; i++) {
+            const a = (i / points) * Math.PI * 2 - Math.PI / 2
+            const reach = i % 2 === 0 ? radius : radius * 0.66
+            const x = c + Math.cos(a) * reach
+            const y = c + Math.sin(a) * reach
+            d += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`
           }
           return `${d} Z`
         }

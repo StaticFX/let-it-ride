@@ -710,17 +710,74 @@ label {
   100% { transform: translate(-50%, -50%) translateY(-26px) scale(1); opacity: 0; }
 }
 
-/* ─── Fizzled card ─── */
+/* ─── Fizzled card ───
+   A card that could do nothing, shown rather than announced: held up, struck
+   out, and dropped. Everything here is timed as a fraction of --fizzle-dur, so
+   the strike lands a third of the way through however long the animation is
+   given — see [FizzleNote]. It is the slowest of the small animations on
+   purpose; it is the only one that has to be read to be understood. */
 
 .fizzle-note {
-  animation: fizzleNote 1500ms ease-out both;
+  animation: fizzleNote var(--fizzle-dur, 2400ms) ease-out both;
 }
 
 @keyframes fizzleNote {
-  0%   { transform: translate(-50%, -50%) scale(0.6) rotate(-4deg); opacity: 0; }
-  18%  { transform: translate(-50%, -50%) scale(1.05) rotate(-2deg); opacity: 1; }
-  65%  { transform: translate(-50%, -50%) scale(1) rotate(-2deg); opacity: 1; }
+  0%   { transform: translate(-50%, -50%) scale(0.55) rotate(-6deg); opacity: 0; }
+  8%   { transform: translate(-50%, -50%) scale(1.08) rotate(-2deg); opacity: 1; }
+  20%  { transform: translate(-50%, -50%) scale(1) rotate(-2deg); opacity: 1; }
+  78%  { transform: translate(-50%, -50%) scale(1) rotate(-2deg); opacity: 1; }
+  /* Dropped towards the discard pile rather than faded on the spot. */
+  100% { transform: translate(-50%, -50%) translateY(70px) scale(0.78) rotate(11deg); opacity: 0; }
+}
+
+.fizzle-strike {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Struck only once the card has been up long enough to see what it was. */
+  animation: fizzleStrike calc(var(--fizzle-dur, 2400ms) * 0.16) cubic-bezier(.2, .9, .3, 1.4) both;
+  animation-delay: calc(var(--fizzle-dur, 2400ms) * 0.28);
+}
+
+@keyframes fizzleStrike {
+  0%   { opacity: 0; transform: scale(1.7) rotate(-9deg); }
+  70%  { opacity: 1; transform: scale(0.94) rotate(2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+.fizzle-caption {
+  animation: fadeUp calc(var(--fizzle-dur, 2400ms) * 0.14) ease-out both;
+  animation-delay: calc(var(--fizzle-dur, 2400ms) * 0.34);
+}
+
+/* ─── Points changing hands ───
+   A toll charged mid-round. The chip itself is moved by [PointsFlight] with a
+   transition rather than a keyframe — it has to end at a seat, and where that
+   seat is depends on the window — so these are only the two sums left behind. */
+
+.points-toll {
+  transform: translate(-50%, -50%);
+  animation: pointsToll 1500ms cubic-bezier(.2, .9, .3, 1.2) both;
+}
+
+.points-take {
+  transform: translate(-50%, -50%);
+  animation: pointsTake 700ms cubic-bezier(.2, .9, .3, 1.3) both;
+}
+
+@keyframes pointsToll {
+  0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
+  14%  { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+  60%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
   100% { transform: translate(-50%, -50%) translateY(-30px) scale(0.95); opacity: 0; }
+}
+
+@keyframes pointsTake {
+  0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
+  40%  { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
+  72%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) translateY(-24px) scale(1); opacity: 0; }
 }
 
 /* ─── Coin flip ───
@@ -729,8 +786,24 @@ label {
    tails half a turn behind it, so landing on the right one is only a matter of
    how many half-turns the coin makes on the way down. The two faces are laid
    over each other and whichever is looking away is dropped by
-   backface-visibility, so nothing here may take an opacity below 1 — that
-   flattens the 3D context and both sides show at once. */
+   backface-visibility, so nothing on the coin itself may take an opacity below
+   1 — that flattens the 3D context and both sides show at once.
+
+   Which is precisely what the coin used to do at the end of its own throw: it
+   faded out on the last frames, and for those frames it read "heads" and
+   "tails" over each other, right where everybody was looking. The fade lives on
+   the wrapper now, which is not in the 3D context and cannot flatten it. */
+
+.coin-flip {
+  animation: coinFade var(--coin-dur, 2600ms) both;
+}
+
+@keyframes coinFade {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  93%  { opacity: 1; }
+  100% { opacity: 0; }
+}
 
 .coin-toss {
   position: relative;
@@ -739,7 +812,7 @@ label {
   /* Also the resting state: with the animation off the coin is simply already
      showing the face it landed on. */
   transform: perspective(760px) rotateX(var(--coin-end, 0deg));
-  animation: coinToss var(--coin-dur, 2000ms) both;
+  animation: coinToss var(--coin-dur, 2600ms) both;
 }
 
 .coin-face {
@@ -764,23 +837,22 @@ label {
   /* Thrown in from above the table. */
   0% {
     transform: perspective(760px) translateY(-340px) rotateX(0deg) scale(0.72);
-    opacity: 0;
     animation-timing-function: cubic-bezier(.45, 0, .75, .5);
   }
-  12% { opacity: 1; }
   /* Turning fast, near the top of its arc. */
   55% {
     transform: perspective(760px) translateY(-34px) rotateX(calc(var(--coin-end, 1800deg) - 220deg)) scale(1.14);
     animation-timing-function: cubic-bezier(.35, 0, .55, 1);
   }
-  /* Down on the felt, on the announced face. */
+  /* Down on the felt, on the announced face — keep [LAND_AT] in step with this
+     frame, because it is what the caption is timed against. */
   70% {
     transform: perspective(760px) translateY(8px) rotateX(var(--coin-end, 1800deg)) scale(0.98);
     animation-timing-function: cubic-bezier(.2, .9, .3, 1.4);
   }
-  80% { transform: perspective(760px) translateY(-12px) rotateX(var(--coin-end, 1800deg)) scale(1.02); }
-  90% { transform: perspective(760px) translateY(0) rotateX(var(--coin-end, 1800deg)) scale(1); opacity: 1; }
-  100% { transform: perspective(760px) translateY(-10px) rotateX(var(--coin-end, 1800deg)) scale(1); opacity: 0; }
+  78% { transform: perspective(760px) translateY(-12px) rotateX(var(--coin-end, 1800deg)) scale(1.02); }
+  /* ...and then it simply lies there, being read. */
+  86%, 100% { transform: perspective(760px) translateY(0) rotateX(var(--coin-end, 1800deg)) scale(1); }
 }
 
 /* ─── Assassination ───
@@ -797,7 +869,7 @@ label {
   /* The resting state points at the victim, so the animation can be taken away
      without the bottle lying about who it picked. */
   transform: translate(-50%, -50%) rotate(var(--bottle-end, 0deg));
-  animation: bottleSpin var(--bottle-dur, 1700ms) both;
+  animation: bottleSpin var(--bottle-dur, 2400ms) both;
 }
 
 .bottle-verdict {
@@ -805,21 +877,25 @@ label {
   top: 92px;
   left: 50%;
   transform: translateX(-50%);
-  animation: bottleVerdict var(--bottle-dur, 1700ms) both;
+  animation: bottleVerdict var(--bottle-dur, 2400ms) both;
 }
 
+/* The bottle stops at 60% of whatever it is given, not at 82%. It used to slow
+   onto its victim in the last fifth of an animation that was itself being cut
+   short by the table moving on, so the one thing the card is about — where it
+   stopped — was the one thing nobody saw. */
 @keyframes bottleSpin {
   0% {
     transform: translate(-50%, -50%) translateY(-300px) rotate(0deg) scale(1.5);
     opacity: 0;
     animation-timing-function: cubic-bezier(.5, 0, .8, .5);
   }
-  14% {
+  10% {
     transform: translate(-50%, -50%) rotate(90deg) scale(1);
     opacity: 1;
     animation-timing-function: cubic-bezier(.1, .55, .25, 1);
   }
-  82% {
+  60%, 90% {
     transform: translate(-50%, -50%) rotate(var(--bottle-end, 1080deg)) scale(1);
     opacity: 1;
   }
@@ -831,9 +907,10 @@ label {
 
 /* The name only after the bottle has stopped on it. */
 @keyframes bottleVerdict {
-  0%, 78% { transform: translateX(-50%) scale(0.6); opacity: 0; }
-  88% { transform: translateX(-50%) scale(1.12); opacity: 1; }
-  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+  0%, 56% { transform: translateX(-50%) scale(0.6); opacity: 0; }
+  66% { transform: translateX(-50%) scale(1.12); opacity: 1; }
+  74%, 90% { transform: translateX(-50%) scale(1); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1); opacity: 0; }
 }
 
 /* ─── Spin the table ───
@@ -1008,58 +1085,20 @@ label {
   filter: grayscale(0.7);
 }
 
-/* ─── Marks ───
-   An effect a player carries for the rest of the round. It is not drawn as a
-   card on purpose: a mark cannot be stolen, struck, swapped or discarded, and
-   anything card-shaped invites the player to try. A strip torn off the pad and
-   left by the seat says "this is written about you" instead. */
-.mark-slip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 1px 7px 2px;
-  background: var(--card-back);
-  color: var(--ink);
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.3;
-  white-space: nowrap;
-  box-shadow: 0 1px 0 rgba(31, 28, 20, 0.14);
-  /* Torn across the top and bottom, cut clean down the sides — the way a strip
-     comes off a pad that is only perforated one way. */
-  clip-path: polygon(
-    0% 12%, 9% 0%, 22% 9%, 37% 1%, 52% 8%, 68% 0%, 83% 7%, 100% 0%,
-    100% 88%, 90% 100%, 74% 92%, 58% 100%, 43% 91%, 27% 99%, 12% 92%, 0% 100%
-  );
-  /* The tilt is a variable because the landing animation owns `transform` for
-     the whole element — an inline rotation would be thrown away the moment it
-     finished. Also the resting state when the animation is off. */
-  transform: rotate(var(--slip-tilt, 0deg));
-  animation: markLand 420ms cubic-bezier(.2, .9, .3, 1.3) both;
-}
-
-.mark-slip-sigil {
-  color: var(--accent);
-  font-size: 13px;
-}
-
-/* Slapped down rather than faded in — it is a thing that happened to you. */
-@keyframes markLand {
-  0% { opacity: 0; transform: translateY(-10px) scale(1.5) rotate(-8deg); }
-  70% { opacity: 1; transform: translateY(0) scale(0.94) rotate(calc(var(--slip-tilt, 0deg) + 3deg)); }
-  100% { opacity: 1; transform: translateY(0) scale(1) rotate(var(--slip-tilt, 0deg)); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .tension-deal,
+  .coin-flip,
   .coin-toss,
   .bottle-spin,
   .bottle-verdict,
   .table-swirl,
   .table-swirl-arrow,
   .choice-picker,
-  .mark-slip,
+  .fizzle-note,
+  .fizzle-strike,
+  .fizzle-caption,
+  .points-toll,
+  .points-take,
   .showdown {
     animation: none;
   }

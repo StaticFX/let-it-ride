@@ -30,15 +30,32 @@ test.describe('http api', () => {
 
   test('serves every sound the client asks for', async ({ request }) => {
     // The player never hears a failure — undecodable audio is swallowed — so a
-    // missing sample would otherwise ship silently.
+    // missing sample would otherwise ship silently. Written out in full rather
+    // than assembled from names: this is the list in `SOURCES` in `sfx.ts`, and
+    // a sample that was renamed or dropped should fail here rather than be
+    // quietly reconstructed by the same rule that lost it.
     const sounds = [
-      'draw-card', 'action-card', 'bust', 'freeze',
-      'flip7', 'go-out', 'round-ended', 'button-click', 'keystroke',
+      '/sounds/draw-card.m4a',
+      '/sounds/action-card.m4a',
+      '/sounds/given-action-card-to-player.wav',
+      '/sounds/bust.m4a',
+      '/sounds/freeze.m4a',
+      '/sounds/flip7.m4a',
+      '/sounds/go-out.m4a',
+      '/sounds/round-ended.m4a',
+      '/sounds/timer-less-than-10s.wav',
+      '/sounds/button-clicks/Click_1.wav',
+      '/sounds/button-clicks/Click_2.wav',
+      '/sounds/keystroke.m4a',
     ]
-    for (const name of sounds) {
-      const response = await request.get(`/sounds/${name}.m4a`)
-      expect(response.status(), `/sounds/${name}.m4a`).toBe(200)
-      expect((await response.body()).byteLength, `/sounds/${name}.m4a is empty`).toBeGreaterThan(0)
+    for (const path of sounds) {
+      const response = await request.get(path)
+      expect(response.status(), path).toBe(200)
+      // A path the jar does not hold falls through to the SPA shell, which is a
+      // perfectly good 200 with a perfectly good body — so what is actually
+      // being asked here is whether what came back is audio.
+      expect(response.headers()['content-type'], `${path} is not audio`).toMatch(/^audio\//)
+      expect((await response.body()).byteLength, `${path} is empty`).toBeGreaterThan(0)
     }
   })
 
@@ -87,18 +104,20 @@ test.describe('http api', () => {
     for (const passive of catalog.passives) {
       expect(passive.name).toBeTruthy()
       expect(passive.description).toBeTruthy()
-      expect(['flat', 'double', 'none']).toContain(passive.scoring)
+      expect(passive.sigil, `${passive.id} needs a sigil to draw`).toBeTruthy()
+      expect(['flat', 'double', 'none', 'voidUnlessFlip', 'halve']).toContain(passive.scoring)
     }
 
-    // Marks arrive on the player rather than as cards, so the client can only
-    // draw one it can name.
-    expect(catalog.marks?.map((mark) => mark.id)).toEqual(
-      expect.arrayContaining(['noFlip', 'mustFlip']),
+    // The effect cards are cards like any other — everything in this game is —
+    // so they come down with a face to draw, and no deck may hold one.
+    const effects = catalog.passives.filter((passive) => passive.deckable === false)
+    expect(effects.map((passive) => passive.id)).toEqual(
+      expect.arrayContaining(['noFlip', 'mustFlip', 'bomber', 'halved']),
     )
-    for (const mark of catalog.marks ?? []) {
-      expect(mark.name, `${mark.id} needs a name`).toBeTruthy()
-      expect(mark.description, `${mark.id} needs a description`).toBeTruthy()
-      expect(mark.sigil, `${mark.id} needs a sigil to draw`).toBeTruthy()
+    for (const deck of catalog.decks) {
+      for (const effect of effects) {
+        expect(deck.deck.passiveCards, `${deck.id} deals a ${effect.id}`).not.toContain(effect.id)
+      }
     }
   })
 

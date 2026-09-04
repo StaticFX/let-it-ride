@@ -85,7 +85,11 @@ export function DeckBuilder({ deck, catalog, onChange }: {
   const maxCopies = limits?.maxCopies ?? 20
   const problem = deckProblem(deck, catalog)
 
+  // Neither list offers a card no deck may hold: a house rule's prompt, or an
+  // effect card that is minted rather than dealt. The server strips them from a
+  // config anyway, and a builder that let one be added would be lying.
   const actions = useMemo(() => catalog.actions.filter((card) => card.deckable !== false), [catalog.actions])
+  const passives = useMemo(() => catalog.passives.filter((card) => card.deckable !== false), [catalog.passives])
 
   return (
     <div data-testid="deck-builder" data-size={deckSize(deck)} data-valid={!problem}>
@@ -127,7 +131,7 @@ export function DeckBuilder({ deck, catalog, onChange }: {
       </Section>
 
       <Section title="modifiers & protection">
-        {catalog.passives.map((card) => (
+        {passives.map((card) => (
           <Row
             key={card.id}
             card={{ id: `build-p-${card.id}`, kind: 'passive', label: card.name, value: 0, defId: card.id }}

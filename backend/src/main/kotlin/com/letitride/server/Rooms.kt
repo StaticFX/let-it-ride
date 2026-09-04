@@ -64,10 +64,20 @@ private val POST_INTRO_MS = paced(300L)
  * The closing beats of a round: whatever animation ended it, then a title card,
  * then the scoreboard. The room does not gate on these — the round is already
  * over — it just tells the client how long to hold the table.
+ *
+ * These are the one place the server has to know roughly how long an animation
+ * runs, because the round is over and there is no gate left to wait on. Each is
+ * the client's own duration for that animation plus the beat it waits for the
+ * played card to land (`SMASH_LAND_MS`), plus a little. Lengthen an animation
+ * in `useGame.ts` and the matching number here has to follow, or the closing
+ * card lands on top of it — which is exactly what used to happen to the coin.
  */
 private val OUTRO_CARD_MS = paced(1700L)
 internal val OUTRO_AFTER_BUST_MS = paced(2200L)
-internal val OUTRO_AFTER_FLIP7_MS = paced(3100L)
+internal val OUTRO_AFTER_FLIP7_MS = paced(3300L)
+internal val OUTRO_AFTER_COIN_MS = paced(3300L)
+internal val OUTRO_AFTER_SPIN_MS = paced(3100L)
+internal val OUTRO_AFTER_TRANSFER_MS = paced(2400L)
 
 private val FORCED_DRAW_STEP_MS = paced(800L)
 
@@ -107,10 +117,20 @@ private data class AnimationGate(
 /**
  * How long the closing animation needs before the round's title card goes up.
  * A round that simply ran out of players has nothing to wait for.
+ *
+ * The longest of whatever the batch contains, rather than the first match: a
+ * coin called wrong sends a coin flip *and* the bust it caused, and the coin is
+ * still turning long after the bust would have been done with.
  */
-internal fun outroPreambleFor(events: List<GameEvent>): Long = when {
-    events.any { it is GameEvent.Flip7 } -> OUTRO_AFTER_FLIP7_MS
-    events.any { it is GameEvent.Bust } -> OUTRO_AFTER_BUST_MS
+internal fun outroPreambleFor(events: List<GameEvent>): Long =
+    events.maxOfOrNull { closingWindowFor(it) } ?: 0L
+
+private fun closingWindowFor(event: GameEvent): Long = when (event) {
+    is GameEvent.Flip7 -> OUTRO_AFTER_FLIP7_MS
+    is GameEvent.CoinFlip -> OUTRO_AFTER_COIN_MS
+    is GameEvent.BottleSpin -> OUTRO_AFTER_SPIN_MS
+    is GameEvent.PointsTransferred -> OUTRO_AFTER_TRANSFER_MS
+    is GameEvent.Bust -> OUTRO_AFTER_BUST_MS
     else -> 0L
 }
 
@@ -146,7 +166,13 @@ class Room(
      * Cards to put on top of the deck when the game starts, in order — see
      * [CreateRoomRequest.stack]. Empty for every real room.
      */
-    private val stack: List<String> = emptyList(),
+    stack: List<String> = emptyList(),
+    /**
+     * Whether this room takes dev commands and shows the deck — see [DevMode].
+     * False for every real room, and the only thing that can turn it on is the
+     * server's own environment.
+     */
+    private val dev: Boolean = false,
 ) {
     private val rng = Rng(seed)
     private val mutex = Mutex()
@@ -170,6 +196,14 @@ class Room(
     private var nextRoundAt: Long? = null
     private var gate: AnimationGate? = null
     private var gateCounter = 0L
+
+    /**
+     * What goes on top of the deck the moment there is one, and nothing once it
+     * has been dealt. A room created with a stack starts with it; a dev client
+     * asking for cards before the game has started replaces it, because there is
+     * no deck yet to put them on.
+     */
+    private var pendingStack: List<String> = stack
 
     @Volatile
     var emptySince: Long? = System.currentTimeMillis()
@@ -321,9 +355,53 @@ class Room(
                     botCounter++
                     applyLocked(GameAction.AddPlayer("bot-${code}-$botCounter", name, isBot = true))
                 }
+
+                // Nothing at all on a real server. Not host-only either: a
+                // second browser is how half of this gets tested, and there is
+                // no trust to protect on a table that only exists locally.
+                is ClientMessage.Dev -> {
+                    if (!dev) return
+                    applyDev(message.setup)
+                }
             }
         }
         broadcast(events)
+    }
+
+    /**
+     * Writes a dev setup onto the table — see [DevMode]. Must be called with
+     * [mutex] held.
+     *
+     * The state it produces is one the engine never went through, so everything
+     * the room was timing against it is dropped: the prompt it thought was open,
+     * the clock it started for whoever used to be on turn, the animation it was
+     * waiting to be told about. [tick] works all of that out again from the
+     * state it is given, so clearing them is enough.
+     */
+    private fun applyDev(setup: DevSetup): List<GameEvent> {
+        setup.stack?.let { names ->
+            // Before the deal there is no deck to stack; hold it for [stackDeck].
+            if (state.phase == GamePhase.LOBBY) pendingStack = names
+        }
+        state = DevMode.apply(state, if (state.phase == GamePhase.LOBBY) setup.copy(stack = null) else setup)
+
+        promptKey = null
+        turnDeadline = null
+        nextStepAt = 0
+
+        if (setup.skipWait) {
+            roundIntroUntil = null
+            roundOutroFrom = null
+            roundOutroUntil = null
+            gate = null
+        }
+
+        // The round is over as far as the state is concerned — every seat is out
+        // — but only the engine can score it. Poking it with a step that does
+        // nothing on its own is what gets it to notice and settle.
+        if (setup.endRound && state.phase == GamePhase.PLAYING) return applyLocked(GameAction.ForcedDraw)
+
+        return emptyList()
     }
 
     /** Clamps host-supplied config so a crafted message cannot break a game. */
@@ -579,10 +657,12 @@ class Room(
      * have got anyway, and fails on what it was actually checking.
      */
     private fun stackDeck(state: GameState): GameState {
-        if (stack.isEmpty()) return state
+        val names = pendingStack
+        if (names.isEmpty()) return state
+        pendingStack = emptyList()
         val rest = state.deck.toMutableList()
         val top = mutableListOf<com.letitride.engine.Card>()
-        for (name in stack) {
+        for (name in names) {
             val index = rest.indexOfFirst { it.defId == name || it.label == name }
             if (index >= 0) top += rest.removeAt(index)
         }
@@ -695,6 +775,7 @@ class Room(
         roundOutroUntil,
         gate?.let { AnimationGateView(it.id, it.ackPlayerId, it.deadline) },
         nextRoundAt,
+        if (dev) DevMode.peek(state) else null,
     )
 
     private suspend fun broadcast(events: List<GameEvent>) {
@@ -747,10 +828,10 @@ class RoomRegistry(private val json: Json, private val scope: CoroutineScope) {
     fun get(code: String): Room? = rooms[code.uppercase()]
 
     /** [seed] fixes the room's shuffles; the caller decides whether that is allowed. */
-    fun create(seed: Long? = null, stack: List<String> = emptyList()): Room {
+    fun create(seed: Long? = null, stack: List<String> = emptyList(), dev: Boolean = false): Room {
         var code = generateCode()
         while (rooms.containsKey(code)) code = generateCode()
-        val room = Room(code, seed ?: random.nextLong(), json, scope, stack)
+        val room = Room(code, seed ?: random.nextLong(), json, scope, stack, dev)
         rooms[code] = room
         return room
     }

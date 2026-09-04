@@ -33,12 +33,6 @@ export interface Player {
   skipNextTurn: boolean
   connected: boolean
   isBot: boolean
-  /**
-   * Effects this player is under for the rest of the round — see `MarkInfo`.
-   * A mark is not a card: it cannot be stolen, swapped or scored, and it is
-   * wiped when the next round is dealt. Older servers omit the field.
-   */
-  marks?: string[]
 }
 
 // ─── Config ───
@@ -208,6 +202,12 @@ export interface GameStateView {
    * once the game is settled. Pressing the button early still wins.
    */
   nextRoundAt?: number
+  /**
+   * The next cards off the deck, in draw order — only ever sent by a server
+   * running the testing mode, and the reason the dev panel can show what is
+   * coming. Absent everywhere else, which is every server anybody plays on.
+   */
+  devDeck?: Card[]
 }
 
 // ─── Events ───
@@ -234,10 +234,11 @@ export type GameEvent =
     }
   | { type: 'freeze'; playerId: string }
   /**
-   * `playerId` came under `markId` for the rest of the round. Only sent when
-   * the mark is new — marking someone who already carries it announces nothing.
+   * `points` moved from one player to another mid-round — a toll rather than
+   * anything the hands did. Both halves are already in the round's adjustments;
+   * this is the announcement, so the table can watch the points cross it.
    */
-  | { type: 'marked'; playerId: string; markId: string }
+  | { type: 'pointsTransferred'; fromPlayerId: string; toPlayerId: string; points: number }
   | { type: 'actionPlayed'; cardDefId: string; fromPlayerId: string; targetPlayerId: string }
   | { type: 'secondChance'; playerId: string; card: Card; matched?: Card }
   | { type: 'secondChancePassed'; fromPlayerId: string; toPlayerId: string }
@@ -298,6 +299,43 @@ export type GameEvent =
 
 // ─── Socket protocol ───
 
+// ─── Testing mode ───
+// Only a server started with LETITRIDE_TEST_HOOKS=1 has any of this; everything
+// below is inert against a real one, which ignores the message and sends no deck.
+
+/**
+ * One seat, as a patch. Only the fields that are sent are written, so moving a
+ * score does not have to send back a hand it never touched. The seat is named by
+ * `playerId`, or by `seat`, or by where it sits in the list.
+ */
+export interface DevPlayerPatch {
+  playerId?: string
+  seat?: number
+  name?: string
+  score?: number
+  status?: PlayerStatus
+  /** The whole hand, by card name — a number's face ("7"), or a def id ("freeze", "plus4"). */
+  hand?: string[]
+  /** The modifier row, same naming — the effect cards ("bomber") included. */
+  passives?: string[]
+  skipNextTurn?: boolean
+}
+
+/** Everything one dev command can change, applied to the table in one go. */
+export interface DevSetup {
+  /** The next cards off the deck, in the order they will be drawn. */
+  stack?: string[]
+  players?: DevPlayerPatch[]
+  round?: number
+  turnPlayerId?: string
+  /** Drops whatever the table is stopped on — a prompt, a run of forced draws. */
+  clearPrompt?: boolean
+  /** Everybody still in goes out and the engine scores the round as it stands. */
+  endRound?: boolean
+  /** Cuts short the title card, the closing card and any animation being waited on. */
+  skipWait?: boolean
+}
+
 export type ClientMessage =
   | { type: 'HIT' }
   | { type: 'STAY' }
@@ -313,6 +351,7 @@ export type ClientMessage =
   | { type: 'ADD_BOT' }
   | { type: 'PING' }
   | { type: 'ANIM_DONE'; gateId: number }
+  | { type: 'DEV'; setup: DevSetup }
 
 export type ServerMessage =
   | { type: 'WELCOME'; playerId: string; roomCode: string; isHost: boolean }
@@ -356,31 +395,30 @@ export interface PassiveCardInfo {
   description: string
   sigil: string
   bonusPoints: number
-  scoring: 'flat' | 'double' | 'none'
+  scoring: 'flat' | 'double' | 'none' | 'voidUnlessFlip' | 'halve'
   /** The ink this card prints in. Older servers omit it; the house green stands in. */
   accent?: string
   /** The stamp its sigil is struck in. Older servers omit it; a plain ring stands in. */
-  seal?: 'circle' | 'hexagon' | 'shield' | 'scallop'
-  /** What it costs to buy outright — see the "mutate" card. */
+  seal?: 'circle' | 'hexagon' | 'shield' | 'scallop' | 'spike'
+  /** What it costs to buy outright — see the "mutate" card. Nought is not for sale. */
   price?: number
+  /**
+   * What the holder pays anybody who plays an action card on them — see the
+   * "discordia" card. Nought for every card that is simply worth having.
+   */
+  spite?: number
+  /**
+   * False for a card no deck may contain: an effect minted by whatever causes
+   * it. It comes down so the client can draw the face, and the deck builder
+   * must not offer it. Older servers omit it, and everything was deckable.
+   */
+  deckable?: boolean
 }
 
 export interface LobbyRuleInfo {
   id: string
   name: string
   description: string
-}
-
-/**
- * An effect a player carries for the rest of a round. Marks arrive on the
- * player rather than as cards, so their faces come from the catalog the same
- * way card faces do.
- */
-export interface MarkInfo {
-  id: string
-  name: string
-  description: string
-  sigil: string
 }
 
 export interface DeckEntryInfo {
@@ -401,8 +439,6 @@ export interface Catalog {
   actions: ActionCardInfo[]
   passives: PassiveCardInfo[]
   rules: LobbyRuleInfo[]
-  /** Older servers omit this; nothing renders a mark it cannot name. */
-  marks?: MarkInfo[]
   decks: DeckPresetInfo[]
   flip7Bonus: number
   flip7Target: number
@@ -426,4 +462,10 @@ export interface Catalog {
    * Older servers omit it.
    */
   pace?: number
+  /**
+   * Whether this server takes dev commands, and so whether the testing panel is
+   * worth showing. False or absent everywhere but a local server started with
+   * the hooks on.
+   */
+  testHooks?: boolean
 }

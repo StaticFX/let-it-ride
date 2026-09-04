@@ -7,6 +7,7 @@ import { RoundSummary } from './components/pages/RoundSummary'
 import { GameOver } from './components/pages/GameOver'
 import { EscapeMenu } from './components/overlays/EscapeMenu'
 import { DisconnectOverlay } from './components/overlays/DisconnectOverlay'
+import { DevPanel } from './components/dev/DevPanel'
 import { resetDealtCards } from './components/cards/dealtCards'
 import { prefetchAudio, unlockAudio } from './audio/sfx'
 
@@ -109,6 +110,8 @@ function App() {
       {screen}
       <EscapeMenu />
       <DisconnectOverlay />
+      {/* Nothing at all unless the server was started with the test hooks on. */}
+      <DevPanel />
     </>
   )
 }

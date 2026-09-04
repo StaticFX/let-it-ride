@@ -64,7 +64,7 @@ class ExtremeTest {
         state = t(state, GameAction.Hit("a"))
         state = t(state, GameAction.PlayAction("a", "b", UNLUCKY_SEVEN.id))
 
-        assertTrue(MUST_FLIP.id in state.player("b")!!.marks)
+        assertTrue(state.player("b")!!.passives.any { it.defId == MUST_FLIP.id })
         assertEquals(0, Engine.roundScore(state.player("b")!!, flip7PlayerId = null))
     }
 

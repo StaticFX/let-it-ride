@@ -64,6 +64,38 @@ Two terminals:
 bun --cwd frontend run dev             # UI on :5173, proxying /api and /ws
 ```
 
+### Locally, with the testing mode
+
+```sh
+./gradlew :backend:runDev              # the same rules, with the hooks on
+bun --cwd frontend run dev
+```
+
+`runDev` sets `LETITRIDE_TEST_HOOKS=1`, and that one variable is everything: the
+seed hook, the pacing knob, and the panel described below. Add
+`LETITRIDE_PACE=0.25` to run every title card, deal and bot at a quarter of the
+time.
+
+Press `` ` `` at the table (or the *dev* tab in the corner) and you get:
+
+- **cards** — the next twelve cards off the deck, in order, and a way to put any
+  card on top of it. A card the deck holds is lifted out of it and moved, so the
+  deck is still the deck; a card it does not hold is minted, so a table can be
+  tested against a card that was never in its deck.
+- **players** — every seat's hand, modifiers, score and status, editable, plus a
+  button for each of the effect cards no deck deals.
+  Cards moved onto a seat come out of the deck and what they replace goes back to
+  the discard pile, so nothing is created or lost.
+- **table** — the round number, whose turn it is, clearing whatever the table is
+  stopped on, ending the round where it stands, and one-click situations: *one
+  off the flip*, *bust on your next card*, *everybody on match point*. It will
+  also deal a fresh table with bots, already started, from the title screen.
+
+None of it exists on a server that was not started with the variable. The panel
+is gated on what `/api/catalog` reports, dev messages are dropped by every other
+room, and the deck is never sent to a client — CI checks the published image for
+all three.
+
 ## Layout
 
 ```
@@ -78,14 +110,16 @@ backend/
     server/
       Rooms.kt   in-memory rooms, the pacing clock, and the bots
       Dto.kt     the wire types (the client's view redacts the deck)
+      DevMode.kt the local testing mode — off unless the env asks for it
     Application.kt
-  src/test/kotlin/     87 tests, including full games under every preset
+  src/test/kotlin/     253 tests, including full games under every preset
 frontend/
   src/game/types.ts    mirrors the wire types; decides nothing
   src/net/client.ts    REST + WebSocket, with reconnect
   src/state/           a mirror of server state, nothing more
   src/audio/sfx.ts     Web Audio playback, pitch-varied per hit
   src/components/
+  src/components/dev/  the testing panel; nothing without the hooks on
   public/sounds/       the effect samples
 e2e/
   tests/               Playwright specs, run against the packaged jar
@@ -141,7 +175,9 @@ E2E_SKIP_BUILD=1 bun run test        # reuse the jar you already built
 bun run test:headed                  # watch it happen
 ```
 
-> The seed hook is gated behind `LETITRIDE_TEST_HOOKS=1` and is off in every
-> published image — CI checks `/api/health` reports `"testHooks":false` on the
-> artifact it just pushed. A server that honoured a client's seed would let
-> anyone deal themselves a deck they already know.
+> The test hooks — the seed, the stacked deck and the testing panel — are gated
+> behind `LETITRIDE_TEST_HOOKS=1` and are off in every published image. CI checks
+> `/api/health` and `/api/catalog` both report `"testHooks":false` on the artifact
+> it just pushed. A server that honoured a client's seed would let anyone deal
+> themselves a deck they already know, and one that answered the panel would let
+> them write their own hand.

@@ -14,9 +14,15 @@ import kotlin.test.assertTrue
  */
 class SuicideBomberTest {
 
+    /** Hands [id] a bomb, the way the card that arms them would. */
     private fun armed(state: GameState, id: String): GameState = state.copy(
-        players = state.players.map { if (it.id == id) it.copy(marks = it.marks + BOMBER.id) else it },
+        players = state.players.map {
+            if (it.id == id) it.copy(passives = it.passives + passive(BOMBER.id, id = "tmp-bomber-$id")) else it
+        },
     )
+
+    private fun armedStill(state: GameState, id: String): Boolean =
+        state.player(id)!!.passives.any { it.defId == BOMBER.id }
 
     private fun handOf(state: GameState, id: String, cards: List<Card>): GameState = state.copy(
         players = state.players.map {
@@ -29,7 +35,7 @@ class SuicideBomberTest {
         val dealt = startedAndDealt(rest = listOf(action(SUICIDE_BOMBER.id)))
         val result = tr(dealt, GameAction.Hit("a"))
 
-        assertTrue(BOMBER.id in result.state.player("a")!!.marks)
+        assertTrue(armedStill(result.state, "a"))
         assertNull(result.state.pendingAction, "arming asks nothing")
         assertEquals(PlayerStatus.ACTIVE, result.state.status("a"))
         assertEquals(PlayerStatus.ACTIVE, result.state.status("b"))
@@ -72,7 +78,7 @@ class SuicideBomberTest {
         state = t(state, GameAction.Hit("a"))
         state = t(state, GameAction.PlayAction("a", "b", SUICIDE_BOMBER.id))
 
-        assertFalse(BOMBER.id in state.player("a")!!.marks)
+        assertFalse(armedStill(state, "a"))
     }
 
     @Test
@@ -114,7 +120,7 @@ class SuicideBomberTest {
         state = t(state, GameAction.PlayAction("b", "c", SUICIDE_BOMBER.id))
         assertEquals(PlayerStatus.BUST, state.status("c"))
         assertNull(state.pendingAction, "the chain ran out rather than looping")
-        assertTrue(state.players.none { BOMBER.id in it.marks })
+        assertTrue(state.players.none { p -> p.passives.any { it.defId == BOMBER.id } })
     }
 
     @Test
@@ -134,7 +140,10 @@ class SuicideBomberTest {
         state = t(state, GameAction.Hit("a"))
 
         assertTrue(state.players.all { it.status == PlayerStatus.BUST }, "a bomb went missing")
-        assertTrue(state.players.none { BOMBER.id in it.marks }, "every bomb should have been spent")
+        assertTrue(
+            state.players.none { p -> p.passives.any { it.defId == BOMBER.id } },
+            "every bomb should have been spent",
+        )
     }
 
     @Test

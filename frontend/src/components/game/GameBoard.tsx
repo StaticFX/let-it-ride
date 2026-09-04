@@ -8,7 +8,6 @@ import { PlayingCard } from '../cards/PlayingCard'
 import { CardBack } from '../cards/CardBack'
 import { DealtCard } from '../cards/DealtCard'
 import { retainDealtCards } from '../cards/dealtCards'
-import { MarkRow } from './MarkSlip'
 import { PlayerAvatar } from './PlayerAvatar'
 import { Scoreboard } from './Scoreboard'
 import { SpunHand } from './SpunHand'
@@ -30,6 +29,8 @@ import { CoinToss } from '../overlays/CoinToss'
 import { SpinningBottle } from '../overlays/SpinningBottle'
 import { TableSwirl } from '../overlays/TableSwirl'
 import { Showdown } from '../overlays/Showdown'
+import { FizzleNote } from '../overlays/FizzleNote'
+import { PointsFlight } from '../overlays/PointsFlight'
 import { Shop } from '../overlays/Shop'
 
 const SEAT_POSITIONS = [
@@ -39,16 +40,6 @@ const SEAT_POSITIONS = [
   { left: '91%', top: '46%' },
 ]
 
-/**
- * How much clock is left before the countdown stops being a detail in the
- * corner and moves to the middle of the table, where everyone is already
- * looking.
- *
- * Whichever comes first, so it reads as the closing stretch of the turn rather
- * than a fixed count: on the shortest clock the lobby offers — ten seconds —
- * a flat ten would put it at the deck for the whole turn and the corner would
- * never be used at all.
- */
 /**
  * What the table says when it stops for a question nothing was drawn for. A
  * card explains itself by arriving; these have to say what they are.
@@ -62,8 +53,19 @@ const DEFERRED_PROMPTS: Record<string, string> = {
   buy: 'buy something',
 }
 
-const CLOCK_CLOSE_MS = 10_000
-const CLOCK_CLOSE_FRACTION = 0.4
+/**
+ * Why a card did nothing, for the ones where the reason is worth saying. A card
+ * with nobody to hit is the ordinary case and speaks for itself; these are the
+ * ones a player would otherwise be left guessing about.
+ */
+const FIZZLE_REASONS: Record<string, string> = {
+  comeback: 'only last place may throw',
+  allIn: 'not enough hands to bet',
+  mutate: 'nothing you can afford',
+  suicideBomber: 'you are already armed',
+  justOneMore: 'you already have one',
+  unluckySeven: 'everybody has one already',
+}
 
 export function GameBoard() {
   const game = useGame()
@@ -86,6 +88,7 @@ export function GameBoard() {
     pendingAwaitingOthers, responders, answeredBy,
     animations, bust, flights, slots, dismissSlots,
     showRoundIntro, showRoundOutro, introUntil, outroUntil, timer,
+    clockIsClose, clockUrgency,
   } = game
 
   // What is face-up on the table right now. Everything else is forgotten, so a
@@ -145,6 +148,7 @@ export function GameBoard() {
   const coinTosses = animations.filter((a) => a.type === 'coinFlip')
   const bottleSpins = animations.filter((a) => a.type === 'bottleSpin')
   const tableSpin = animations.find((a) => a.type === 'tableSpun')
+  const tolls = animations.filter((a) => a.type === 'pointsTransferred')
   const showdown = animations.find((a) => a.type === 'showdown')
 
   /**
@@ -172,19 +176,10 @@ export function GameBoard() {
   const someoneOnClock = !isDealing && !isPickingTarget && currentPlayer?.status === 'active'
   const myHovered = hoveredPlayerId === me?.id
   const mySpread = isMyTurn || myHovered
-  // Once the clock is nearly out it stops being a corner detail and goes up
-  // over the deck instead — one clock, in the place worth looking at.
-  const clockIsClose =
-    !!timer &&
-    !isDealing &&
-    timer.remainingMs <= Math.min(CLOCK_CLOSE_MS, timer.totalMs * CLOCK_CLOSE_FRACTION)
-
   // How hard the felt should be breathing. Only your own clock counts — the
-  // table stays still while somebody else is thinking.
-  const feltUrgency =
-    isMyTurn && clockIsClose && timer
-      ? 1 - Math.min(1, timer.remainingMs / Math.min(CLOCK_CLOSE_MS, timer.totalMs * CLOCK_CLOSE_FRACTION))
-      : 0
+  // table stays still while somebody else is thinking. Whether the clock is
+  // close at all belongs to [useGame], which is also what sounds the warning.
+  const feltUrgency = isMyTurn ? clockUrgency : 0
 
 
   /** How a card in `playerId`'s hand should be treated by the bust animation. */
@@ -539,8 +534,6 @@ export function GameBoard() {
                   )}
                 </div>
               </SpunHand>
-
-              <MarkRow marks={p.marks} dimmed={dimmed} />
             </div>
           </div>
         )
@@ -611,7 +604,6 @@ export function GameBoard() {
                       </div>
                     </div>
                   </div>
-                  <MarkRow marks={me.marks} />
                 </div>
 
                 <SpunHand spinId={tableSpin?.id ?? null} dx={slide?.dx ?? 0} dy={slide?.dy ?? 0}>
@@ -828,20 +820,19 @@ export function GameBoard() {
       })}
 
       {fizzles.map((f) => (
-        <div
+        <FizzleNote
           key={f.id}
-          className="fixed z-[215] pointer-events-none text-center fizzle-note"
-          style={{ left: w / 2, top: h * 0.52 }}
-        >
-          <div className="display text-[22px] font-bold text-[var(--ink-soft)] whitespace-nowrap">
-            {findAction(catalog, f.cardDefId)?.name ?? 'that card'} had nobody to hit
-          </div>
-          <small>drawing a replacement…</small>
-        </div>
+          name={findAction(catalog, f.cardDefId)?.name ?? 'that card'}
+          cardDefId={f.cardDefId}
+          reason={FIZZLE_REASONS[f.cardDefId] ?? 'nothing it could do'}
+          x={w / 2}
+          y={h * 0.46}
+          ms={f.ms}
+        />
       ))}
 
       {coinTosses.map((c) => (
-        <CoinToss key={c.id} call={c.call} result={c.result} x={tableCenter.x} y={tableCenter.y} />
+        <CoinToss key={c.id} call={c.call} result={c.result} x={tableCenter.x} y={tableCenter.y} ms={c.ms} />
       ))}
 
       {bottleSpins.map((b) => (
@@ -851,6 +842,17 @@ export function GameBoard() {
           victimName={players.find((p) => p.id === b.victimId)?.name ?? 'someone'}
           x={tableCenter.x}
           y={tableCenter.y}
+          ms={b.ms}
+        />
+      ))}
+
+      {tolls.map((t) => (
+        <PointsFlight
+          key={t.id}
+          points={t.points}
+          from={seatOfId(t.fromPlayerId)}
+          to={seatOfId(t.toPlayerId)}
+          ms={t.ms}
         />
       ))}
 

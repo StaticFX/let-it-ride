@@ -109,6 +109,7 @@ starts failing when the pace changes, suspect the spec first.
 | `gameplay.spec.ts`      | A round played through the UI, card conservation, a game to the final standings, the pause menu |
 | `scenarios.spec.ts`     | Action-card targeting, busting and flip 7 — reached deliberately, see below   |
 | `resilience.spec.ts`    | Reconnecting, giving up, the turn clock, a burst of clicks                     |
+| `dev.spec.ts`           | The testing panel: its own table, the deck it can stack, and a round played from a hand it wrote |
 
 ## Determinism
 

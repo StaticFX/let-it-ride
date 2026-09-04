@@ -72,8 +72,10 @@ fun sanitizeDeck(deck: DeckConfig): DeckConfig? {
     val actions = deck.actionCards
         .filter { Catalog.action(it)?.deckable == true }
         .take(DeckLimits.MAX_SPECIALS)
+    // Same rule as the actions above: a card that is not dealt from a deck —
+    // an effect minted by whatever causes it — is never dealt from this one.
     val passives = deck.passiveCards
-        .filter { Catalog.passive(it) != null }
+        .filter { Catalog.passive(it)?.deckable == true }
         .take(DeckLimits.MAX_SPECIALS)
 
     val numberCount = numbers.sumOf { it.count }
@@ -108,7 +110,7 @@ object DeckPresets {
         deck = DeckConfig(
             numberCards = flip7Numbers(13),
             actionCards = times(DRAW_THREE.id, 3) + times(FREEZE.id, 3),
-            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id) +
+            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id, DISCORDIA.id) +
                 times(PLUS_TEN.id, 2) + times(PLUS_FOUR.id, 5),
         ),
     )
@@ -146,7 +148,7 @@ object DeckPresets {
                 times(SUICIDE_BOMBER.id, 2) + times(COMEBACK.id, 2) + times(ALL_IN.id, 2) +
                 times(MUTATE.id, 2),
             passiveCards = times(ARMOR.id, 2) + times(SECOND_LIFE.id, 2) +
-                listOf(DOUBLE_POINTS.id) +
+                listOf(DOUBLE_POINTS.id) + times(DISCORDIA.id, 2) +
                 times(PLUS_TEN.id, 3) + times(PLUS_FOUR.id, 5),
         ),
     )

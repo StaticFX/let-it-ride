@@ -146,6 +146,13 @@ data class GameStateView(
      * the game is settled.
      */
     val nextRoundAt: Long? = null,
+    /**
+     * The next few cards off the deck, for the testing panel to show and stack
+     * — see [DevMode]. Null on every real server, and the field then does not
+     * go out at all: knowing what is coming is the one thing a player must not
+     * be able to find out.
+     */
+    val devDeck: List<Card>? = null,
 )
 
 fun GameState.toView(
@@ -157,6 +164,7 @@ fun GameState.toView(
     roundOutroUntil: Long? = null,
     animationGate: AnimationGateView? = null,
     nextRoundAt: Long? = null,
+    devDeck: List<Card>? = null,
 ) = GameStateView(
     roomCode = roomCode,
     hostId = hostId,
@@ -201,6 +209,7 @@ fun GameState.toView(
     roundOutroUntil = roundOutroUntil,
     animationGate = animationGate,
     nextRoundAt = nextRoundAt,
+    devDeck = devDeck,
 )
 
 // ═══════════════════════════════════════════
@@ -268,6 +277,15 @@ sealed class ClientMessage {
     @Serializable
     @SerialName("ANIM_DONE")
     data class AnimationDone(val gateId: Long) : ClientMessage()
+
+    /**
+     * Writes a state onto the table and says which cards come next — see
+     * [DevSetup]. Ignored outright unless the server was started with test
+     * hooks on, so it does not exist as far as a real game is concerned.
+     */
+    @Serializable
+    @SerialName("DEV")
+    data class Dev(val setup: DevSetup) : ClientMessage()
 }
 
 @Serializable
@@ -411,20 +429,22 @@ data class PassiveCardInfo(
     /** The ink this card prints in, and the stamp its sigil is struck in. */
     val accent: String,
     val seal: String,
-    /** What it costs to buy outright — see the "mutate" card. */
+    /** What it costs to buy outright — see the "mutate" card. Nought is not for sale. */
     val price: Int = 0,
+    /**
+     * What the holder pays anybody who plays an action card on them — see the
+     * "discordia" card. Nought for every card that is simply worth having.
+     */
+    val spite: Int = 0,
+    /**
+     * False for a card no deck may contain: an effect minted by whatever causes
+     * it, which ships so the client can draw the face and is never dealt.
+     */
+    val deckable: Boolean = true,
 )
 
 @Serializable
 data class LobbyRuleInfo(val id: String, val name: String, val description: String)
-
-/**
- * An effect a player carries for the rest of a round. Marks arrive on the
- * player rather than as cards, so the client needs their faces up front the
- * same way it needs the card faces.
- */
-@Serializable
-data class MarkInfo(val id: String, val name: String, val description: String, val sigil: String)
 
 /** One row of a deck listing: a card face plus how many copies are in the deck. */
 @Serializable
@@ -459,7 +479,6 @@ data class CatalogResponse(
     val actions: List<ActionCardInfo>,
     val passives: List<PassiveCardInfo>,
     val rules: List<LobbyRuleInfo>,
-    val marks: List<MarkInfo>,
     val decks: List<DeckPresetInfo>,
     val flip7Bonus: Int,
     /**
@@ -477,6 +496,12 @@ data class CatalogResponse(
      * suite — see [PACE_ENV].
      */
     val pace: Double = 1.0,
+    /**
+     * Whether this server takes dev commands — see [TEST_HOOKS_ENV]. False on
+     * anything published, and the testing panel is not built into the page at
+     * all when it is: there is nothing to find and nothing to send.
+     */
+    val testHooks: Boolean = false,
 )
 
 private fun DeckPreset.contents(): List<DeckEntryInfo> {
@@ -528,14 +553,17 @@ fun buildCatalog(): CatalogResponse = CatalogResponse(
                 PassiveScoring.FLAT -> "flat"
                 PassiveScoring.DOUBLE_NUMBERS -> "double"
                 PassiveScoring.NONE -> "none"
+                PassiveScoring.VOID_UNLESS_FLIP -> "voidUnlessFlip"
+                PassiveScoring.HALVE -> "halve"
             },
             it.accent,
             it.seal.name.lowercase(),
             it.price,
+            it.spite,
+            it.deckable,
         )
     },
     rules = LobbyRules.all.map { LobbyRuleInfo(it.id, it.name, it.description) },
-    marks = Catalog.marks.values.map { MarkInfo(it.id, it.name, it.description, it.sigil) },
     decks = DeckPresets.all.map {
         DeckPresetInfo(it.id, it.name, it.description, it.cardCount, it.deck, it.contents())
     },
@@ -551,4 +579,5 @@ fun buildCatalog(): CatalogResponse = CatalogResponse(
         minNumberShare = DeckLimits.MIN_NUMBER_SHARE,
     ),
     pace = pacingFactor(),
+    testHooks = testHooksEnabled(),
 )

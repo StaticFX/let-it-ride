@@ -64,12 +64,6 @@ data class Player(
     val skipNextTurn: Boolean = false,
     val connected: Boolean = true,
     val isBot: Boolean = false,
-    /**
-     * Effects this player is under for the rest of the round — see [MarkDef].
-     * A mark is not a card: it cannot be stolen, swapped or scored, and it is
-     * wiped when the round is dealt again.
-     */
-    val marks: Set<String> = emptySet(),
 )
 
 // ─── Config ───

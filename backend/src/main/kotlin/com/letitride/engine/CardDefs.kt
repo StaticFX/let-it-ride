@@ -8,8 +8,14 @@ enum class PassiveScoring {
     /** Doubles the number-card total (Flip 7's ×2). Applied before flat bonuses. */
     DOUBLE_NUMBERS,
 
-    /** Scores nothing — it is a protection card. */
+    /** Scores nothing — it is a protection card, or a card that does its damage elsewhere. */
     NONE,
+
+    /** The whole round is worth nothing unless its holder ended it on the flip. */
+    VOID_UNLESS_FLIP,
+
+    /** Halves whatever the round came to, last of all. */
+    HALVE,
 }
 
 /** Who a card is allowed to be pointed at. */
@@ -80,12 +86,12 @@ data class ActionCardDef(
      */
     val options: List<String> = emptyList(),
     /**
-     * A mark that makes a seat pointless to aim at, because it is already under
-     * it. A card whose whole effect is a mark would otherwise be spent for
-     * nothing on a player who has it — so those seats are not offered, and a
-     * card with no seat left to hit fizzles and is replaced.
+     * A passive that makes a seat pointless to aim at, because it is already
+     * holding one. A card whose whole effect is to hand somebody that passive
+     * would otherwise be spent for nothing — so those seats are not offered,
+     * and a card with no seat left to hit fizzles and is replaced.
      */
-    val skipMarked: String? = null,
+    val skipHolding: String? = null,
     /**
      * What the drawer is asked to point at. A card that points at cards names
      * them with [cardTargets] instead of [targetRule], and resolves on the
@@ -148,33 +154,19 @@ data class ActionCardDef(
 
             TargetRule.ANY_PLAYER -> state.players.map { it.id }
         }
-        val mark = skipMarked ?: return byRule
-        return byRule.filterNot { mark in (state.player(it)?.marks ?: emptySet()) }
+        val held = skipHolding ?: return byRule
+        return byRule.filterNot { id ->
+            state.player(id)?.passives?.any { it.defId == held } == true
+        }
     }
 }
 
 /**
- * An effect a player carries for the rest of the round. Marks are the shape
- * every "you are under this until the round ends" rule takes: they are not
- * cards, so they cannot be stolen, swapped, discarded or scored, and they are
- * wiped when the next round is dealt.
- *
- * The client draws them from the catalog the same way it draws cards, so a mark
- * needs a face — [sigil] is what is struck on the slip beside the seat.
- */
-data class MarkDef(
-    val id: String,
-    val name: String,
-    val description: String,
-    val sigil: String,
-)
-
-/**
  * The stamp a passive's sigil is struck in. Shape carries meaning before the
  * writing is read: a shield guards, a token pays, a scalloped stamp is the one
- * on a keepsake.
+ * on a keepsake, and a spiked one is a card nobody wants.
  */
-enum class SealShape { CIRCLE, HEXAGON, SHIELD, SCALLOP }
+enum class SealShape { CIRCLE, HEXAGON, SHIELD, SCALLOP, SPIKE }
 
 data class PassiveCardDef(
     val id: String,
@@ -190,45 +182,98 @@ data class PassiveCardDef(
      */
     val accent: String = "#4a6852",
     val seal: SealShape = SealShape.CIRCLE,
-    /** What this costs to buy outright — see [MUTATE]. */
+    /**
+     * What this costs to buy outright — see [MUTATE]. Zero means it is not for
+     * sale: nobody would buy [DISCORDIA], and the effect cards below are minted
+     * by the cards that cause them rather than ever being on a shelf.
+     */
     val price: Int = 20,
+    /**
+     * What the holder pays anybody who plays an action card on them — see
+     * [DISCORDIA]. Zero for every card that is simply worth having.
+     */
+    val spite: Int = 0,
+    /**
+     * Whether a deck may contain this. False for the effect cards below, which
+     * are minted by whatever causes them: one shuffled into the deck would be a
+     * "you score nothing" card sitting there to be drawn by accident, and would
+     * outlive the round it was meant to last.
+     */
+    val deckable: Boolean = true,
 )
 
+/** The ink every card you would rather not be holding is printed in. */
+private const val SOUR = "#8f3b2e"
+
 // ═══════════════════════════════════════════════
-// Marks
+// Effect cards
 // ═══════════════════════════════════════════════
 
+/**
+ * Effects a player carries for the rest of the round.
+ *
+ * These used to be marks — a set of ids on the player, deliberately not cards,
+ * so that nothing could take one off you. Rule one of this game is that
+ * everything is a card, so they are cards: they lie in the modifier row with
+ * everything else, which means they can be swapped, traded, and pushed onto
+ * somebody who does not want them. That is the point rather than a side effect
+ * — a bad card you can hand to a neighbour is a better card than a bad rule.
+ *
+ * None of them is ever shuffled into a deck. They are minted when whatever
+ * causes them resolves, and [Card.isEphemeral] drops them at the end of the
+ * round exactly where a mark used to be wiped, so the deck never grows.
+ */
+
 /** The flip is off the table: this hand has no ceiling but the duplicate. */
-val NO_FLIP = MarkDef(
+val NO_FLIP = PassiveCardDef(
     id = "noFlip",
     name = "just one more",
-    description = "cannot flip out this round — keep drawing",
+    description = "you cannot flip out this round — keep drawing",
     sigil = "∞",
+    accent = "#4a6b82",
+    seal = SealShape.HEXAGON,
+    price = 0,
+    deckable = false,
 )
 
 /** Nothing this hand holds is worth anything unless it flips out. */
-val MUST_FLIP = MarkDef(
+val MUST_FLIP = PassiveCardDef(
     id = "mustFlip",
     name = "unlucky 7",
     description = "scores nothing this round without the flip",
     sigil = "7",
+    scoring = PassiveScoring.VOID_UNLESS_FLIP,
+    accent = SOUR,
+    seal = SealShape.SPIKE,
+    price = 0,
+    deckable = false,
 )
 
 /** Went furthest either way on an "all in", and pays for it at the end. */
-val HALVED = MarkDef(
+val HALVED = PassiveCardDef(
     id = "halved",
     name = "all in",
-    description = "scores half this round — bet the highest or the lowest",
+    description = "scores half this round — you bet the highest or the lowest",
     sigil = "½",
+    scoring = PassiveScoring.HALVE,
+    accent = SOUR,
+    seal = SealShape.SPIKE,
+    price = 0,
+    deckable = false,
 )
 
 /** Armed: this player does not go out alone. Spent the moment it fires. */
-val BOMBER = MarkDef(
+val BOMBER = PassiveCardDef(
     id = "bomber",
     name = "suicide bomber",
     description = "when you bust, you pick a player to go with you",
     sigil = "☠",
+    accent = SOUR,
+    seal = SealShape.SPIKE,
+    price = 0,
+    deckable = false,
 )
+
 
 // ═══════════════════════════════════════════════
 // Action cards
@@ -304,16 +349,26 @@ val HEX = ActionCardDef(
     if (play.target.status == PlayerStatus.ACTIVE) ctx.skip(play.target.id)
 }
 
+/**
+ * Everything in front of you changes places with everything in front of them —
+ * the hand and the modifier row both. Everything is a card in this game, so
+ * "your hand" is everything you are holding, and a swap that left the ×2 behind
+ * would be picking and choosing which cards count.
+ */
 val SWAP = ActionCardDef(
     id = "swap",
     name = "swap hands",
-    description = "swap your hand with another player",
+    description = "trade everything you are holding with another player — modifiers too",
     sigil = "⇄",
     targetRule = TargetRule.OTHER_ACTIVE_WITH_CARDS,
     price = 20,
 ) { ctx, play ->
     if (play.from.id == play.target.id) return@ActionCardDef
-    ctx.swapHands(play.from.id, play.target.id)
+    // Whole rows move, so no duplicate can appear — but "blackjacking" caps the
+    // total, and under "extreme" the hand coming back can be a busted one.
+    for (id in ctx.swapHands(play.from.id, play.target.id)) {
+        ctx.resolveBustAfterGain(id, finishedToo = true)
+    }
 }
 
 /**
@@ -400,22 +455,24 @@ const val SPIN_LEFT = "left"
 const val SPIN_RIGHT = "right"
 
 /**
- * Every hand still in the round slides one seat the way the drawer called.
- * Seats that already busted or went out sit it out — see [Ctx.rotateHands].
+ * Every hand at the table slides one seat the way the drawer called — busted
+ * seats and banked ones included. See [Ctx.rotateHands].
  */
 val SPIN_TABLE = ActionCardDef(
     id = "spinTable",
     name = "spin the table",
-    description = "every hand still in play slides one seat left or right",
+    description = "every hand at the table slides one seat left or right — busted ones too",
     sigil = "↻",
     targetRule = TargetRule.SELF,
     options = listOf(SPIN_LEFT, SPIN_RIGHT),
     price = 15,
 ) { ctx, play ->
     val direction = if (play.choice == SPIN_LEFT) SPIN_LEFT else SPIN_RIGHT
-    // Hands move whole, so nobody can pick up a duplicate — but "blackjacking"
-    // caps the total, and the hand that arrives can be over it.
-    for (id in ctx.rotateHands(direction)) ctx.resolveBustAfterGain(id)
+    // Hands move whole, so nobody is handed a card that clashes with one they
+    // kept — but the hand that arrives can be a busted one, and a busted hand
+    // is holding the duplicate that killed it. Every seat is re-checked,
+    // whatever became of its round: catching one is the point of the card.
+    for (id in ctx.rotateHands(direction)) ctx.resolveBustAfterGain(id, finishedToo = true)
 }
 
 /**
@@ -481,10 +538,10 @@ val JUST_ONE_MORE = ActionCardDef(
     description = "you can no longer flip out — the only way to stop is to go out",
     sigil = "∞",
     targetRule = TargetRule.SELF,
-    skipMarked = NO_FLIP.id,
+    skipHolding = NO_FLIP.id,
     price = 20,
 ) { ctx, play ->
-    ctx.mark(play.target.id, NO_FLIP.id)
+    ctx.grantEffect(play.target.id, NO_FLIP.id)
 }
 
 /** What the bomb writes on its victim's bust. */
@@ -503,13 +560,13 @@ val SUICIDE_BOMBER = ActionCardDef(
     description = "when you bust, you take a player down with you",
     sigil = "☠",
     targetRule = TargetRule.SELF,
-    skipMarked = BOMBER.id,
+    skipHolding = BOMBER.id,
     price = 20,
 ) { ctx, play ->
     if (play.phase == PHASE_BUST) {
         ctx.bust(play.target.id, BUST_BOMBER)
     } else {
-        ctx.mark(play.from.id, BOMBER.id)
+        ctx.grantEffect(play.from.id, BOMBER.id)
     }
 }
 
@@ -562,13 +619,13 @@ val UNLUCKY_SEVEN = ActionCardDef(
     name = "unlucky 7",
     description = "target scores nothing this round unless they flip out",
     sigil = "7?",
-    skipMarked = MUST_FLIP.id,
+    skipHolding = MUST_FLIP.id,
     price = 30,
 ) { ctx, play ->
     // No status check: a hand banked without the flip is exactly what this is
     // for under "extreme", and with the rule off no finished seat is ever
     // offered in the first place.
-    ctx.mark(play.target.id, MUST_FLIP.id)
+    ctx.grantEffect(play.target.id, MUST_FLIP.id)
 }
 
 // ═══════════════════════════════════════════════
@@ -780,7 +837,7 @@ val ALL_IN = ActionCardDef(
     // Everyone tied at either end pays: nobody is spared for having company.
     val paying = bets.filterValues { it.value == high || it.value == low }.keys
     ctx.emit(GameEvent.AllIn(bets.mapValues { it.value }, paying.toList()))
-    for (id in paying) ctx.mark(id, HALVED.id)
+    for (id in paying) ctx.grantEffect(id, HALVED.id)
 }
 
 // ═══════════════════════════════════════════════
@@ -820,6 +877,30 @@ val DOUBLE_POINTS = PassiveCardDef(
     price = 30,
 )
 
+/** What being aimed at costs the player carrying [DISCORDIA]. */
+const val DISCORDIA_TOLL = 10
+
+/**
+ * The card nobody wants and everybody can give away.
+ *
+ * Whoever is holding it pays for being interesting: play a freeze, a strike, a
+ * skip — anything at all — on the seat carrying discordia and [DISCORDIA_TOLL]
+ * points come off them and land on whoever played it. So it is worth attacking
+ * its holder, and it is worth not being its holder, and the way out is to trade
+ * it to somebody else. It is dealt from the deck like any other card, which is
+ * what makes getting rid of it a move rather than a wish.
+ */
+val DISCORDIA = PassiveCardDef(
+    id = "discordia",
+    name = "discordia",
+    description = "anyone who plays an action card on you takes $DISCORDIA_TOLL points off you",
+    sigil = "☍",
+    accent = SOUR,
+    seal = SealShape.SPIKE,
+    price = 0,
+    spite = DISCORDIA_TOLL,
+)
+
 /**
  * The bonus cards stay one family: the house green and the plain round stamp,
  * every one of them. What separates a +2 from a +10 is how hard it was struck,
@@ -857,11 +938,13 @@ object Catalog {
     ).associateBy { it.id }
 
     val passives: Map<String, PassiveCardDef> = listOf(
-        SECOND_LIFE, ARMOR, DOUBLE_POINTS,
+        SECOND_LIFE, ARMOR, DOUBLE_POINTS, DISCORDIA,
         PLUS_TWO, PLUS_FOUR, PLUS_SIX, PLUS_EIGHT, PLUS_TEN,
+        // The effect cards. Never dealt — minted by whatever causes them — but
+        // they are cards on the table like any other, so the client has to be
+        // able to draw a face for them.
+        NO_FLIP, MUST_FLIP, HALVED, BOMBER,
     ).associateBy { it.id }
-
-    val marks: Map<String, MarkDef> = listOf(NO_FLIP, MUST_FLIP, BOMBER, HALVED).associateBy { it.id }
 
     /** Only the cards a deck may actually contain — see [ActionCardDef.deckable]. */
     val deckableActions: List<ActionCardDef> = actions.values.filter { it.deckable }
@@ -869,6 +952,4 @@ object Catalog {
     fun action(id: String?): ActionCardDef? = id?.let { actions[it] }
 
     fun passive(id: String?): PassiveCardDef? = id?.let { passives[it] }
-
-    fun mark(id: String?): MarkDef? = id?.let { marks[it] }
 }

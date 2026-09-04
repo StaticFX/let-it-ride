@@ -28,12 +28,19 @@ export async function fetchCatalog(): Promise<Catalog> {
   return catalog
 }
 
-export async function createRoom(name: string): Promise<{ roomCode: string; playerId: string }> {
+/**
+ * Opens a table. `seed` and `stack` are the testing mode's — a real server drops
+ * both on the floor, so passing them costs nothing and changes nothing there.
+ */
+export async function createRoom(
+  name: string,
+  options: { seed?: number; stack?: string[] } = {},
+): Promise<{ roomCode: string; playerId: string }> {
   return json(
     await fetch('/api/rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...options }),
     }),
   )
 }

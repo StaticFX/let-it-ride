@@ -48,6 +48,20 @@ tasks.test {
 }
 
 /**
+ * The same server with the testing mode on — the dev panel, a stackable deck and
+ * a pinnable seed. Never what a container runs: see `TEST_HOOKS_ENV`.
+ */
+tasks.register<JavaExec>("runDev") {
+    group = "application"
+    description = "Runs the backend locally with the testing mode on."
+    mainClass.set("com.letitride.ApplicationKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    environment("LETITRIDE_TEST_HOOKS", "1")
+    // The rest of the shell's environment comes with it, so `LETITRIDE_PACE=0.25
+    // ./gradlew :backend:runDev` runs the same table in a quarter of the time.
+}
+
+/**
  * The built SPA is copied into the jar's resources at `web/`, so a single
  * container serves both the API and the frontend. `frontend/dist` is produced
  * by `bun run build` (see the Dockerfile / `./gradlew buildFrontend`).

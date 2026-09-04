@@ -71,13 +71,18 @@ sealed class GameEvent {
     data class Freeze(val playerId: String) : GameEvent()
 
     /**
-     * [playerId] came under [markId] for the rest of the round — see [MarkDef].
-     * Sent only when the mark is new: marking a player who already carries it
-     * changes nothing and announces nothing.
+     * [points] moved from [fromPlayerId] to [toPlayerId] in the middle of a
+     * round — a toll, rather than anything the hands did. Both halves are
+     * already in the round's adjustments by the time this goes out; this is the
+     * announcement, so the table can watch the points cross it.
      */
     @Serializable
-    @SerialName("marked")
-    data class Marked(val playerId: String, val markId: String) : GameEvent()
+    @SerialName("pointsTransferred")
+    data class PointsTransferred(
+        val fromPlayerId: String,
+        val toPlayerId: String,
+        val points: Int,
+    ) : GameEvent()
 
     @Serializable
     @SerialName("actionPlayed")

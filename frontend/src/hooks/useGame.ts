@@ -7,27 +7,36 @@ import type { ActionCardInfo, AnimationGate, Card, GameEvent, Offer, Player } fr
 
 // ─── Animations ───
 
+/**
+ * Everything on screen carries `id` — unique per playing — and `ms`, how long
+ * it has been given. `ms` is the paced figure out of [ANIMATION_TTL_MS], handed
+ * to the overlay rather than kept in it, so an animation written in CSS and the
+ * hold the table is under can never say two different numbers. Anything with a
+ * duration of its own reads it; the rest ignore it.
+ */
 export type GameAnimation =
   /**
    * How hard to throw the viewport. A `slam` is an action card landing on
    * someone; a `bust` is the round ending under a player, and gets the harder
    * of the two — see `.shake` / `.shake-bust`.
    */
-  | { type: 'screenShake'; id: string; strength: 'slam' | 'bust' }
-  | { type: 'impact'; id: string; targetId: string }
-  | { type: 'smash'; id: string; targetId: string; cardDefId: string }
-  | { type: 'freeze'; id: string; playerId: string }
-  | { type: 'drawThree'; id: string; playerId: string }
-  | { type: 'flip7'; id: string; playerId: string }
-  | { type: 'timeout'; id: string; playerId: string }
-  | { type: 'fizzled'; id: string; playerId: string; cardDefId: string }
-  | { type: 'secondChance'; id: string; playerId: string }
+  | { type: 'screenShake'; id: string; ms: number; strength: 'slam' | 'bust' }
+  | { type: 'impact'; id: string; ms: number; targetId: string }
+  | { type: 'smash'; id: string; ms: number; targetId: string; cardDefId: string }
+  | { type: 'freeze'; id: string; ms: number; playerId: string }
+  | { type: 'drawThree'; id: string; ms: number; playerId: string }
+  | { type: 'flip7'; id: string; ms: number; playerId: string }
+  | { type: 'timeout'; id: string; ms: number; playerId: string }
+  | { type: 'fizzled'; id: string; ms: number; playerId: string; cardDefId: string }
+  | { type: 'secondChance'; id: string; ms: number; playerId: string }
   /** The coin lands on `result`; `call` is what the player said before it flew. */
-  | { type: 'coinFlip'; id: string; playerId: string; call: string; result: string }
+  | { type: 'coinFlip'; id: string; ms: number; playerId: string; call: string; result: string }
   /** The bottle stops pointing at `victimId` — the server picked, never the client. */
-  | { type: 'bottleSpin'; id: string; victimId: string }
+  | { type: 'bottleSpin'; id: string; ms: number; victimId: string }
   /** Every hand in `playerIds` slid one seat; see [SpunHand] for the slide itself. */
-  | { type: 'tableSpun'; id: string; direction: string; playerIds: string[] }
+  | { type: 'tableSpun'; id: string; ms: number; direction: string; playerIds: string[] }
+  /** Points crossing the table from one seat to another — see [PointsFlight]. */
+  | { type: 'pointsTransferred'; id: string; ms: number; fromPlayerId: string; toPlayerId: string; points: number }
   /**
    * Everything answered in secret, turned over at once — the comeback's two
    * throws or the all in's whole table of bets. See [Showdown].
@@ -35,6 +44,7 @@ export type GameAnimation =
   | {
       type: 'showdown'
       id: string
+      ms: number
       title: string
       sides: { name: string; label?: string; card?: Card; lost?: boolean }[]
       footnote?: string
@@ -42,7 +52,7 @@ export type GameAnimation =
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
-type AnimationSpec = DistributiveOmit<GameAnimation, 'id'>
+type AnimationSpec = DistributiveOmit<GameAnimation, 'id' | 'ms'>
 
 /**
  * A played action card flies from the table over the seat it was pointed at,
@@ -59,11 +69,14 @@ export const SMASH_LAND_MS = 560
  *
  * - the server gives up on a gate after ANIMATION_GATE_MAX_MS (5000ms), and
  *   gated time is handed back to whoever is on the clock, so a long animation
- *   quietly inflates their turn;
+ *   quietly inflates their turn. An animation held back behind a played card
+ *   costs SMASH_LAND_MS on top of its own length, so the real ceiling for one
+ *   of those is nearer 4400ms;
  * - a card that can end the round is not gated at all — the round is over — and
- *   only has OUTRO_AFTER_BUST_MS (2200ms) before the closing card covers the
- *   table. The coin and the bottle can both end a round, so both are cut to fit
- *   inside that window even after the played card has landed (SMASH_LAND_MS).
+ *   the closing card comes down on whatever the server's `outroPreambleFor`
+ *   allowed for it. The coin, the bottle and a toll can all end a round, and
+ *   each has its own window there; lengthen one here and the number in
+ *   `Rooms.kt` has to follow it.
  */
 const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
   screenShake: 600,
@@ -73,12 +86,20 @@ const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
   drawThree: 1400,
   flip7: 3200,
   timeout: 1500,
-  fizzled: 1600,
+  // Long enough to read what the card was and why it did nothing. This is the
+  // one animation nothing else explains: the card is simply gone.
+  fizzled: 2400,
   secondChance: 1800,
-  coinFlip: 2000,
-  bottleSpin: 1700,
+  // The throw and the landing, and then a beat to read the face it landed on.
+  // Cutting this to fit the round-ending window is what used to snatch the coin
+  // away in the middle of its last turn.
+  coinFlip: 2600,
+  // ...and the same for the bottle, which used to be taken off the table before
+  // it had finished slowing down, so nobody ever saw who it stopped on.
+  bottleSpin: 2400,
   // The hands slide for TABLE_SPIN_SLIDE_MS; the rest is the swirl clearing off.
   tableSpun: 1000,
+  pointsTransferred: 1600,
   // Long enough to read four names and their cards, and no longer — it holds
   // the table while it is up.
   showdown: 2600,
@@ -145,6 +166,29 @@ export interface SlotsAnimation {
  * on and it keeps turning.
  */
 const SLOTS_MAX_MS = 3200
+
+/**
+ * How much clock is left before the countdown stops being a detail in the
+ * corner: it moves to the middle of the table, the felt starts breathing, and —
+ * if the clock is yours — you hear it.
+ *
+ * Whichever comes first, so it reads as the closing stretch of the turn rather
+ * than a fixed count: on the shortest clock the lobby offers, ten seconds, a
+ * flat ten would put it at the deck for the whole turn and the corner would
+ * never be used at all.
+ */
+const CLOCK_CLOSE_MS = 10_000
+const CLOCK_CLOSE_FRACTION = 0.4
+
+/**
+ * The least time between two warnings. A deadline is not stable — the server
+ * hands back whatever the table spent animating, so one turn carries several —
+ * and keying the warning on the deadline itself would sound it again every time
+ * a card was played inside the last few seconds. Longer than the stretch and
+ * longer than the sample, so it is one warning per turn however the deadline
+ * moves underneath it.
+ */
+const CLOCK_WARNING_GAP_MS = 12_000
 
 /**
  * A batch of events the server is holding the table on. It will not deal, move
@@ -254,27 +298,26 @@ export function useGame() {
    * [delayMs] holds the animation back until the card that set it off has
    * landed.
    *
-   * The wait is absorbed rather than added: the batch is held for the
-   * animation's own length, exactly as it was before the card was given a
-   * flight to make. Holding for the wait *plus* the animation would stretch
-   * every action card's gate by half a second — and the server hands gated
-   * time back to whoever is on the clock, so a longer gate quietly inflates
-   * their turn. The smash is already holding the table across the wait, and
-   * what runs past the gate is a particle burst rather than anything the next
-   * move can land on top of.
+   * The wait is added to the hold rather than absorbed into it. It used to be
+   * absorbed, to keep the gate short — the server hands gated time back to
+   * whoever is on the clock, so a longer gate quietly inflates their turn — but
+   * what that bought was a table that moved on half a second before anything it
+   * was waiting for had finished. The coin was taken away in the middle of its
+   * last turn and the bottle before it had stopped, every single time. A beat
+   * of somebody's clock is the cheaper thing to spend.
    */
   const pushAnimation = useCallback(
     (spec: AnimationSpec, delayMs = 0) => {
       const id = `anim-${++animationId.current}`
       const ttl = ANIMATION_TTL_MS[spec.type]
-      hold(ttl)
+      hold(delayMs + ttl)
       const show = () => {
-        setAnimations((prev) => [...prev, { ...spec, id } as GameAnimation])
+        setAnimations((prev) => [...prev, { ...spec, id, ms: paced(ttl) } as GameAnimation])
         window.setTimeout(() => {
           setAnimations((prev) => prev.filter((a) => a.id !== id))
         }, paced(ttl))
       }
-      if (delayMs > 0) window.setTimeout(show, delayMs)
+      if (delayMs > 0) window.setTimeout(show, paced(delayMs))
       else show()
     },
     [hold, paced],
@@ -307,19 +350,21 @@ export function useGame() {
   const startFlights = useCallback(
     (moving: CardFlight[], delayMs = 0) => {
       if (moving.length === 0) return
-      // Absorbed, not added — see [pushAnimation].
-      hold(STEAL_MS)
+      // The wait counts, the same as it does for an animation — see
+      // [pushAnimation]. A card still crossing the table when the next one is
+      // dealt is the thing this is here to stop.
+      hold(delayMs + STEAL_MS)
       const show = () => {
         setFlights((current) => [...current, ...moving])
         window.setTimeout(() => {
           const ids = new Set(moving.map((flight) => flight.id))
           setFlights((current) => current.filter((flight) => !ids.has(flight.id)))
-        }, STEAL_MS)
+        }, paced(STEAL_MS))
       }
-      if (delayMs > 0) window.setTimeout(show, delayMs)
+      if (delayMs > 0) window.setTimeout(show, paced(delayMs))
       else show()
     },
-    [hold],
+    [hold, paced],
   )
 
   // The slot machine is the one animation that reports its own end rather than
@@ -410,11 +455,9 @@ export function useGame() {
             { type: 'coinFlip', playerId: event.playerId, call: event.call, result: event.result },
             delay,
           )
-          playAfter(delay, 'actionCard')
           break
         case 'bottleSpin':
           pushAnimation({ type: 'bottleSpin', victimId: event.victimId }, delay)
-          playAfter(delay, 'actionCard')
           break
         case 'tableSpun':
           // Deliberately not delayed behind the played card. The hands have
@@ -448,7 +491,6 @@ export function useGame() {
                 ? 'a draw — nothing moves'
                 : 'the leader holds on',
           }, delay)
-          playAfter(delay, 'actionCard')
           break
         }
         case 'allIn':
@@ -462,7 +504,20 @@ export function useGame() {
             })),
             footnote: 'highest and lowest score half the round',
           }, delay)
-          playAfter(delay, 'actionCard')
+          break
+        case 'pointsTransferred':
+          // Behind the played card, like everything else a card sets off: the
+          // toll is charged by the card arriving, so the points leave the seat
+          // once it has landed on them.
+          pushAnimation(
+            {
+              type: 'pointsTransferred',
+              fromPlayerId: event.fromPlayerId,
+              toPlayerId: event.toPlayerId,
+              points: event.points,
+            },
+            delay,
+          )
           break
         case 'timeout':
           pushAnimation({ type: 'timeout', playerId: event.playerId })
@@ -493,6 +548,11 @@ export function useGame() {
           // not also flown across the table for it.
           if (event.cardDefId !== 'slots') {
             pushAnimation({ type: 'smash', targetId: event.targetPlayerId, cardDefId: event.cardDefId })
+            // ...and the card is heard where it lands rather than where it was
+            // thrown from. Every card that does something visible — the coin,
+            // the bottle, a showdown, a toll — arrives in the same batch as
+            // this, so this is the one place any of them says so.
+            playAfter(delay, 'actionLanded')
           }
           if (event.cardDefId === 'drawThree') {
             pushAnimation({ type: 'drawThree', playerId: event.targetPlayerId }, delay)
@@ -579,6 +639,13 @@ export function useGame() {
         return { remainingMs, totalMs, fraction: Math.min(1, remainingMs / totalMs) }
       })()
     : null
+
+  // Nothing is on the clock while the round is still being dealt out.
+  const isDealing = (state?.dealQueue.length ?? 0) > 0
+  const closeFrom = Math.min(CLOCK_CLOSE_MS, totalMs * CLOCK_CLOSE_FRACTION)
+  const clockIsClose = !!timer && !isDealing && timer.remainingMs <= closeFrom
+  /** How far into the closing stretch the clock is, from 0 to 1. */
+  const clockUrgency = clockIsClose && timer ? 1 - Math.min(1, timer.remainingMs / closeFrom) : 0
 
   // ═══════════════════════════════════════════
   // Action card targeting and decisions
@@ -851,7 +918,6 @@ export function useGame() {
   // Player actions
   // ═══════════════════════════════════════════
 
-  const isDealing = (state?.dealQueue.length ?? 0) > 0
   // An animation the table is held on counts as an interruption: the server
   // will refuse the move anyway, and a button that looks live but does nothing
   // is worse than one that is plainly out.
@@ -863,6 +929,24 @@ export function useGame() {
 
   const hit = useCallback(() => send({ type: 'HIT' }), [])
   const stay = useCallback(() => send({ type: 'STAY' }), [])
+
+  /**
+   * Whether the clock that is running is mine to answer — the same question the
+   * server asks when it decides whether to start one at all. A prompt puts
+   * whoever it is waiting on under it; otherwise it is whoever is on turn.
+   */
+  const clockIsMine = !!deadline && (
+    pendingAction ? pendingIsLocal : phase === 'PLAYING' && currentPlayer?.id === localPlayerId
+  )
+
+  // ...and if it is, it is worth hearing. Once per turn — see the gap above.
+  const warnedAt = useRef(0)
+  useEffect(() => {
+    if (!clockIsMine || !clockIsClose) return
+    if (Date.now() - warnedAt.current < CLOCK_WARNING_GAP_MS) return
+    warnedAt.current = Date.now()
+    play('timerRunningOut')
+  }, [clockIsMine, clockIsClose])
 
   return {
     state,
@@ -931,6 +1015,9 @@ export function useGame() {
     introUntil,
     outroUntil,
     timer,
+    /** The clock is into its closing stretch — see [CLOCK_CLOSE_MS]. */
+    clockIsClose,
+    clockUrgency,
   }
 }
 

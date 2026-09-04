@@ -79,7 +79,12 @@ fun Application.module() {
     // Off in every shipped image. The end-to-end suite turns it on so a run can
     // pin a room's seed and replay the same deal card for card.
     val testHooks = testHooksEnabled()
-    if (testHooks) log.warn("$TEST_HOOKS_ENV is on — clients may pin a room's shuffle and stack its deck. Never do this in production.")
+    if (testHooks) {
+        log.warn(
+            "$TEST_HOOKS_ENV is on — clients may pin a room's shuffle, stack its deck, see what is " +
+                "coming and write a state onto the table. Never do this in production.",
+        )
+    }
 
     routing {
         route("/api") {
@@ -102,6 +107,7 @@ fun Application.module() {
                 val room = registry.create(
                     seed = request?.seed?.takeIf { testHooks },
                     stack = request?.stack.orEmpty().take(64).takeIf { testHooks } ?: emptyList(),
+                    dev = testHooks,
                 )
                 call.respond(CreateRoomResponse(roomCode = room.code, playerId = newPlayerId()))
             }

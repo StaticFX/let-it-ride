@@ -3,7 +3,6 @@ import { signedPoints } from '../../game/types'
 import { useGameStore } from '../../state/gameStore'
 import { send } from '../../net/client'
 import { PlayingCard } from '../cards/PlayingCard'
-import { MarkRow } from '../game/MarkSlip'
 import { Scoreboard } from '../game/Scoreboard'
 import { SketchButton } from '../ui/Button'
 
@@ -125,11 +124,6 @@ export function RoundSummary() {
                   ))}
                   <span className={`number text-[22px] ml-2 ${busted ? 'text-[var(--accent)] line-through' : 'text-muted'}`}>
                     = {busted ? player.handValue : points}
-                  </span>
-                  {/* What they were playing under. A hand that scored nothing
-                      without busting has its reason sitting right here. */}
-                  <span className="ml-2">
-                    <MarkRow marks={player.marks} dimmed={busted} />
                   </span>
                 </div>
                 {!busted && adjustment !== 0 && (

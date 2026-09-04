@@ -48,9 +48,6 @@ class Ctx(state: GameState, val rng: Rng) {
     fun hasPassive(playerId: String, defId: String): Boolean =
         player(playerId)?.passives?.any { it.defId == defId } == true
 
-    fun hasMark(playerId: String, markId: String): Boolean =
-        player(playerId)?.marks?.contains(markId) == true
-
     fun activePlayers(): List<Player> = state.players.filter { it.status == PlayerStatus.ACTIVE }
 
     // ─── Mutation primitives ───
@@ -106,14 +103,13 @@ class Ctx(state: GameState, val rng: Rng) {
      * runs through [bust], so this covers duplicates, the threshold, a coin
      * called wrong, the bottle and a ratio without any of them knowing about it.
      *
-     * The mark is spent as it fires, so a table of bombers taking each other
+     * The card is spent as it fires, so a table of bombers taking each other
      * out terminates: each one goes off once. When a prompt is already open the
      * bomb cannot stop the table again — that bust happened while another was
      * being answered — so it picks for itself rather than being lost.
      */
     private fun detonate(playerId: String) {
-        if (!hasMark(playerId, BOMBER.id)) return
-        update(playerId) { it.copy(marks = it.marks - BOMBER.id) }
+        if (consumePassive(playerId, BOMBER.id) == null) return
         val victims = activePlayers().map { it.id }
         if (victims.isEmpty()) return
         if (state.pendingAction != null) {
@@ -203,7 +199,10 @@ class Ctx(state: GameState, val rng: Rng) {
 
         for (defId in deck.passiveCards.distinct()) {
             val def = Catalog.passive(defId) ?: continue
-            if (def.price > purse) continue
+            // Priced at nothing means it is not for sale. Nobody would buy a
+            // discordia, and a shop that offered one would be offering a way to
+            // hurt yourself for free.
+            if (def.price <= 0 || def.price > purse) continue
             offers += Offer(
                 id = offerIdForPassive(defId),
                 price = def.price,
@@ -290,15 +289,30 @@ class Ctx(state: GameState, val rng: Rng) {
     }
 
     /**
-     * Puts a player under an effect for the rest of the round. Marking twice is
-     * a no-op rather than an error — "double it!" fires every effect twice, and
-     * the second one has nothing left to do.
+     * Moves points from one player to another mid-round.
+     *
+     * Both halves ride in [GameState.roundAdjustments], so a transfer shows up
+     * on the summary as a line rather than as two scores that quietly moved,
+     * and — with "extreme" off — the floor at scoring time is what stops it
+     * putting anybody in the red. The event is only the announcement; the
+     * points have already moved by the time it goes out.
      */
-    fun mark(playerId: String, markId: String) {
-        val player = player(playerId) ?: return
-        if (markId in player.marks) return
-        update(playerId) { it.copy(marks = it.marks + markId) }
-        emit(GameEvent.Marked(playerId, markId))
+    fun transferPoints(fromId: String, toId: String, points: Int) {
+        if (points <= 0 || fromId == toId) return
+        if (player(fromId) == null || player(toId) == null) return
+        adjust(fromId, -points)
+        adjust(toId, points)
+        emit(GameEvent.PointsTransferred(fromId, toId, points))
+    }
+
+    /**
+     * Hands a player one of the effect cards — see [NO_FLIP] and the rest.
+     * Giving one twice is a no-op rather than an error: "double it!" fires
+     * every effect twice, and the second one has nothing left to do.
+     */
+    fun grantEffect(playerId: String, defId: String) {
+        if (hasPassive(playerId, defId)) return
+        grantEphemeralPassive(playerId, defId)
     }
 
     /** Removes a specific card from a hand and puts it on the discard pile. */
@@ -330,19 +344,21 @@ class Ctx(state: GameState, val rng: Rng) {
 
     /**
      * Slides every hand one seat around the table, in seat order. "right" moves
-     * each hand to the next participant, "left" to the previous one.
+     * each hand to the next seat, "left" to the previous one.
      *
-     * Only players still in the round take part: a hand landing on someone who
-     * already busted or went out would rewrite a score that is already settled,
-     * and nothing would ever re-check it for legality. Whole hands move intact,
-     * so no duplicate can appear — but a hand can be heavier than the one it
-     * replaced, so the caller still has to re-check the threshold.
+     * Every seat takes part, whatever became of its round. A busted hand is
+     * still a hand, and pushing one onto the player in front — who is holding
+     * the round they had already banked — is the reason to play this card at
+     * all. It costs the busted seat nothing and it can cost everybody else the
+     * round, which is exactly the trade the card is offering.
      *
-     * Returns the participating seats in order, or an empty list when there was
-     * nobody to rotate between.
+     * Whole hands move intact, so nobody is handed a card that clashes with one
+     * they kept — but the hand that arrives can be over the threshold, or be a
+     * busted hand holding the duplicate that killed it. The caller re-checks
+     * every seat this returns.
      */
     fun rotateHands(direction: String): List<String> {
-        val participants = activePlayers()
+        val participants = state.players
         if (participants.size < 2) return emptyList()
         val hands = participants.map { it.hand }
         val size = participants.size
@@ -394,14 +410,21 @@ class Ctx(state: GameState, val rng: Rng) {
         return listOf(a.id, b.id)
     }
 
-    fun swapHands(aId: String, bId: String) {
-        val a = player(aId) ?: return
-        val b = player(bId) ?: return
-        val aHand = a.hand
-        val bHand = b.hand
-        update(aId) { withHand(it, bHand) }
-        update(bId) { withHand(it, aHand) }
+    /**
+     * Trades everything two players are holding — the hand and the modifier row
+     * both. Everything in this game is a card, so what is in front of you is
+     * one thing rather than two piles that some cards reach and others do not.
+     *
+     * Returns both seats for the caller to re-check.
+     */
+    fun swapHands(aId: String, bId: String): List<String> {
+        val a = player(aId) ?: return emptyList()
+        val b = player(bId) ?: return emptyList()
+        if (a.id == b.id) return emptyList()
+        update(aId) { withHand(it.copy(passives = b.passives), b.hand) }
+        update(bId) { withHand(it.copy(passives = a.passives), a.hand) }
         emit(GameEvent.Swap(aId, bId))
+        return listOf(aId, bId)
     }
 
     /** Spends a passive: it leaves the player and lands on the discard pile. */
@@ -454,11 +477,16 @@ class Ctx(state: GameState, val rng: Rng) {
 
     /**
      * Re-checks a hand after it gained a card by other means than a draw
-     * (a steal or a swap). Returns true if the player busted.
+     * (a steal, a swap, a spin). Returns true if the player busted.
+     *
+     * [finishedToo] reaches a seat that is already out. A whole hand can land on
+     * one now — see [rotateHands] — and a banked hand holding two of the same
+     * card is a bust however quietly it came by them.
      */
-    fun resolveBustAfterGain(playerId: String): Boolean {
+    fun resolveBustAfterGain(playerId: String, finishedToo: Boolean = false): Boolean {
         val player = player(playerId) ?: return false
-        if (player.status != PlayerStatus.ACTIVE) return false
+        if (player.status == PlayerStatus.BUST) return false
+        if (player.status != PlayerStatus.ACTIVE && !finishedToo) return false
         val result = checkBust(player) ?: return false
         if (result.reason == BUST_DUPLICATE && result.duplicate != null && hasPassive(playerId, SECOND_LIFE.id)) {
             consumeSecondChance(playerId, result.duplicate, result.matched)
@@ -590,7 +618,6 @@ object Engine {
                 it.copy(
                     hand = emptyList(), passives = emptyList(), handValue = 0,
                     status = PlayerStatus.ACTIVE, score = 0, bustReason = null, skipNextTurn = false,
-                    marks = emptySet(),
                 )
             },
             dealQueue = dealOrder(state.players.map { it.id }, 0),
@@ -784,7 +811,7 @@ object Engine {
             // A card whose whole effect is a mark the drawer already carries
             // would be spent for nothing. Bin it and deal a replacement, the
             // same way a card with nobody to hit is binned below.
-            if (def.skipMarked?.let { ctx.hasMark(playerId, it) } == true) {
+            if (def.skipHolding?.let { ctx.hasPassive(playerId, it) } == true) {
                 return fizzle(ctx, def, card, playerId)
             }
             runAction(ctx, def, card, playerId, playerId, choice = null)
@@ -856,7 +883,7 @@ object Engine {
      * and only a duplicate can stop it.
      */
     private fun canFlip(ctx: Ctx, player: Player): Boolean =
-        player.hand.size >= ctx.rules.flipTarget && NO_FLIP.id !in player.marks
+        player.hand.size >= ctx.rules.flipTarget && player.passives.none { it.defId == NO_FLIP.id }
 
     // ═══════════════════════════════════════════
     // Action cards
@@ -1028,6 +1055,7 @@ object Engine {
     ) {
         card?.let { ctx.toDiscard(it) }
         ctx.emit(GameEvent.ActionPlayed(def.id, fromId, targetId))
+        payToll(ctx, def, fromId, targetId)
         // "Double it!" fires the same effect twice.
         repeat(ctx.rules.actionRepeat) {
             val from = ctx.player(fromId) ?: return@repeat
@@ -1040,6 +1068,28 @@ object Engine {
                 ),
             )
         }
+    }
+
+    /**
+     * "Discordia": aiming a card at the seat carrying it costs them — see
+     * [DISCORDIA]. Read off the cards the target is holding rather than written
+     * into any of the fourteen cards that can trigger it, because the card that
+     * charges the toll is the one being aimed *at*.
+     *
+     * Paid once however many times "double it!" fires the effect: what is being
+     * resented is being played on, not what the play then did. Paid before the
+     * effect for the same reason — the card has changed hands by then, and a
+     * freeze that ends the round must not swallow the toll it earned.
+     *
+     * A house rule asking a question is not a card being played, so nothing is
+     * owed for one — that is what [ActionCardDef.deckable] is saying here.
+     */
+    private fun payToll(ctx: Ctx, def: ActionCardDef, fromId: String, targetId: String) {
+        if (!def.deckable || fromId == targetId) return
+        val toll = ctx.player(targetId)?.passives.orEmpty()
+            .mapNotNull { Catalog.passive(it.defId) }
+            .sumOf { it.spite }
+        if (toll > 0) ctx.transferPoints(targetId, fromId, toll)
     }
 
     private fun afterAction(ctx: Ctx) {
@@ -1187,24 +1237,25 @@ object Engine {
 
     /**
      * Flip 7 scoring order: total the number cards, apply ×2, add the flat
-     * modifiers, then the Flip 7 bonus. Busting scores nothing.
+     * modifiers, then the Flip 7 bonus, then anything that takes it away.
+     * Busting scores nothing.
+     *
+     * Everything here is read off the cards the player is holding, which is why
+     * a round can be ruined by something somebody handed you — see the effect
+     * cards in `CardDefs`.
      */
     fun roundScore(player: Player, flip7PlayerId: String?): Int {
         if (player.status == PlayerStatus.BUST) return 0
+        val defs = player.passives.mapNotNull { Catalog.passive(it.defId) }
         // "Unlucky 7": the hand is only worth something if it went all the way.
-        if (MUST_FLIP.id in player.marks && player.id != flip7PlayerId) return 0
+        if (defs.any { it.scoring == PassiveScoring.VOID_UNLESS_FLIP } && player.id != flip7PlayerId) return 0
         var total = player.hand.sumOf { it.value }
-        for (card in player.passives) {
-            if (Catalog.passive(card.defId)?.scoring == PassiveScoring.DOUBLE_NUMBERS) total *= 2
-        }
-        for (card in player.passives) {
-            val def = Catalog.passive(card.defId) ?: continue
-            if (def.scoring == PassiveScoring.FLAT) total += def.bonusPoints
-        }
+        for (def in defs) if (def.scoring == PassiveScoring.DOUBLE_NUMBERS) total *= 2
+        for (def in defs) if (def.scoring == PassiveScoring.FLAT) total += def.bonusPoints
         if (player.id == flip7PlayerId) total += FLIP7_BONUS
         // "All in": whoever bet the highest or the lowest keeps half of it.
         // Last, so it takes half of everything the round was actually worth.
-        if (HALVED.id in player.marks) total /= 2
+        for (def in defs) if (def.scoring == PassiveScoring.HALVE) total /= 2
         return total
     }
 
@@ -1305,7 +1356,6 @@ object Engine {
             it.copy(
                 hand = emptyList(), passives = emptyList(), handValue = 0,
                 status = PlayerStatus.ACTIVE, bustReason = null, skipNextTurn = false,
-                marks = emptySet(),
             )
         }
 

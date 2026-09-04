@@ -14,11 +14,13 @@ const TURNS = 3
  * Nothing here decides who it lands on; four clients rolling their own would
  * show four different bottles.
  */
-export function SpinningBottle({ bearing, victimName, x, y }: {
+export function SpinningBottle({ bearing, victimName, x, y, ms }: {
   bearing: number
   victimName: string
   x: number
   y: number
+  /** The whole animation's budget — see `GameAnimation.ms`. */
+  ms: number
 }) {
   return (
     <div
@@ -26,7 +28,7 @@ export function SpinningBottle({ bearing, victimName, x, y }: {
       data-testid="bottle-spin"
       data-victim={victimName}
       data-bearing={Math.round(bearing)}
-      style={{ left: x, top: y }}
+      style={{ '--bottle-dur': `${ms}ms`, left: x, top: y } as CSSProperties}
     >
       <div
         className="bottle-spin"

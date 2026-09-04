@@ -6,7 +6,6 @@ import type {
   GameEvent,
   GameStateView,
   LobbyRuleInfo,
-  MarkInfo,
   PassiveCardInfo,
   ServerMessage,
 } from '../game/types'
@@ -109,10 +108,6 @@ export function findPassive(catalog: Catalog | null, defId?: string): PassiveCar
 
 export function findRule(catalog: Catalog | null, id: string): LobbyRuleInfo | undefined {
   return catalog?.rules.find((r) => r.id === id)
-}
-
-export function findMark(catalog: Catalog | null, id: string): MarkInfo | undefined {
-  return catalog?.marks?.find((m) => m.id === id)
 }
 
 /**

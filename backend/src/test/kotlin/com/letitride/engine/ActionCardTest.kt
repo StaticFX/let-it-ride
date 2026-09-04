@@ -109,6 +109,39 @@ class ActionCardTest {
     }
 
     @Test
+    fun `swap takes the modifier row with the hand`() {
+        var state = withPending(SWAP.id, openingCards = listOf(num(1), num(12)))
+        state = state.copy(
+            players = state.players.map {
+                when (it.id) {
+                    "a" -> it.copy(passives = listOf(passive(DOUBLE_POINTS.id, id = "the-double")))
+                    else -> it.copy(passives = listOf(passive(DISCORDIA.id, id = "the-discordia")))
+                }
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "b", SWAP.id))
+
+        assertEquals(listOf("the-discordia"), state.player("a")!!.passives.map { it.id })
+        assertEquals(listOf("the-double"), state.player("b")!!.passives.map { it.id })
+    }
+
+    @Test
+    fun `a swap that pushes a hand over the threshold busts on arrival`() {
+        var state = withPending(SWAP.id, openingCards = listOf(num(1), num(12)))
+            .let { s -> s.copy(config = s.config.copy(ruleIds = listOf(LobbyRules.BLACKJACKING.id))) }
+        state = state.copy(
+            players = state.players.map {
+                if (it.id == "b") it.copy(hand = listOf(num(11), num(12)), handValue = 23) else it
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "b", SWAP.id))
+
+        assertEquals(PlayerStatus.BUST, state.status("a"), "the hand that arrived was already over")
+    }
+
+    @Test
     fun `draw three queues three forced draws`() {
         var state = withPending(DRAW_THREE.id, rest = List(4) { num(it + 5) })
         state = t(state, GameAction.PlayAction("a", "b", DRAW_THREE.id))
@@ -289,7 +322,7 @@ class ActionCardTest {
     }
 
     @Test
-    fun `seats already out of the round sit the spin out`() {
+    fun `a seat that is already out is spun along with everybody else`() {
         var state = withPending(
             SPIN_TABLE.id,
             players = listOf("a", "b", "c"),
@@ -299,9 +332,38 @@ class ActionCardTest {
             players = state.players.map { if (it.id == "b") it.copy(status = PlayerStatus.STAYED) else it },
         )
         state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
-        assertEquals(3, state.player("a")!!.handValue, "a and c traded around b")
-        assertEquals(2, state.player("b")!!.handValue, "b already banked this hand")
-        assertEquals(1, state.player("c")!!.handValue)
+
+        assertEquals(listOf(3, 1, 2), listOf("a", "b", "c").map { state.player(it)!!.handValue })
+        assertEquals(PlayerStatus.STAYED, state.status("b"), "the hand moved; the seat's round did not")
+    }
+
+    @Test
+    fun `a busted hand pushed onto a seat that had banked busts it too`() {
+        var state = withPending(
+            SPIN_TABLE.id,
+            players = listOf("a", "b"),
+            openingCards = listOf(num(1), num(2)),
+        )
+        // b busted on a pair of fives and is still holding both of them; a has
+        // already banked a clean hand. The spin hands b's wreckage to a.
+        state = state.copy(
+            players = state.players.map {
+                when (it.id) {
+                    "b" -> it.copy(
+                        hand = listOf(num(5, id = "five"), num(5, id = "five-again")),
+                        handValue = 10,
+                        status = PlayerStatus.BUST,
+                        bustReason = "duplicate",
+                    )
+
+                    else -> it.copy(status = PlayerStatus.STAYED)
+                }
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+
+        assertEquals(PlayerStatus.BUST, state.status("a"), "a banked hand is not safe from a spin")
     }
 
     @Test

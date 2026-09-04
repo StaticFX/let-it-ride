@@ -278,10 +278,18 @@ jobs:
               curl -fsS -o /dev/null -w 'frontend: %{http_code}\n' http://localhost:8080/
               # The end-to-end suite runs its server with the seed hook on. A
               # published image that shipped with it would let anyone deal
-              # themselves a deck they already know.
+              # themselves a deck they already know — and would answer the
+              # testing panel, which can write a hand onto any seat.
               case "$health" in
                 *'"testHooks":false'*) echo "test hooks: off" ;;
                 *) echo "the published image has its test hooks ON"; docker rm -f letitride; exit 1 ;;
+              esac
+              # The catalog is what the client gates the panel on, so it has to
+              # say the same thing.
+              catalog=$(curl -fsS http://localhost:8080/api/catalog)
+              case "$catalog" in
+                *'"testHooks":true'*) echo "the catalog offers the testing panel"; docker rm -f letitride; exit 1 ;;
+                *) echo "catalog: no panel" ;;
               esac
               docker rm -f letitride
               exit 0

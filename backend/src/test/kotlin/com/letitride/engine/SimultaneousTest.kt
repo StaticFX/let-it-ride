@@ -163,7 +163,7 @@ class SimultaneousTest {
         state = bet(state, "c", "c-5")
 
         assertNotNull(state.pendingAction, "one player has not bet yet")
-        assertTrue(state.players.none { HALVED.id in it.marks })
+        assertTrue(state.players.none { p -> p.passives.any { it.defId == HALVED.id } })
     }
 
     @Test
@@ -176,10 +176,10 @@ class SimultaneousTest {
         state = result.state
 
         assertNull(state.pendingAction)
-        assertTrue(HALVED.id in state.player("a")!!.marks, "2 was the lowest")
-        assertTrue(HALVED.id in state.player("b")!!.marks, "9 was the highest")
-        assertFalse(HALVED.id in state.player("c")!!.marks)
-        assertFalse(HALVED.id in state.player("d")!!.marks)
+        assertTrue(state.player("a")!!.passives.any { it.defId == HALVED.id }, "2 was the lowest")
+        assertTrue(state.player("b")!!.passives.any { it.defId == HALVED.id }, "9 was the highest")
+        assertFalse(state.player("c")!!.passives.any { it.defId == HALVED.id })
+        assertFalse(state.player("d")!!.passives.any { it.defId == HALVED.id })
 
         val revealed = result.events.filterIsInstance<GameEvent.AllIn>().single()
         assertEquals(4, revealed.bets.size, "every bet turns over at once")
@@ -189,9 +189,14 @@ class SimultaneousTest {
     @Test
     fun `a halved hand is worth half of everything it made`() {
         val hand = listOf(num(10), num(9), num(3))
-        val player = Player(id = "a", name = "a", hand = hand, marks = setOf(HALVED.id))
+        val player = Player(
+            id = "a",
+            name = "a",
+            hand = hand,
+            passives = listOf(passive(HALVED.id, id = "tmp-halved-a")),
+        )
         assertEquals(11, Engine.roundScore(player, flip7PlayerId = null), "22 halved, rounded down")
-        assertEquals(22, Engine.roundScore(player.copy(marks = emptySet()), flip7PlayerId = null))
+        assertEquals(22, Engine.roundScore(player.copy(passives = emptyList()), flip7PlayerId = null))
     }
 
     @Test
@@ -203,9 +208,9 @@ class SimultaneousTest {
         state = bet(state, "c", "c-5")
         state = bet(state, "d", "d-9")
 
-        assertTrue(HALVED.id in state.player("b")!!.marks)
-        assertTrue(HALVED.id in state.player("d")!!.marks, "tied for highest, and both pay")
-        assertFalse(HALVED.id in state.player("c")!!.marks)
+        assertTrue(state.player("b")!!.passives.any { it.defId == HALVED.id })
+        assertTrue(state.player("d")!!.passives.any { it.defId == HALVED.id }, "tied for highest, and both pay")
+        assertFalse(state.player("c")!!.passives.any { it.defId == HALVED.id })
     }
 
     @Test
@@ -217,8 +222,8 @@ class SimultaneousTest {
         state = bet(state, "c", "c-5")
         state = bet(state, "d", "d-7")
 
-        assertTrue(HALVED.id in state.player("a")!!.marks, "a's own 2 was still the lowest")
-        assertTrue(HALVED.id in state.player("b")!!.marks)
+        assertTrue(state.player("a")!!.passives.any { it.defId == HALVED.id }, "a's own 2 was still the lowest")
+        assertTrue(state.player("b")!!.passives.any { it.defId == HALVED.id })
     }
 
     @Test

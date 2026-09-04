@@ -103,6 +103,9 @@ function CardRow({ sigil, name, description, dimmed }: {
 function PageCards({ catalog, config }: { catalog: Catalog; config?: GameConfig }) {
   const activeActions = new Set(config?.deck.actionCards ?? [])
   const activePassives = new Set(config?.deck.passiveCards ?? [])
+  // A card no deck holds is not listed among the ones a deck holds.
+  const dealt = catalog.passives.filter((card) => card.deckable !== false)
+  const effects = catalog.passives.filter((card) => card.deckable === false)
 
   return (
     <>
@@ -126,7 +129,7 @@ function PageCards({ catalog, config }: { catalog: Catalog; config?: GameConfig 
 
       <Subheading>modifiers & protection</Subheading>
       <p className="text-muted mb-3.5">kept in front of you until the round ends</p>
-      {catalog.passives.map((card) => (
+      {dealt.map((card) => (
         <CardRow
           key={card.id}
           sigil={card.sigil}
@@ -139,17 +142,18 @@ function PageCards({ catalog, config }: { catalog: Catalog; config?: GameConfig 
         you can only ever hold one <b>second life</b> — draw another and it goes to a player without one.
       </p>
 
-      {catalog.marks && catalog.marks.length > 0 && (
+      {effects.length > 0 && (
         <>
           <div className="h-px bg-[var(--ink)]/10 my-5" />
 
-          <Subheading>marks</Subheading>
+          <Subheading>effect cards</Subheading>
           <p className="text-muted mb-3.5">
-            not cards — a strip of paper by your seat. you cannot lose one, hand it on or have it
-            stolen, and it is torn up when the round ends.
+            no deck holds these — they are handed to you by whatever caused them, and they are gone
+            when the round ends. they are cards all the same, so they sit in front of you with
+            everything else and can be traded away.
           </p>
-          {catalog.marks.map((mark) => (
-            <CardRow key={mark.id} sigil={mark.sigil} name={mark.name} description={mark.description} dimmed={false} />
+          {effects.map((card) => (
+            <CardRow key={card.id} sigil={card.sigil} name={card.name} description={card.description} dimmed={false} />
           ))}
         </>
       )}

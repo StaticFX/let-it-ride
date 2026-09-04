@@ -41,6 +41,31 @@ class OutroTest {
         assertEquals(OUTRO_AFTER_FLIP7_MS, outroPreambleFor(events))
     }
 
+    @Test
+    fun `a coin called wrong is given the whole throw, not just the bust`() {
+        // The bust arrives in the same batch as the coin, and used to be the one
+        // that was read — so the closing card came down while the coin was still
+        // in the air.
+        val events = listOf(
+            GameEvent.CoinFlip("a", "heads", "tails"),
+            GameEvent.Bust("a", "coin flip"),
+            GameEvent.RoundScored(emptyMap(), "b"),
+        )
+        assertEquals(OUTRO_AFTER_COIN_MS, outroPreambleFor(events))
+    }
+
+    @Test
+    fun `a bottle is given long enough to stop on somebody`() {
+        val events = listOf(GameEvent.BottleSpin("b"), GameEvent.Bust("b", "assassination"))
+        assertEquals(OUTRO_AFTER_SPIN_MS, outroPreambleFor(events))
+    }
+
+    @Test
+    fun `points crossing the table are given time to get there`() {
+        val events = listOf(GameEvent.PointsTransferred("a", "b", 10), GameEvent.Stay("a"))
+        assertEquals(OUTRO_AFTER_TRANSFER_MS, outroPreambleFor(events))
+    }
+
     // ─── Autostart ───
 
     @Test
