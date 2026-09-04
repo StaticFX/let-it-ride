@@ -3,7 +3,11 @@ package com.letitride.engine
 /** Points awarded on top of the hand for collecting seven unique number cards. */
 const val FLIP7_BONUS = 15
 
-/** Number of unique number cards that ends the round instantly. */
+/**
+ * Default number of unique number cards that ends the round instantly. House
+ * rules can move the bar, so the engine reads [RuleSet.flipTarget] rather than
+ * this constant — it is only the value a table with no rules on plays to.
+ */
 const val FLIP7_TARGET = 7
 
 const val MIN_PLAYERS = 2
@@ -43,6 +47,9 @@ class Ctx(state: GameState, val rng: Rng) {
 
     fun hasPassive(playerId: String, defId: String): Boolean =
         player(playerId)?.passives?.any { it.defId == defId } == true
+
+    fun hasMark(playerId: String, markId: String): Boolean =
+        player(playerId)?.marks?.contains(markId) == true
 
     fun activePlayers(): List<Player> = state.players.filter { it.status == PlayerStatus.ACTIVE }
 
@@ -91,11 +98,207 @@ class Ctx(state: GameState, val rng: Rng) {
         if (player.status == PlayerStatus.BUST) return
         update(playerId) { it.copy(status = PlayerStatus.BUST, bustReason = reason) }
         emit(GameEvent.Bust(playerId, reason, card, matched))
+        detonate(playerId)
+    }
+
+    /**
+     * A player carrying a bomb does not go out alone. Every bust in the game
+     * runs through [bust], so this covers duplicates, the threshold, a coin
+     * called wrong, the bottle and a ratio without any of them knowing about it.
+     *
+     * The mark is spent as it fires, so a table of bombers taking each other
+     * out terminates: each one goes off once. When a prompt is already open the
+     * bomb cannot stop the table again — that bust happened while another was
+     * being answered — so it picks for itself rather than being lost.
+     */
+    private fun detonate(playerId: String) {
+        if (!hasMark(playerId, BOMBER.id)) return
+        update(playerId) { it.copy(marks = it.marks - BOMBER.id) }
+        val victims = activePlayers().map { it.id }
+        if (victims.isEmpty()) return
+        if (state.pendingAction != null) {
+            rng.pick(victims)?.let { bust(it, BUST_BOMBER) }
+            return
+        }
+        raisePrompt(SUICIDE_BOMBER.id, playerId, PHASE_BUST, victims)
+    }
+
+    /**
+     * Stops the table on a question no card was just drawn for. The prompt
+     * carries its own targets: the card's target rule described how it was
+     * played, which is not what is being asked now.
+     *
+     * The card behind it is minted rather than real — the one that set this up
+     * was spent long ago — and a minted card never reaches the discard pile, so
+     * the deck stays honest.
+     */
+    fun raisePrompt(
+        defId: String,
+        playerId: String,
+        phase: String,
+        targets: List<String>,
+        options: List<String> = emptyList(),
+        responders: List<String> = emptyList(),
+        kind: PickKind = PickKind.PLAYER,
+        cards: List<String> = emptyList(),
+        picks: Int = 1,
+        offers: List<Offer> = emptyList(),
+    ) {
+        if (targets.isEmpty() && options.isEmpty() && cards.isEmpty() && offers.isEmpty()) return
+        state = state.copy(
+            pendingAction = PendingAction(
+                cardDefId = defId,
+                playerId = playerId,
+                card = Card(
+                    id = "tmp-$defId-${ephemeralCounter++}",
+                    kind = CardKind.ACTION,
+                    label = defId,
+                    value = 0,
+                    defId = defId,
+                ),
+                validTargets = targets,
+                options = options,
+                kind = kind,
+                validCards = cards,
+                picks = picks,
+                phase = phase,
+                responders = responders,
+                offers = offers,
+            ),
+        )
+    }
+
+    /**
+     * Everything this player could buy right now, priced.
+     *
+     * Only what the table's own deck holds — a friendly table cannot buy an
+     * assassination that was never in it — and only what they can actually pay
+     * for out of what the round has left them. Nothing on this list can put
+     * anybody below zero, "extreme" or not: a round may cost you more than it
+     * paid, but not because you chose to spend money you did not have.
+     */
+    fun offersFor(playerId: String): List<Offer> {
+        val player = player(playerId) ?: return emptyList()
+        val purse = player.score + (state.roundAdjustments[playerId] ?: 0)
+        if (purse <= 0) return emptyList()
+        val deck = state.config.deck
+        val offers = mutableListOf<Offer>()
+
+        for (entry in deck.numberCards) {
+            val label = entry.label ?: entry.value.toString()
+            val price = priceOfNumber(entry.value)
+            if (price > purse) continue
+            offers += Offer(
+                id = offerIdForNumber(label),
+                price = price,
+                card = Card(
+                    id = "offer-${offerIdForNumber(label)}",
+                    kind = CardKind.NUMBER,
+                    label = label,
+                    value = entry.value,
+                    suit = entry.suits?.firstOrNull(),
+                ),
+            )
+        }
+
+        for (defId in deck.passiveCards.distinct()) {
+            val def = Catalog.passive(defId) ?: continue
+            if (def.price > purse) continue
+            offers += Offer(
+                id = offerIdForPassive(defId),
+                price = def.price,
+                card = Card(
+                    id = "offer-${offerIdForPassive(defId)}",
+                    kind = CardKind.PASSIVE,
+                    label = def.name,
+                    value = 0,
+                    defId = defId,
+                ),
+            )
+        }
+
+        return offers
+    }
+
+    /**
+     * Hands over a bought card and takes the price out of the round.
+     *
+     * The card is minted rather than dealt: buying one must not thin the deck
+     * everybody else is drawing from, and a minted card never reaches the
+     * discard pile. A number card can still collide with something already in
+     * hand, so the buy is re-checked like any other way of gaining one — though
+     * nobody would knowingly buy a duplicate.
+     */
+    fun buy(playerId: String, offer: Offer) {
+        val player = player(playerId) ?: return
+        val card = offer.card.copy(id = "tmp-buy-${ephemeralCounter++}")
+        adjust(playerId, -offer.price)
+        if (card.kind == CardKind.PASSIVE) {
+            update(playerId) { it.copy(passives = it.passives + card) }
+            emit(GameEvent.PassiveGained(playerId, card))
+        } else {
+            update(playerId) { p ->
+                val hand = p.hand + card
+                p.copy(hand = hand, handValue = hand.sumOf { c -> c.value })
+            }
+        }
+        emit(GameEvent.Bought(playerId, card, offer.price))
+        if (player.status == PlayerStatus.ACTIVE) resolveBustAfterGain(playerId)
+    }
+
+    /**
+     * Trades two players' banked scores outright. The round's own points are
+     * not involved: this is the scoreboard changing hands, not a hand.
+     */
+    fun swapScores(aId: String, bId: String) {
+        val a = player(aId) ?: return
+        val b = player(bId) ?: return
+        if (a.id == b.id) return
+        val aScore = a.score
+        update(aId) { it.copy(score = b.score) }
+        update(bId) { it.copy(score = aScore) }
+        emit(GameEvent.ScoresSwapped(aId, b.score, bId, aScore))
+    }
+
+    /**
+     * The card turned out to do nothing, and its drawer is owed another. By the
+     * time an effect runs the card itself has already been discarded, so this
+     * is only the replacement and the note that it happened — the same thing
+     * the engine does for a card with nobody to hit.
+     */
+    fun wasted(defId: String, playerId: String) {
+        emit(GameEvent.Fizzled(defId, playerId))
+        if (player(playerId)?.status != PlayerStatus.ACTIVE) return
+        pushForcedDraws(playerId, 1)
     }
 
     fun skip(playerId: String) {
         update(playerId) { it.copy(skipNextTurn = true) }
         emit(GameEvent.Skip(playerId))
+    }
+
+    /**
+     * Moves points that are not hand scoring — a deduction now, a purchase
+     * later. They ride in [GameState.roundAdjustments] until the round is
+     * scored, so the summary shows them alongside everything else it paid
+     * rather than as a score that silently changed.
+     */
+    fun adjust(playerId: String, points: Int) {
+        if (points == 0 || player(playerId) == null) return
+        val current = state.roundAdjustments[playerId] ?: 0
+        state = state.copy(roundAdjustments = state.roundAdjustments + (playerId to current + points))
+    }
+
+    /**
+     * Puts a player under an effect for the rest of the round. Marking twice is
+     * a no-op rather than an error — "double it!" fires every effect twice, and
+     * the second one has nothing left to do.
+     */
+    fun mark(playerId: String, markId: String) {
+        val player = player(playerId) ?: return
+        if (markId in player.marks) return
+        update(playerId) { it.copy(marks = it.marks + markId) }
+        emit(GameEvent.Marked(playerId, markId))
     }
 
     /** Removes a specific card from a hand and puts it on the discard pile. */
@@ -123,6 +326,72 @@ class Ctx(state: GameState, val rng: Rng) {
         update(toId) { withHand(it, it.hand + card) }
         emit(GameEvent.Steal(fromId, toId, card))
         return card
+    }
+
+    /**
+     * Slides every hand one seat around the table, in seat order. "right" moves
+     * each hand to the next participant, "left" to the previous one.
+     *
+     * Only players still in the round take part: a hand landing on someone who
+     * already busted or went out would rewrite a score that is already settled,
+     * and nothing would ever re-check it for legality. Whole hands move intact,
+     * so no duplicate can appear — but a hand can be heavier than the one it
+     * replaced, so the caller still has to re-check the threshold.
+     *
+     * Returns the participating seats in order, or an empty list when there was
+     * nobody to rotate between.
+     */
+    fun rotateHands(direction: String): List<String> {
+        val participants = activePlayers()
+        if (participants.size < 2) return emptyList()
+        val hands = participants.map { it.hand }
+        val size = participants.size
+        for (index in participants.indices) {
+            // Who this seat receives from: the seat behind it when spinning
+            // right, the seat ahead of it when spinning left.
+            val donor = if (direction == SPIN_LEFT) (index + 1) % size else (index + size - 1) % size
+            update(participants[index].id) { withHand(it, hands[donor]) }
+        }
+        val ids = participants.map { it.id }
+        emit(GameEvent.TableSpun(direction, ids))
+        return ids
+    }
+
+    /** Whoever is holding [cardId] right now, hand or modifier row alike. */
+    fun ownerOf(cardId: String): Player? =
+        state.players.firstOrNull { p -> (p.hand + p.passives).any { it.id == cardId } }
+
+    /**
+     * Trades two cards between their owners. Each card lands in the pile it
+     * belongs in — a number card in a hand, a modifier in the row in front —
+     * so a swap can hand somebody a +4 for a 7 without a modifier ending up
+     * counted as a card towards the flip.
+     *
+     * Returns the seats that gained something, for the caller to re-check: a
+     * hand that took on a card can be holding a duplicate now, which is the
+     * whole reason to play this.
+     */
+    fun swapCards(firstId: String, secondId: String): List<String> {
+        if (firstId == secondId) return emptyList()
+        val a = ownerOf(firstId) ?: return emptyList()
+        val b = ownerOf(secondId) ?: return emptyList()
+        // Two cards changing places inside one hand is a hand that has not
+        // changed; there is nothing here to re-check and nothing to animate.
+        if (a.id == b.id) return emptyList()
+        val cardA = (a.hand + a.passives).first { it.id == firstId }
+        val cardB = (b.hand + b.passives).first { it.id == secondId }
+
+        fun give(playerId: String, taken: Card, given: Card) = update(playerId) { p ->
+            val hand = p.hand.filterNot { it.id == taken.id } + if (given.kind == CardKind.NUMBER) listOf(given) else emptyList()
+            val passives = p.passives.filterNot { it.id == taken.id } +
+                if (given.kind != CardKind.NUMBER) listOf(given) else emptyList()
+            p.copy(hand = hand, passives = passives, handValue = hand.sumOf { it.value })
+        }
+
+        give(a.id, cardA, cardB)
+        give(b.id, cardB, cardA)
+        emit(GameEvent.CardsSwapped(a.id, cardA, b.id, cardB))
+        return listOf(a.id, b.id)
     }
 
     fun swapHands(aId: String, bId: String) {
@@ -316,10 +585,12 @@ object Engine {
             gameWinnerId = null,
             flip7PlayerId = null,
             roundDeltas = emptyMap(),
+            roundAdjustments = emptyMap(),
             players = state.players.map {
                 it.copy(
                     hand = emptyList(), passives = emptyList(), handValue = 0,
                     status = PlayerStatus.ACTIVE, score = 0, bustReason = null, skipNextTurn = false,
+                    marks = emptySet(),
                 )
             },
             dealQueue = dealOrder(state.players.map { it.id }, 0),
@@ -415,11 +686,18 @@ object Engine {
         val pending = state.pendingAction
         if (pending != null) {
             if (pending.playerId != playerId) return
-            // "When it's an action card, a random player gets it."
-            val candidates = ctx.activePlayers().filter { it.id != playerId }
-            val target = ctx.rng.pick(candidates)?.id ?: playerId
+            // One clock covers the whole prompt, so when it runs out every
+            // answer still outstanding is filled in at once — otherwise one
+            // player who walked away holds the table for everybody. "When it's
+            // an action card, a random player gets it" is what that comes to
+            // for the ordinary single-answer case.
             ctx.emit(GameEvent.Timeout(playerId))
-            resolvePendingAction(ctx, pending, playerId, target)
+            var filled: PendingAction = pending
+            for (absent in pending.waitingOn) {
+                filled = filled.copy(answers = filled.answers + (absent to answerForAbsent(ctx, filled, absent)))
+            }
+            ctx.state = ctx.state.copy(pendingAction = filled)
+            resolvePendingAction(ctx, filled)
             return
         }
 
@@ -491,8 +769,25 @@ object Engine {
             return DrawOutcome.CONTINUE
         }
 
-        if (def.selfTarget || ctx.rules.forceSelfTarget) {
-            runAction(ctx, def, card, playerId, playerId)
+        // "Womp womp" points every card at its drawer, which is the same shape
+        // as a card that was self-targeting to begin with.
+        val resolvesOnDrawer = def.selfTarget || ctx.rules.forceSelfTarget
+
+        // A card that points at cards has to stop and ask however it targets:
+        // "womp womp" can force whose seat it resolves on, never which cards.
+        val cards = if (def.picksCards) def.cardTargets(ctx.state, playerId) else emptyList()
+        if (def.picksCards && cards.size < def.picks) return fizzle(ctx, def, card, playerId)
+
+        // A card that needs no pick resolves on the spot — unless it asks a
+        // question, and only the drawer can answer that.
+        if (resolvesOnDrawer && !def.needsChoice && !def.picksCards) {
+            // A card whose whole effect is a mark the drawer already carries
+            // would be spent for nothing. Bin it and deal a replacement, the
+            // same way a card with nobody to hit is binned below.
+            if (def.skipMarked?.let { ctx.hasMark(playerId, it) } == true) {
+                return fizzle(ctx, def, card, playerId)
+            }
+            runAction(ctx, def, card, playerId, playerId, choice = null)
             return when {
                 ctx.player(playerId)?.status == PlayerStatus.BUST -> DrawOutcome.BUSTED
                 ctx.state.forcedDraws != null || ctx.state.pendingAction != null -> DrawOutcome.PAUSED
@@ -504,7 +799,7 @@ object Engine {
         // A steal with nobody holding cards — most often on the opening deal —
         // has nothing it could possibly do. Rather than parking the table on a
         // pick that changes nothing, bin it and deal a replacement.
-        val targets = def.validTargets(ctx.state, playerId)
+        val targets = if (resolvesOnDrawer) listOf(playerId) else def.validTargets(ctx.state, playerId)
         if (targets.isEmpty()) return fizzle(ctx, def, card, playerId)
 
         ctx.state = ctx.state.copy(
@@ -513,6 +808,10 @@ object Engine {
                 playerId = playerId,
                 card = card,
                 validTargets = targets,
+                options = def.options,
+                kind = def.pickKind,
+                validCards = cards,
+                picks = def.picks,
             ),
         )
         return DrawOutcome.PAUSED
@@ -547,22 +846,75 @@ object Engine {
         }
 
         val after = ctx.player(playerId) ?: return DrawOutcome.CONTINUE
-        if (after.hand.size >= FLIP7_TARGET) return DrawOutcome.FLIP7
+        if (canFlip(ctx, after)) return DrawOutcome.FLIP7
         return DrawOutcome.CONTINUE
     }
+
+    /**
+     * Whether this hand ends the round right now. "Just one more" takes the flip
+     * off the table for its holder, so the count keeps climbing past the target
+     * and only a duplicate can stop it.
+     */
+    private fun canFlip(ctx: Ctx, player: Player): Boolean =
+        player.hand.size >= ctx.rules.flipTarget && NO_FLIP.id !in player.marks
 
     // ═══════════════════════════════════════════
     // Action cards
     // ═══════════════════════════════════════════
 
+    /**
+     * Takes one responder's answer. Most prompts have exactly one and resolve on
+     * the spot; the ones that ask the table at once collect until everybody is
+     * in and only then resolve, so nobody can answer in reply to somebody else.
+     */
     private fun playPendingAction(ctx: Ctx, action: GameAction.PlayAction) {
         val pending = ctx.state.pendingAction ?: return
-        if (pending.playerId != action.fromPlayerId) return
         if (pending.cardDefId != action.cardDefId) return
-        resolvePendingAction(ctx, pending, action.fromPlayerId, action.targetPlayerId)
+        val actor = action.fromPlayerId
+        // Somebody who was never asked, or who has already answered — a second
+        // click, or a client trying to answer for a neighbour.
+        if (actor !in pending.respondents || actor in pending.answers) return
+
+        val answer = Answer(action.targetPlayerId, action.choice, action.cards)
+        val collected = pending.copy(answers = pending.answers + (actor to answer))
+        ctx.state = ctx.state.copy(pendingAction = collected)
+        if (!collected.allAnswered) return
+
+        resolvePendingAction(ctx, collected)
     }
 
-    private fun resolvePendingAction(ctx: Ctx, pending: PendingAction, fromId: String, requestedTargetId: String) {
+    /**
+     * Fills in whatever a responder never said, so a prompt cannot be left open
+     * by somebody who walked away. Everything is picked from what that player
+     * was actually offered, so an answer nobody gave is still a legal one.
+     */
+    private fun answerForAbsent(ctx: Ctx, pending: PendingAction, playerId: String): Answer {
+        // A card that asked a question has to have one answered for it, or the
+        // clock runs out again on the same unflipped coin, forever.
+        val choice = ctx.rng.pick(pending.options)
+        // Shuffled rather than taken off the top, so a clock that runs out does
+        // not always trade the same two seats' first cards — or buy the same
+        // cheapest thing on the shelf every single time.
+        val cards = when (pending.kind) {
+            PickKind.CARD -> ctx.rng.shuffled(pending.validCards)
+            PickKind.CATALOG -> listOfNotNull(ctx.rng.pick(pending.offers)?.id)
+            PickKind.PLAYER -> emptyList()
+        }
+        // Somebody other than themselves where there is a choice, the way a
+        // person would.
+        val target = ctx.rng.pick(pending.validTargets.filter { it != playerId })
+            ?: pending.validTargets.firstOrNull()
+            ?: playerId
+        return Answer(targetId = target, choice = choice, cards = cards)
+    }
+
+    private fun resolvePendingAction(ctx: Ctx, pending: PendingAction) {
+        val fromId = pending.playerId
+        val own = pending.answers[fromId] ?: Answer()
+        val requestedTargetId = own.targetId ?: fromId
+        val requestedChoice = own.choice
+        val requestedCards = own.cards
+
         val def = Catalog.action(pending.cardDefId)
         ctx.state = ctx.state.copy(pendingAction = null)
 
@@ -575,7 +927,20 @@ object Engine {
         // "Womp womp" overrides the pick. Otherwise the pick has to be one the
         // card could actually be played on — a client asking for anything else
         // gets the first legal target instead.
-        val allowed = if (ctx.rules.forceSelfTarget) listOf(fromId) else def.validTargets(ctx.state, fromId)
+        val allowed = when {
+            // A prompt raised outside the card's own play brought its own
+            // targets. Asking the card's target rule would answer for how it
+            // was played, which is a different question — and a stricter filter
+            // here would be wrong too: a bomb still goes off on a seat that
+            // went out while it was being aimed, and anti flip is asked when
+            // the whole table is already out. Only a seat that has left the
+            // game entirely is dropped; what to do with the rest is the
+            // effect's own business.
+            pending.phase != PHASE_PLAY -> pending.validTargets.filter { ctx.player(it) != null }
+
+            ctx.rules.forceSelfTarget -> listOf(fromId)
+            else -> def.validTargets(ctx.state, fromId)
+        }
         if (allowed.isEmpty()) {
             fizzle(ctx, def, pending.card, fromId)
             afterAction(ctx)
@@ -583,18 +948,97 @@ object Engine {
         }
         val resolvedTarget = if (requestedTargetId in allowed) requestedTargetId else allowed.first()
 
-        runAction(ctx, def, pending.card, fromId, resolvedTarget)
+        // An answer the card never offered — or none at all, from a client that
+        // does not know the card asks — falls back to the first option, exactly
+        // as an illegal target falls back to the first legal seat.
+        //
+        // Asked of the prompt rather than of the card: a card that asks a
+        // question when it is played may ask nothing at all the second time it
+        // stops the table, and the prompt is the one that knows which it is.
+        val choice = when {
+            pending.options.isEmpty() -> null
+            requestedChoice in pending.options -> requestedChoice
+            else -> pending.options.first()
+        }
+
+        val cards = if (!def.picksCards) emptyList() else legalPicks(ctx, def, fromId, requestedCards)
+        if (def.picksCards && cards.size < def.picks) {
+            fizzle(ctx, def, pending.card, fromId)
+            afterAction(ctx)
+            return
+        }
+
+        runAction(ctx, def, pending.card, fromId, resolvedTarget, choice, cards, pending.phase, pending.answers)
         afterAction(ctx)
     }
 
-    private fun runAction(ctx: Ctx, def: ActionCardDef, card: Card?, fromId: String, targetId: String) {
+    /**
+     * The cards a card-picking play actually resolves on.
+     *
+     * Same contract as an illegal target: a pick the card could not have been
+     * pointed at is replaced rather than refused, because refusing strands the
+     * table on a prompt only the sender can clear. Two picks on the same seat
+     * would trade a hand with itself and change nothing, so each one after the
+     * first has to come from an owner not already picked.
+     */
+    private fun legalPicks(
+        ctx: Ctx,
+        def: ActionCardDef,
+        fromId: String,
+        requested: List<String>,
+    ): List<Card> {
+        val offered = def.cardTargets(ctx.state, fromId).toSet()
+        val picked = mutableListOf<Card>()
+        val owners = mutableSetOf<String>()
+
+        fun take(cardId: String): Boolean {
+            if (cardId !in offered) return false
+            if (picked.any { it.id == cardId }) return false
+            val owner = ctx.ownerOf(cardId) ?: return false
+            if (owner.id in owners) return false
+            val card = (owner.hand + owner.passives).firstOrNull { it.id == cardId } ?: return false
+            picked += card
+            owners += owner.id
+            return true
+        }
+
+        for (cardId in requested) {
+            if (picked.size >= def.picks) break
+            take(cardId)
+        }
+        // Short of a full pick — a client that sent one card, or two off the
+        // same seat — the rest is filled in from what was on offer.
+        for (cardId in offered) {
+            if (picked.size >= def.picks) break
+            take(cardId)
+        }
+        return picked
+    }
+
+    private fun runAction(
+        ctx: Ctx,
+        def: ActionCardDef,
+        card: Card?,
+        fromId: String,
+        targetId: String,
+        choice: String?,
+        cards: List<Card> = emptyList(),
+        phase: String = PHASE_PLAY,
+        answers: Map<String, Answer> = emptyMap(),
+    ) {
         card?.let { ctx.toDiscard(it) }
         ctx.emit(GameEvent.ActionPlayed(def.id, fromId, targetId))
         // "Double it!" fires the same effect twice.
         repeat(ctx.rules.actionRepeat) {
             val from = ctx.player(fromId) ?: return@repeat
             val target = ctx.player(targetId) ?: return@repeat
-            def.onPlay(ctx, from, target)
+            def.onPlay(
+                ctx,
+                Play(
+                    from = from, target = target, choice = choice,
+                    cards = cards, phase = phase, answers = answers,
+                ),
+            )
         }
     }
 
@@ -658,9 +1102,14 @@ object Engine {
     // ═══════════════════════════════════════════
 
     private fun anyFlip7(ctx: Ctx): String? =
-        ctx.state.players.firstOrNull { it.status == PlayerStatus.ACTIVE && it.hand.size >= FLIP7_TARGET }?.id
+        ctx.state.players.firstOrNull { it.status == PlayerStatus.ACTIVE && canFlip(ctx, it) }?.id
 
-    /** Seven unique cards ends the round for everyone, right now. */
+    /**
+     * A full set of unique cards ends the round for everyone, right now. Under
+     * "flip 9" it ends the game too, but that is recorded the same way every
+     * other win is — [gameWinner] picks it up at round end so the summary
+     * screen still gets to show before NEXT_ROUND moves to GAME_END.
+     */
     private fun endRoundByFlip7(ctx: Ctx, playerId: String) {
         if (ctx.state.flip7PlayerId != null) return
         ctx.emit(GameEvent.Flip7(playerId))
@@ -673,6 +1122,19 @@ object Engine {
                 if (it.status == PlayerStatus.ACTIVE) it.copy(status = PlayerStatus.STAYED) else it
             },
         )
+
+        // "Anti flip": the round is over for everybody, but it does not score
+        // until the player who ended it says what the bonus is for. Nothing
+        // moves while a prompt is open, so the scoring simply waits.
+        if (ctx.rules.antiFlip && ctx.state.players.size > 1) {
+            ctx.raisePrompt(
+                defId = ANTI_FLIP_ID,
+                playerId = playerId,
+                phase = PHASE_FLIP_CHOICE,
+                targets = listOf(playerId),
+                options = ANTI_FLIP.options,
+            )
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -729,6 +1191,8 @@ object Engine {
      */
     fun roundScore(player: Player, flip7PlayerId: String?): Int {
         if (player.status == PlayerStatus.BUST) return 0
+        // "Unlucky 7": the hand is only worth something if it went all the way.
+        if (MUST_FLIP.id in player.marks && player.id != flip7PlayerId) return 0
         var total = player.hand.sumOf { it.value }
         for (card in player.passives) {
             if (Catalog.passive(card.defId)?.scoring == PassiveScoring.DOUBLE_NUMBERS) total *= 2
@@ -738,12 +1202,26 @@ object Engine {
             if (def.scoring == PassiveScoring.FLAT) total += def.bonusPoints
         }
         if (player.id == flip7PlayerId) total += FLIP7_BONUS
+        // "All in": whoever bet the highest or the lowest keeps half of it.
+        // Last, so it takes half of everything the round was actually worth.
+        if (HALVED.id in player.marks) total /= 2
         return total
     }
 
     private fun enterRoundEnd(ctx: Ctx) {
         val state = ctx.state
-        val deltas = state.players.associate { it.id to roundScore(it, state.flip7PlayerId) }
+        // Hand scoring first, then anything moved by other means during the
+        // round, then the bounty — all of it in the deltas rather than in the
+        // banked score, so the summary shows what the round actually paid.
+        //
+        // A round normally costs a player their whole hand at worst and never
+        // puts them in the red. "Extreme" is what lifts that floor.
+        val floor = if (ctx.rules.allowsNegative) Int.MIN_VALUE else 0
+        val scored = state.players.associate { it.id to roundScore(it, state.flip7PlayerId) }
+        val adjusted = scored.mapValues { (id, points) ->
+            (points + (state.roundAdjustments[id] ?: 0)).coerceAtLeast(floor)
+        }
+        val deltas = payBounty(ctx, state, adjusted)
 
         val winner = state.players
             .filter { it.status != PlayerStatus.BUST }
@@ -752,7 +1230,7 @@ object Engine {
             )
             .firstOrNull()
 
-        val scored = state.copy(
+        val ended = state.copy(
             phase = GamePhase.ROUND_END,
             players = state.players.map { it.copy(score = it.score + (deltas[it.id] ?: 0)) },
             roundDeltas = deltas,
@@ -762,15 +1240,42 @@ object Engine {
             forcedDrawStack = emptyList(),
             dealQueue = emptyList(),
         )
-        ctx.state = scored
+        ctx.state = ended
         ctx.emit(GameEvent.RoundScored(deltas, winner?.id))
 
         // The winner is recorded now but the summary screen still shows first;
         // NEXT_ROUND is what actually moves the game to GAME_END.
-        gameWinner(scored)?.let { ctx.state = ctx.state.copy(gameWinnerId = it) }
+        gameWinner(ended, ctx.rules)?.let { ctx.state = ctx.state.copy(gameWinnerId = it) }
     }
 
-    private fun gameWinner(state: GameState): String? {
+    /**
+     * "Bounty": the player who came into the round in front is worth something
+     * dead. Ranking is on the banked scores — [state] is still the pre-banking
+     * snapshot — so the price is on the leader everybody could see all round.
+     *
+     * Only an outright leader carries a bounty. A tie means nobody is *the*
+     * player in front, which also stops round one, where the whole table is on
+     * zero, from paying out on the first bust. Because the leader busted, they
+     * are already out of the round-winner running, so every player still in it
+     * collects the same 10 — the payout cannot reorder the round.
+     */
+    private fun payBounty(ctx: Ctx, state: GameState, deltas: Map<String, Int>): Map<String, Int> {
+        val payout = ctx.rules.bountyPoints
+        if (payout <= 0 || state.players.size < 2) return deltas
+        val ranked = state.players.sortedByDescending { it.score }
+        val leader = ranked[0]
+        if (ranked[1].score == leader.score) return deltas
+        if (leader.status != PlayerStatus.BUST) return deltas
+
+        val collectors = state.players.map { it.id }.filterNot { it == leader.id }
+        ctx.emit(GameEvent.BountyPaid(leader.id, collectors, payout))
+        return deltas.mapValues { (id, points) -> if (id == leader.id) points else points + payout }
+    }
+
+    private fun gameWinner(state: GameState, rules: RuleSet): String? {
+        // "Flip 9" is a knockout: getting there takes the game on the spot,
+        // whatever the scoreboard says.
+        if (rules.flipWinsGame && state.flip7PlayerId != null) return state.flip7PlayerId
         val config = state.config
         if (config.winCondition == WinCondition.FIRST_TO_SCORE) {
             if (state.players.none { it.score >= config.targetScore }) return null
@@ -800,6 +1305,7 @@ object Engine {
             it.copy(
                 hand = emptyList(), passives = emptyList(), handValue = 0,
                 status = PlayerStatus.ACTIVE, bustReason = null, skipNextTurn = false,
+                marks = emptySet(),
             )
         }
 
@@ -814,6 +1320,7 @@ object Engine {
             roundWinnerId = null,
             flip7PlayerId = null,
             roundDeltas = emptyMap(),
+            roundAdjustments = emptyMap(),
             pendingAction = null,
             forcedDraws = null,
             forcedDrawStack = emptyList(),

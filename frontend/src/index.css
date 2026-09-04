@@ -17,6 +17,9 @@
 
 body {
   margin: 0;
+  /* The shake throws the whole table clear of its own edges. Without felt behind
+     it the viewport flashes the browser's white at the corners every time. */
+  background: var(--felt);
   -webkit-font-smoothing: antialiased;
   font-family: var(--font-body);
   color: var(--ink);
@@ -153,6 +156,42 @@ label {
   transition: opacity 300ms ease;
 }
 
+/* Whose turn it is. Two marks that read from opposite distances: a wash of
+   accent behind the seat you can catch out of the corner of your eye, and the
+   pen ring around the avatar that says which one of them it is. Both go on the
+   seat rather than the corner, so the answer is in the same place whether you
+   are looking at the table or at your own hand along the bottom of it.
+
+   Sits at z-0 like [.hover-glow], so whatever it lights has to be positioned
+   above it — see the `relative z-[1]` on the rows in GameBoard. */
+.turn-halo {
+  position: absolute;
+  inset: -44px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(176, 68, 50, 0.24) 0%, rgba(176, 68, 50, 0.09) 46%, transparent 72%);
+  pointer-events: none;
+  z-index: 0;
+  animation: turnHaloPulse 2.1s ease-in-out infinite;
+}
+
+/* Geometry comes from PlayerAvatar, which is the only thing that knows how big
+   the avatar it is drawn around happens to be. */
+.turn-ring {
+  position: absolute;
+  pointer-events: none;
+  animation: turnRingPulse 1.7s ease-in-out infinite;
+}
+
+@keyframes turnHaloPulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes turnRingPulse {
+  0%, 100% { transform: scale(1) rotate(-2deg); opacity: 0.8; }
+  50% { transform: scale(1.09) rotate(2deg); opacity: 1; }
+}
+
 .bust-strike {
   position: absolute;
   top: 50%;
@@ -209,7 +248,8 @@ label {
 .sway-mid { animation: swayMore 2.8s ease-in-out infinite; }
 .sway-fast { animation: swayMore 2.2s ease-in-out infinite; }
 .sway-card { animation: swayMore 1.8s ease-in-out infinite; }
-.shake { animation: screenShake 500ms ease-out; }
+.shake { animation: screenShake 460ms cubic-bezier(.2, .7, .3, 1); }
+.shake-bust { animation: screenShakeBust 560ms cubic-bezier(.12, .8, .3, 1); }
 
 /* ─── Game board layout helpers ─── */
 .action-buttons {
@@ -370,16 +410,50 @@ label {
   animation: fadeUp 0.4s ease-out both;
 }
 
-/* Screen shake */
+/* ─── Screen shake ───
+   Two weights, both under the 600ms the animation gate holds the table for.
+   `screenShake` is an action card landing on somebody. `screenShakeBust` is the
+   same motion with the brakes off — roughly twice the throw, three times the
+   twist, and enough beats left over to rattle down instead of stopping dead.
+   The hair of scale keeps the drawn frame off the viewport edge while the shell
+   is being thrown around. */
 @keyframes screenShake {
-  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-  10% { transform: translate(-5px, 2px) rotate(-0.3deg); }
-  20% { transform: translate(4px, -3px) rotate(0.2deg); }
-  30% { transform: translate(-3px, 1px) rotate(-0.15deg); }
-  40% { transform: translate(3px, -2px) rotate(0.1deg); }
-  55% { transform: translate(-2px, 1px); }
-  70% { transform: translate(1px, -1px); }
-  85% { transform: translate(-1px, 0); }
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  8%   { transform: translate(-10px, 6px) rotate(-0.55deg) scale(1.012); }
+  18%  { transform: translate(9px, -7px) rotate(0.5deg) scale(1.01); }
+  29%  { transform: translate(-7px, 4px) rotate(-0.38deg) scale(1.008); }
+  41%  { transform: translate(6px, -4px) rotate(0.28deg) scale(1.006); }
+  54%  { transform: translate(-4px, 3px) rotate(-0.18deg) scale(1.004); }
+  68%  { transform: translate(3px, -2px) rotate(0.12deg) scale(1.002); }
+  82%  { transform: translate(-2px, 1px) rotate(-0.06deg) scale(1.001); }
+  92%  { transform: translate(1px, -1px) scale(1); }
+}
+
+@keyframes screenShakeBust {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); }
+  5%   { transform: translate(-22px, 14px) rotate(-1.6deg) scale(1.035); }
+  11%  { transform: translate(20px, -17px) rotate(1.45deg) scale(1.032); }
+  18%  { transform: translate(-18px, 11px) rotate(-1.2deg) scale(1.03); }
+  25%  { transform: translate(16px, -12px) rotate(1deg) scale(1.026); }
+  33%  { transform: translate(-13px, 8px) rotate(-0.8deg) scale(1.022); }
+  41%  { transform: translate(11px, -8px) rotate(0.62deg) scale(1.018); }
+  50%  { transform: translate(-9px, 5px) rotate(-0.45deg) scale(1.015); }
+  59%  { transform: translate(7px, -5px) rotate(0.32deg) scale(1.012); }
+  68%  { transform: translate(-5px, 3px) rotate(-0.22deg) scale(1.009); }
+  77%  { transform: translate(4px, -2px) rotate(0.14deg) scale(1.006); }
+  86%  { transform: translate(-2px, 1px) rotate(-0.08deg) scale(1.003); }
+  94%  { transform: translate(1px, -1px) rotate(0.04deg) scale(1.001); }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+}
+
+/* Somebody who has asked for less movement should not have the whole viewport
+   thrown at them. A bust still strikes the name through, scatters the hand and
+   makes its noise — only the table stays put. */
+@media (prefers-reduced-motion: reduce) {
+  .shake,
+  .shake-bust {
+    animation: none;
+  }
 }
 
 /* Bust: cards fly up and scatter */
@@ -647,4 +721,346 @@ label {
   18%  { transform: translate(-50%, -50%) scale(1.05) rotate(-2deg); opacity: 1; }
   65%  { transform: translate(-50%, -50%) scale(1) rotate(-2deg); opacity: 1; }
   100% { transform: translate(-50%, -50%) translateY(-30px) scale(0.95); opacity: 0; }
+}
+
+/* ─── Coin flip ───
+   The coin drops in, turns over and over, and lands on the face the server
+   announced. --coin-end is that face: heads is the side showing at rest and
+   tails half a turn behind it, so landing on the right one is only a matter of
+   how many half-turns the coin makes on the way down. The two faces are laid
+   over each other and whichever is looking away is dropped by
+   backface-visibility, so nothing here may take an opacity below 1 — that
+   flattens the 3D context and both sides show at once. */
+
+.coin-toss {
+  position: relative;
+  transform-style: preserve-3d;
+  will-change: transform;
+  /* Also the resting state: with the animation off the coin is simply already
+     showing the face it landed on. */
+  transform: perspective(760px) rotateX(var(--coin-end, 0deg));
+  animation: coinToss var(--coin-dur, 2000ms) both;
+}
+
+.coin-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  backface-visibility: hidden;
+}
+
+.coin-face-back {
+  transform: rotateX(180deg);
+}
+
+.coin-call {
+  animation: fadeUp 300ms ease-out both;
+}
+
+@keyframes coinToss {
+  /* Thrown in from above the table. */
+  0% {
+    transform: perspective(760px) translateY(-340px) rotateX(0deg) scale(0.72);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(.45, 0, .75, .5);
+  }
+  12% { opacity: 1; }
+  /* Turning fast, near the top of its arc. */
+  55% {
+    transform: perspective(760px) translateY(-34px) rotateX(calc(var(--coin-end, 1800deg) - 220deg)) scale(1.14);
+    animation-timing-function: cubic-bezier(.35, 0, .55, 1);
+  }
+  /* Down on the felt, on the announced face. */
+  70% {
+    transform: perspective(760px) translateY(8px) rotateX(var(--coin-end, 1800deg)) scale(0.98);
+    animation-timing-function: cubic-bezier(.2, .9, .3, 1.4);
+  }
+  80% { transform: perspective(760px) translateY(-12px) rotateX(var(--coin-end, 1800deg)) scale(1.02); }
+  90% { transform: perspective(760px) translateY(0) rotateX(var(--coin-end, 1800deg)) scale(1); opacity: 1; }
+  100% { transform: perspective(760px) translateY(-10px) rotateX(var(--coin-end, 1800deg)) scale(1); opacity: 0; }
+}
+
+/* ─── Assassination ───
+   A bottle falls on the table, spins, and stops pointing at the seat the server
+   picked. --bottle-end is that bearing plus its whole turns, worked out on each
+   client from where the victim is actually sitting — the keyframe must end on
+   the variable and never on a round 360deg, or the bottle stops pointing at
+   whoever happens to be north. */
+
+.bottle-spin {
+  position: absolute;
+  transform-origin: center center;
+  will-change: transform;
+  /* The resting state points at the victim, so the animation can be taken away
+     without the bottle lying about who it picked. */
+  transform: translate(-50%, -50%) rotate(var(--bottle-end, 0deg));
+  animation: bottleSpin var(--bottle-dur, 1700ms) both;
+}
+
+.bottle-verdict {
+  position: absolute;
+  top: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: bottleVerdict var(--bottle-dur, 1700ms) both;
+}
+
+@keyframes bottleSpin {
+  0% {
+    transform: translate(-50%, -50%) translateY(-300px) rotate(0deg) scale(1.5);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(.5, 0, .8, .5);
+  }
+  14% {
+    transform: translate(-50%, -50%) rotate(90deg) scale(1);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(.1, .55, .25, 1);
+  }
+  82% {
+    transform: translate(-50%, -50%) rotate(var(--bottle-end, 1080deg)) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(var(--bottle-end, 1080deg)) scale(1.04);
+    opacity: 0;
+  }
+}
+
+/* The name only after the bottle has stopped on it. */
+@keyframes bottleVerdict {
+  0%, 78% { transform: translateX(-50%) scale(0.6); opacity: 0; }
+  88% { transform: translateX(-50%) scale(1.12); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* ─── Spin the table ───
+   The hands themselves are slid by [SpunHand]; this is only the mark over the
+   felt saying which way they went. */
+
+.table-swirl {
+  animation: tableSwirlNote var(--swirl-dur, 1000ms) ease-out both;
+}
+
+.table-swirl-arrow {
+  display: inline-block;
+  animation: tableSwirl var(--swirl-dur, 1000ms) cubic-bezier(.25, .8, .3, 1) both;
+}
+
+@keyframes tableSwirl {
+  0% { transform: rotate(0deg) scale(0.5); }
+  70% { transform: rotate(var(--swirl-turn, 300deg)) scale(1.08); }
+  100% { transform: rotate(var(--swirl-turn, 300deg)) scale(1); }
+}
+
+@keyframes tableSwirlNote {
+  0%   { transform: translate(-50%, -50%) scale(0.7); opacity: 0; }
+  20%  { transform: translate(-50%, -50%) scale(1.04); opacity: 1; }
+  72%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(0.96); opacity: 0; }
+}
+
+/* ─── Choice picker ───
+   The one overlay in the game that is clicked rather than watched. */
+
+.choice-picker {
+  animation: fadeUp 260ms ease-out both;
+}
+
+/* ─── Tension deal ───
+   One card in ten comes off the deck the slow way — see [dealsTense]. It is
+   drawn out face down, carried up over the hand and then flipped and brought
+   down hard, all of it fitted into --tension-dur, the same budget the plain
+   deal-in gets.
+
+   The card is turned by rotating the whole wrapper: the face is the card
+   itself, the back is laid over it already turned round, and whichever of the
+   two is looking away is dropped by backface-visibility. Nothing here may take
+   a filter or an opacity below 1 — either one flattens the 3D context and both
+   sides show at once. --tension-dx/dy point from where the card belongs back at
+   the draw pile. */
+
+.tension-deal {
+  position: relative;
+  /* The flip turns about the middle of the card, not of whatever width the fan
+     hands this wrapper. */
+  width: fit-content;
+  z-index: 2;
+  transform-style: preserve-3d;
+  will-change: transform;
+  animation: tensionDeal var(--tension-dur, 520ms) both;
+}
+
+.tension-deal > * {
+  backface-visibility: hidden;
+}
+
+.tension-deal-back {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: rotateY(180deg);
+  pointer-events: none;
+}
+
+@keyframes tensionDeal {
+  /* Off the deck, face to the table. */
+  0% {
+    transform: perspective(760px) translate(var(--tension-dx, 0px), var(--tension-dy, 0px)) scale(1.06) rotate(-10deg) rotateY(180deg);
+    animation-timing-function: cubic-bezier(.4, 0, .6, 1);
+  }
+  /* Drawn clear and held up, still nothing to see. */
+  30% {
+    transform: perspective(760px) translate(calc(var(--tension-dx, 0px) * 0.84), calc(var(--tension-dy, 0px) * 0.84 - 26px)) scale(1.3) rotate(-6deg) rotateY(180deg);
+    animation-timing-function: cubic-bezier(.45, 0, .55, 1);
+  }
+  /* Carried out over the hand. */
+  62% {
+    transform: perspective(760px) translate(calc(var(--tension-dx, 0px) * 0.2), calc(var(--tension-dy, 0px) * 0.2 - 52px)) scale(1.34) rotate(5deg) rotateY(180deg);
+    animation-timing-function: cubic-bezier(.6, 0, .9, .4);
+  }
+  /* Over its seat, coming round — the face is showing from here. */
+  76% {
+    transform: perspective(760px) translate(0px, -44px) scale(1.3) rotate(3deg) rotateY(64deg);
+    animation-timing-function: cubic-bezier(.9, 0, 1, .55);
+  }
+  /* Slammed down. */
+  88% {
+    transform: perspective(760px) translate(0px, 0px) scale(0.9) rotate(-3deg) rotateY(0deg);
+    animation-timing-function: cubic-bezier(.2, .9, .3, 1.4);
+  }
+  100% {
+    transform: perspective(760px) translate(0px, 0px) scale(1) rotate(0deg) rotateY(0deg);
+  }
+}
+
+/* Somebody who has asked for less movement gets the card without the trip: it
+   is simply there, face up, which is where the flight was going anyway.
+   The same rule for the coin and the bottle — both are given a resting
+   transform that already holds the server's answer, so taking the motion away
+   leaves the coin on the face it landed on and the bottle pointing at the
+   player it picked, rather than at nothing. The hands slid by [SpunHand] check
+   this query themselves; they are laid out at the right seat to begin with. */
+/* ─── Showdown ───
+   Everything that was answered in secret, turned over at once. On the felt
+   rather than over it: the answers were always on the table, they were just
+   face down. */
+.showdown {
+  animation: showdownIn 260ms ease-out both;
+}
+
+.showdown-sheet {
+  background: color-mix(in srgb, var(--felt) 92%, var(--ink));
+  border-radius: 4px;
+  box-shadow: 0 6px 0 rgba(31, 28, 20, 0.14);
+  transform: rotate(-0.6deg);
+}
+
+@keyframes showdownIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Each answer lands in turn, so a table of four reads left to right rather
+   than all appearing at once and meaning nothing. */
+@keyframes showdownLand {
+  0% { opacity: 0; transform: translateY(-16px) scale(1.25) rotate(-6deg); }
+  70% { opacity: 1; transform: translateY(0) scale(0.95) rotate(2deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+/* ─── Card picking ───
+   A card pointed at cards rather than at a seat. The two that may still be
+   taken are lifted off the felt and the rest step back, so the table reads as
+   a board of choices for as long as the pick is owed. */
+/* Ringed rather than lifted, for two reasons. Every card on the table already
+   carries an inline transform — its place in the fan — which a class cannot
+   override without fighting it; and a card that never stops moving is a click
+   target that never stops moving, which gets worse the more it asks to be
+   clicked. An outline changes no layout and stays exactly where it is. */
+.card-pickable {
+  cursor: crosshair;
+  outline: 2px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 3px;
+  border-radius: 4px;
+  transition: filter 160ms ease, outline-color 160ms ease;
+}
+
+.card-pickable:hover {
+  outline-style: solid;
+  outline-color: var(--accent);
+  filter: drop-shadow(0 3px 0 rgba(176, 68, 50, 0.35));
+}
+
+.card-picked {
+  cursor: default;
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+  filter: drop-shadow(2px 3px 0 rgba(176, 68, 50, 0.4));
+}
+
+.card-unpickable {
+  cursor: not-allowed;
+  opacity: 0.35;
+  filter: grayscale(0.7);
+}
+
+/* ─── Marks ───
+   An effect a player carries for the rest of the round. It is not drawn as a
+   card on purpose: a mark cannot be stolen, struck, swapped or discarded, and
+   anything card-shaped invites the player to try. A strip torn off the pad and
+   left by the seat says "this is written about you" instead. */
+.mark-slip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 7px 2px;
+  background: var(--card-back);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(31, 28, 20, 0.14);
+  /* Torn across the top and bottom, cut clean down the sides — the way a strip
+     comes off a pad that is only perforated one way. */
+  clip-path: polygon(
+    0% 12%, 9% 0%, 22% 9%, 37% 1%, 52% 8%, 68% 0%, 83% 7%, 100% 0%,
+    100% 88%, 90% 100%, 74% 92%, 58% 100%, 43% 91%, 27% 99%, 12% 92%, 0% 100%
+  );
+  /* The tilt is a variable because the landing animation owns `transform` for
+     the whole element — an inline rotation would be thrown away the moment it
+     finished. Also the resting state when the animation is off. */
+  transform: rotate(var(--slip-tilt, 0deg));
+  animation: markLand 420ms cubic-bezier(.2, .9, .3, 1.3) both;
+}
+
+.mark-slip-sigil {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+/* Slapped down rather than faded in — it is a thing that happened to you. */
+@keyframes markLand {
+  0% { opacity: 0; transform: translateY(-10px) scale(1.5) rotate(-8deg); }
+  70% { opacity: 1; transform: translateY(0) scale(0.94) rotate(calc(var(--slip-tilt, 0deg) + 3deg)); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(var(--slip-tilt, 0deg)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tension-deal,
+  .coin-toss,
+  .bottle-spin,
+  .bottle-verdict,
+  .table-swirl,
+  .table-swirl-arrow,
+  .choice-picker,
+  .mark-slip,
+  .showdown {
+    animation: none;
+  }
 }

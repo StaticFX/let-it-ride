@@ -1,7 +1,8 @@
 import type { Card as CardType } from "../../game/types";
 import { findAction, findPassive, useCatalog } from "../../state/gameStore";
 import { theme } from "../../theme";
-import { RoughBox, RoughSquiggle } from "../ui/RoughShapes";
+import { RoughBox, RoughSeal, RoughSquiggle } from "../ui/RoughShapes";
+import { cardHash } from "./dealtCards";
 
 interface PlayingCardProps {
   card: CardType;
@@ -25,12 +26,6 @@ const SUIT_GLYPHS: Record<string, string> = {
   spades: "\u273A",
 };
 
-function cardHash(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
 export function PlayingCard({
   card,
   size = "normal",
@@ -44,6 +39,18 @@ export function PlayingCard({
   const ink = theme.ink;
   const catalog = useCatalog();
 
+  // The face comes from the backend's catalog. Looked up before anything is
+  // drawn, because a passive is a different kind of object from an action card
+  // rather than the same card in another colour.
+  const action = findAction(catalog, card.defId);
+  const passive = action ? undefined : findPassive(catalog, card.defId);
+  // Each passive prints in its own ink so the row in front of a player reads as
+  // several things rather than one green block. A server that does not send one
+  // falls back to the house green every passive used to share.
+  const accent = passive
+    ? passive.accent ?? theme.passiveAccent
+    : theme.actionAccent;
+
   const phase = (cardHash(card.id) % 1000) / 1000;
   const swayDur = 2.2 + phase * 1.6;
   const swayDelay = -phase * swayDur;
@@ -55,9 +62,12 @@ export function PlayingCard({
     flexShrink: 0,
     background: "transparent",
     borderRadius: 4,
-    opacity: dimmed ? 0.45 : 1,
+    // Passive green is a lighter ink than the black the rest of the table is
+    // drawn in, and goes further at the same fade — it is held back a little
+    // less so a dimmed passive still reads as a card rather than a smudge.
+    opacity: dimmed ? (passive ? 0.55 : 0.45) : 1,
     transition: "transform 220ms cubic-bezier(.2,.9,.3,1.2)",
-    boxShadow: glowing ? `3px 3px 0 0 ${theme.actionAccent}` : "none",
+    boxShadow: glowing ? `3px 3px 0 0 ${accent}` : "none",
     animation: `sway ${swayDur}s ease-in-out ${swayDelay}s infinite`,
     ...style,
   };
@@ -144,12 +154,147 @@ export function PlayingCard({
     );
   }
 
-  // Action/passive card — the face comes from the backend's catalog.
-  const action = findAction(catalog, card.defId);
-  const passive = findPassive(catalog, card.defId);
-  const cardDef = action ?? passive;
+  // Passive card. It is not played and it does not leave — it sits in front of
+  // its owner for the rest of the round — so it is drawn as its own kind of
+  // object rather than an action card in another colour: green ink on tinted
+  // paper, the border doubled with a dashed inner frame, and the sigil struck
+  // as a seal instead of printed loose.
+  if (passive) {
+    // The seal stands in for the loose sigil an action card prints, but it has
+    // to leave the name its two lines above and the description its two below —
+    // the small card has neither and can give the seal the room. A sigil of
+    // more than one character ("×2", "+4") is set smaller to stay off the ring.
+    const seal = Math.round(dims.sigil * (size === 'small' ? 1.15 : 0.9));
+    const glyph = Math.round(seal * (passive.sigil.length > 1 ? 0.44 : 0.56));
+    // Far enough in that the two frames read as two lines rather than one shaky
+    // one — RoughBox already insets its rectangle by the stroke.
+    const frame = size === 'small' ? 6 : 8;
+    return (
+      <div style={baseStyle}>
+        <div
+          style={{
+            position: 'absolute',
+            inset: sw,
+            background: `color-mix(in srgb, ${accent} 8%, ${theme.cardFace})`,
+            borderRadius: 3,
+            zIndex: 0,
+          }}
+        />
+        <RoughBox
+          width={dims.w}
+          height={dims.h}
+          stroke={accent}
+          strokeWidth={sw}
+          roughness={1.9}
+        />
+        <RoughBox
+          width={dims.w - frame * 2}
+          height={dims.h - frame * 2}
+          stroke={accent}
+          strokeWidth={sw * 0.5}
+          roughness={2.4}
+          dashed
+          style={{ top: frame, left: frame, opacity: 0.75 }}
+        />
+        <div
+          style={{
+            // Inside the dashed frame: the writing is on the ticket, not across
+            // its edge.
+            position: 'absolute',
+            inset: sw + frame - 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch',
+            zIndex: 2,
+          }}
+        >
+          {/* The bonus passives are named after their own sigil ("+4"), and
+              printing it twice just crowds the seal. */}
+          {passive.name !== passive.sigil && (
+            <div
+              style={{
+                fontFamily: theme.fontDisplay,
+                // Set in capitals, which run wide — the name has to hold its
+                // two lines inside a card 52px across at its smallest.
+                fontSize: dims.fs * (size === 'small' ? 0.56 : 0.66),
+                color: accent,
+                fontWeight: 700,
+                textAlign: 'center',
+                padding: '1px 5px 0',
+                letterSpacing: '0.03em',
+                textTransform: 'uppercase',
+                lineHeight: 1.05,
+              }}
+            >
+              {passive.name}
+            </div>
+          )}
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <div
+              style={{
+                position: 'relative',
+                flexShrink: 0,
+                width: seal,
+                height: seal,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <RoughSeal
+                size={seal}
+                shape={passive.seal ?? 'circle'}
+                stroke={accent}
+                // The bonus cards all wear the same green ring, so what tells a
+                // +2 from a +10 across the table is how hard it was struck.
+                strokeWidth={sw * (0.7 + (passive.bonusPoints / 10) * 0.55)}
+                roughness={2}
+              />
+              <span
+                style={{
+                  fontFamily: theme.fontDisplay,
+                  fontSize: glyph,
+                  color: accent,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  position: 'relative',
+                  zIndex: 1,
+                }}
+              >
+                {passive.sigil}
+              </span>
+            </div>
+          </div>
+          {size !== 'small' && (
+            <div
+              style={{
+                padding: '0 5px 6px',
+                fontFamily: theme.fontBody,
+                fontSize: dims.fs * 0.44,
+                color: `color-mix(in srgb, ${accent} 80%, ${theme.ink})`,
+                textAlign: 'center',
+                lineHeight: 1.05,
+              }}
+            >
+              {passive.description}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Action card — the face comes from the backend's catalog.
+  const cardDef = action;
   if (cardDef) {
-    const isAction = !!action;
     return (
       <div style={baseStyle}>
         {paperFill}
@@ -211,7 +356,7 @@ export function PlayingCard({
               alignItems: "center",
               justifyContent: "center",
               fontSize: dims.sigil,
-              color: isAction ? theme.actionAccent : ink,
+              color: theme.actionAccent,
               fontFamily: theme.fontDisplay,
               fontWeight: 700,
               lineHeight: 1,

@@ -7,6 +7,12 @@ interface RulesPageProps {
   onClose: () => void
   /** When a table is set up, cards and rules it does not use are greyed out. */
   config?: GameConfig
+  /**
+   * What this room actually plays to. The catalog's copy is only the ruleless
+   * default (7), so a table with "flip 9" on has to say 9 — and does, because
+   * the room's own `GameStateView.flip7Target` is passed down here.
+   */
+  flip7Target?: number
 }
 
 const ROTATIONS = [-1.2, 0.8, -0.5, 1.0]
@@ -45,7 +51,7 @@ function PageBasics() {
   )
 }
 
-function PageScoring({ catalog }: { catalog: Catalog }) {
+function PageScoring({ catalog, flipTarget }: { catalog: Catalog; flipTarget: number }) {
   return (
     <>
       <Heading>scoring</Heading>
@@ -56,16 +62,16 @@ function PageScoring({ catalog }: { catalog: Catalog }) {
           <li>apply <b>×2</b> if you are holding it — it doubles the numbers only</li>
           <li>add your <b>+2 / +4 / +6 / +8 / +10</b> modifiers</li>
           <li>
-            add <b>{catalog.flip7Bonus}</b> if you hit {catalog.flip7Target}
+            add <b>{catalog.flip7Bonus}</b> if you hit {flipTarget}
           </li>
         </ol>
         <p className="text-muted">
           so 10 + 5 with a ×2 and a +10 is <b>(10+5)×2 + 10 = 40</b>, not 50.
         </p>
 
-        <Subheading>flip {catalog.flip7Target}!</Subheading>
+        <Subheading>flip {flipTarget}!</Subheading>
         <p>
-          collect <b>{catalog.flip7Target} different numbers</b> and the round ends immediately for everyone —
+          collect <b>{flipTarget} different numbers</b> and the round ends immediately for everyone —
           you bank your hand plus a <b>{catalog.flip7Bonus} point</b> bonus.
         </p>
 
@@ -104,7 +110,9 @@ function PageCards({ catalog, config }: { catalog: Catalog; config?: GameConfig 
 
       <Subheading>action cards</Subheading>
       <p className="text-muted mb-3.5">drawn and resolved on the spot — pick who gets hit</p>
-      {catalog.actions.map((card) => (
+      {/* A definition that is not a card — a house rule asking a question —
+          belongs on the house rules page, not among the cards. */}
+      {catalog.actions.filter((card) => card.deckable !== false).map((card) => (
         <CardRow
           key={card.id}
           sigil={card.sigil}
@@ -130,6 +138,21 @@ function PageCards({ catalog, config }: { catalog: Catalog; config?: GameConfig 
       <p className="text-muted mt-4">
         you can only ever hold one <b>second life</b> — draw another and it goes to a player without one.
       </p>
+
+      {catalog.marks && catalog.marks.length > 0 && (
+        <>
+          <div className="h-px bg-[var(--ink)]/10 my-5" />
+
+          <Subheading>marks</Subheading>
+          <p className="text-muted mb-3.5">
+            not cards — a strip of paper by your seat. you cannot lose one, hand it on or have it
+            stolen, and it is torn up when the round ends.
+          </p>
+          {catalog.marks.map((mark) => (
+            <CardRow key={mark.id} sigil={mark.sigil} name={mark.name} description={mark.description} dimmed={false} />
+          ))}
+        </>
+      )}
     </>
   )
 }
@@ -159,7 +182,7 @@ function PageHouseRules({ catalog, config }: { catalog: Catalog; config?: GameCo
 
 // ─── Shell ───
 
-export function RulesPage({ onClose, config }: RulesPageProps) {
+export function RulesPage({ onClose, config, flip7Target }: RulesPageProps) {
   const catalog = useCatalog()
   const [page, setPage] = useState(0)
   const [flip, setFlip] = useState<'none' | 'out-left' | 'out-right' | 'in'>('none')
@@ -187,9 +210,13 @@ export function RulesPage({ onClose, config }: RulesPageProps) {
     )
   }
 
+  // The room's own target when there is a room; the catalog's default when the
+  // rules are being read from the title screen with no table set up.
+  const flipTarget = flip7Target ?? catalog.flip7Target
+
   const pages = [
     { label: 'the basics', node: <PageBasics /> },
-    { label: 'scoring', node: <PageScoring catalog={catalog} /> },
+    { label: 'scoring', node: <PageScoring catalog={catalog} flipTarget={flipTarget} /> },
     { label: 'cards', node: <PageCards catalog={catalog} config={config} /> },
     { label: 'house rules', node: <PageHouseRules catalog={catalog} config={config} /> },
   ]
@@ -202,7 +229,12 @@ export function RulesPage({ onClose, config }: RulesPageProps) {
   }[flip]
 
   return (
-    <div className="fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-auto" data-testid="rules-page" data-page={page + 1}>
+    <div
+      className="fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-auto"
+      data-testid="rules-page"
+      data-page={page + 1}
+      data-flip-target={flipTarget}
+    >
       <div className="flex items-center justify-between w-full max-w-[640px] px-6 pt-6 z-20">
         <button onClick={onClose} data-testid="rules-back" className="bg-transparent border-none cursor-pointer display text-xl font-bold px-2 py-1">
           ← back

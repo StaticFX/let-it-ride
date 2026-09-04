@@ -1,5 +1,6 @@
 import { test, expect, alwaysHit, stayAfter } from '../support/fixtures'
 import { Table } from '../support/table'
+import { LOCAL_BUST } from '../support/seeds'
 
 /**
  * A game, played the way a person plays it: click through the lobby, sit
@@ -125,8 +126,13 @@ test.describe('playing a round', () => {
   test('somebody busts when the whole table pushes its luck', async ({ app, page }) => {
     // Four players all drawing until it goes wrong: the bust path — the
     // animation, the strike, the "duplicate card!" note — is what this covers.
-    await app.hostVersusBots('devin')
-    await app.configure({ deck: 'pure' })
+    //
+    // Seeded, because "somebody busts" is not something four players always do:
+    // a flip 7 can call the round before anyone collides, and this failed about
+    // one run in ten waiting for a bust that was never coming. LOCAL_BUST is
+    // the same four players on the same deck with the same policy, and on that
+    // shuffle it definitely happens.
+    await app.setUpScenario(LOCAL_BUST)
     await app.start()
 
     await app.table.playRound({ policy: alwaysHit })

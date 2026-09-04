@@ -11,6 +11,9 @@ export function EscapeMenu() {
   const [visible, setVisible] = useState(false)
   const phase = useGameStore((s) => s.state?.phase)
   const config = useGameStore((s) => s.state?.config)
+  // The rules are being read at a live table, so they answer for this room's
+  // rules rather than the catalog's defaults.
+  const flip7Target = useGameStore((s) => s.state?.flip7Target)
 
   const canOpen = phase === 'PLAYING' || phase === 'ROUND_END'
 
@@ -45,7 +48,9 @@ export function EscapeMenu() {
     leaveGame()
   }
 
-  if (showRules) return <RulesPage onClose={() => setShowRules(false)} config={config} />
+  if (showRules) {
+    return <RulesPage onClose={() => setShowRules(false)} config={config} flip7Target={flip7Target} />
+  }
   if (!open) return null
 
   return (

@@ -221,6 +221,193 @@ class ActionCardTest {
         assertEquals(PlayerStatus.ACTIVE, after.status("b"))
     }
 
+    // ─── Cards that ask a question ───
+
+    @Test
+    fun `a card that asks a question pauses even though it resolves on its drawer`() {
+        val state = withPending(COIN_FLIP.id)
+        assertEquals(COIN_FLIP.id, state.pendingAction?.cardDefId)
+        assertEquals(listOf(COIN_HEADS, COIN_TAILS), state.pendingAction?.options)
+        assertEquals(listOf("a"), state.pendingAction?.validTargets, "only the drawer is involved")
+    }
+
+    @Test
+    fun `a card that asks nothing carries no options`() {
+        assertEquals(emptyList(), withPending(FREEZE.id).pendingAction?.options)
+    }
+
+    @Test
+    fun `an answer the card never offered falls back to its first option`() {
+        val state = withPending(COIN_FLIP.id)
+        val result = tr(state, GameAction.PlayAction("a", "a", COIN_FLIP.id, "sideways"))
+        assertEquals(COIN_HEADS, result.events.filterIsInstance<GameEvent.CoinFlip>().single().call)
+    }
+
+    @Test
+    fun `a client that sends no answer at all still resolves the card`() {
+        val state = withPending(COIN_FLIP.id)
+        val result = tr(state, GameAction.PlayAction("a", "a", COIN_FLIP.id))
+        assertNull(result.state.pendingAction)
+        assertEquals(COIN_HEADS, result.events.filterIsInstance<GameEvent.CoinFlip>().single().call)
+    }
+
+    @Test
+    fun `the clock answers the question rather than sitting on it`() {
+        val state = withPending(COIN_FLIP.id)
+        val result = tr(state, GameAction.Timeout("a"))
+        assertNull(result.state.pendingAction, "the table must not stall on an unflipped coin")
+        val flip = result.events.filterIsInstance<GameEvent.CoinFlip>().single()
+        assertTrue(flip.call in listOf(COIN_HEADS, COIN_TAILS))
+    }
+
+    @Test
+    fun `spin the table moves every hand one seat the way it was called`() {
+        val state = withPending(
+            SPIN_TABLE.id,
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+        )
+
+        val right = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+        assertEquals(listOf(3, 1, 2), listOf("a", "b", "c").map { right.player(it)!!.handValue })
+
+        val left = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_LEFT))
+        assertEquals(listOf(2, 3, 1), listOf("a", "b", "c").map { left.player(it)!!.handValue })
+    }
+
+    @Test
+    fun `a spin says which seats moved and which way`() {
+        val state = withPending(
+            SPIN_TABLE.id,
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+        )
+        val spun = tr(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+            .events.filterIsInstance<GameEvent.TableSpun>().single()
+        assertEquals(SPIN_RIGHT, spun.direction)
+        assertEquals(listOf("a", "b", "c"), spun.playerIds)
+    }
+
+    @Test
+    fun `seats already out of the round sit the spin out`() {
+        var state = withPending(
+            SPIN_TABLE.id,
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+        )
+        state = state.copy(
+            players = state.players.map { if (it.id == "b") it.copy(status = PlayerStatus.STAYED) else it },
+        )
+        state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+        assertEquals(3, state.player("a")!!.handValue, "a and c traded around b")
+        assertEquals(2, state.player("b")!!.handValue, "b already banked this hand")
+        assertEquals(1, state.player("c")!!.handValue)
+    }
+
+    @Test
+    fun `a spin re-checks the hand that lands in front of you`() {
+        var state = withPending(
+            SPIN_TABLE.id,
+            players = listOf("a", "b"),
+            openingCards = listOf(num(1), num(2)),
+        ).let { s -> s.copy(config = s.config.copy(ruleIds = listOf(LobbyRules.BLACKJACKING.id))) }
+        state = state.copy(
+            players = state.players.map {
+                if (it.id == "b") it.copy(hand = listOf(num(9), num(13)), handValue = 22) else it
+            },
+        )
+        // b was over 21 before the spin but never drew there; a receives it and
+        // busts on the threshold the moment the hand lands.
+        state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+        assertEquals(PlayerStatus.BUST, state.status("a"))
+    }
+
+    // ─── Assassination ───
+
+    @Test
+    fun `assassination busts one player picked by the server`() {
+        val victims = (1L..30L).map { seed ->
+            val state = t(
+                startedAndDealt(
+                    players = listOf("a", "b", "c"),
+                    openingCards = listOf(num(1), num(2), num(3)),
+                    rest = listOf(action(ASSASSINATION.id)),
+                ),
+                GameAction.Hit("a"),
+                Rng(seed),
+            )
+            val busted = state.players.filter { it.status == PlayerStatus.BUST }
+            assertEquals(1, busted.size, "exactly one player goes down per bottle")
+            busted.single().id
+        }
+        assertTrue(victims.distinct().size > 1, "the bottle must not always stop on the same seat")
+        assertTrue("a" in victims, "the player who drew it is in the running too")
+    }
+
+    @Test
+    fun `the bottle event names the victim the server picked`() {
+        val result = tr(
+            startedAndDealt(
+                players = listOf("a", "b", "c"),
+                openingCards = listOf(num(1), num(2), num(3)),
+                rest = listOf(action(ASSASSINATION.id)),
+            ),
+            GameAction.Hit("a"),
+        )
+        val spin = result.events.filterIsInstance<GameEvent.BottleSpin>().single()
+        assertEquals(PlayerStatus.BUST, result.state.status(spin.victimId))
+    }
+
+    @Test
+    fun `double it spins the bottle twice and takes two players down`() {
+        val state = t(
+            startedAndDealt(
+                config(rules = listOf(LobbyRules.DOUBLE_IT.id)),
+                players = listOf("a", "b", "c"),
+                openingCards = listOf(num(1), num(2), num(3)),
+                rest = listOf(action(ASSASSINATION.id)),
+            ),
+            GameAction.Hit("a"),
+        )
+        assertEquals(2, state.players.count { it.status == PlayerStatus.BUST })
+    }
+
+    // ─── Don't care + ratio ───
+
+    @Test
+    fun `dont care can be pointed at a player who is already out`() {
+        var state = withPending(
+            DONT_CARE.id,
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+        )
+        state = state.copy(
+            players = state.players.map { if (it.id == "b") it.copy(status = PlayerStatus.STAYED) else it },
+        )
+        assertEquals(listOf("a", "b", "c"), state.pendingAction?.validTargets)
+
+        state = t(state, GameAction.PlayAction("a", "b", DONT_CARE.id))
+        assertEquals(PlayerStatus.BUST, state.status("b"), "going out is no protection")
+    }
+
+    @Test
+    fun `a player busted after going out scores nothing`() {
+        var state = withPending(
+            DONT_CARE.id,
+            players = listOf("a", "b"),
+            openingCards = listOf(num(9), num(12)),
+        )
+        // b banked their 12 before a turned the card up.
+        state = state.copy(
+            players = state.players.map { if (it.id == "b") it.copy(status = PlayerStatus.STAYED) else it },
+        )
+        state = t(state, GameAction.PlayAction("a", "b", DONT_CARE.id))
+        state = t(state, GameAction.Stay("a"))
+        assertEquals(GamePhase.ROUND_END, state.phase)
+        assertEquals(0, state.roundDeltas["b"])
+        assertEquals(9, state.roundDeltas["a"])
+    }
+
     @Test
     fun `womp womp gives your modifiers away`() {
         val state = startedAndDealt(

@@ -89,6 +89,17 @@ test.describe('http api', () => {
       expect(passive.description).toBeTruthy()
       expect(['flat', 'double', 'none']).toContain(passive.scoring)
     }
+
+    // Marks arrive on the player rather than as cards, so the client can only
+    // draw one it can name.
+    expect(catalog.marks?.map((mark) => mark.id)).toEqual(
+      expect.arrayContaining(['noFlip', 'mustFlip']),
+    )
+    for (const mark of catalog.marks ?? []) {
+      expect(mark.name, `${mark.id} needs a name`).toBeTruthy()
+      expect(mark.description, `${mark.id} needs a description`).toBeTruthy()
+      expect(mark.sigil, `${mark.id} needs a sigil to draw`).toBeTruthy()
+    }
   })
 
   test('opens a room and describes it', async ({ api }) => {
@@ -141,6 +152,58 @@ test.describe('http api', () => {
   })
 })
 
+test.describe('the stacked-deck hook', () => {
+  test('deals the cards it was asked for, in order, and keeps the deck whole', async ({ api, openSocket }) => {
+    const stack = ['7', '3', 'freeze']
+    const room = await api.createRoom('host', { stack })
+    const host = await openSocket(room.roomCode, { playerId: 'stack-host', name: 'host' })
+    await host.waitFor((m) => m.type === 'WELCOME', { description: 'a welcome' })
+    host.send({ type: 'ADD_BOT' })
+    await host.waitForState((s) => s.players.length === 2, { description: 'the bot to sit down' })
+
+    // The chaos deck, so a freeze is in it to be stacked.
+    const catalog = await api.catalog()
+    const chaos = catalog.decks.find((deck) => deck.id === 'chaos')!
+    const lobby = await host.waitForState((s) => s.phase === 'LOBBY', { description: 'the lobby' })
+    host.send({
+      type: 'SET_CONFIG',
+      config: { ...lobby.config, deckPresetId: 'chaos', deck: chaos.deck, turnTimeSeconds: 120 },
+    })
+    await host.waitForState((s) => s.config.deckPresetId === 'chaos', { description: 'the deck to change' })
+
+    const sizeBefore = chaos.cardCount
+    host.send({ type: 'START_GAME' })
+
+    // Two players, so the first two entries are the two opening cards.
+    const dealt = await host.waitForState(
+      (s) => s.phase === 'PLAYING' && s.dealQueue.length === 0,
+      { description: 'the opening deal' },
+    )
+    expect(dealt.players[0].hand[0]?.label, 'the host was not dealt the first card in the stack').toBe('7')
+    expect(dealt.players[1].hand[0]?.label).toBe('3')
+
+    // Nothing was conjured or lost: the named cards were lifted out of the
+    // shuffle and put on top of it, so the deck is still the deck.
+    const onTable = dealt.players.reduce((total, p) => total + p.hand.length + p.passives.length, 0)
+    expect(dealt.deckCount + dealt.discardCount + onTable).toBe(sizeBefore)
+  })
+
+  test('a name the deck does not hold is skipped rather than fatal', async ({ api, openSocket }) => {
+    const room = await api.createRoom('host', { stack: ['definitelyNotACard', '7'] })
+    const host = await openSocket(room.roomCode, { playerId: 'stack-junk', name: 'host' })
+    await host.waitFor((m) => m.type === 'WELCOME', { description: 'a welcome' })
+    host.send({ type: 'ADD_BOT' })
+    await host.waitForState((s) => s.players.length === 2, { description: 'the bot to sit down' })
+    host.send({ type: 'START_GAME' })
+
+    const dealt = await host.waitForState(
+      (s) => s.phase === 'PLAYING' && s.dealQueue.length === 0,
+      { description: 'the opening deal' },
+    )
+    expect(dealt.players[0].hand[0]?.label, 'the rest of the stack should still apply').toBe('7')
+  })
+})
+
 test.describe('the seed hook', () => {
   test('is on for this harness, and pins a room to one shuffle', async ({ api, openSocket }) => {
     expect(
@@ -152,7 +215,7 @@ test.describe('the seed hook', () => {
     // has to come out identically or nothing seeded can be relied on.
     const deals: string[][] = []
     for (const attempt of [1, 2]) {
-      const room = await api.createRoom('host', 20260903)
+      const room = await api.createRoom('host', { seed: 20260903 })
       const host = await openSocket(room.roomCode, { playerId: `seed-host-${attempt}`, name: 'host' })
       await host.waitFor((m) => m.type === 'WELCOME', { description: 'a welcome' })
       host.send({ type: 'ADD_BOT' })

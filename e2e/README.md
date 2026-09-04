@@ -35,6 +35,69 @@ E2E_BASE_URL=http://localhost:5173 bun run test
 | `E2E_BASE_URL`  | —                       | Test this server instead of starting one         |
 | `E2E_PORT`      | `8099`                  | Port for the server the suite starts             |
 | `E2E_SKIP_BUILD`| `0`                     | Serve the existing jar rather than rebuilding it |
+| `E2E_PACE`      | `0.25`                  | How fast the table plays; `1` is what a player sees |
+
+## Asking for a particular round
+
+Some specs need a particular card in a particular hand. Say so:
+
+```ts
+// Four low cards to open with, then a freeze straight into my hand.
+await app.hostStacked('devin', ['2', '3', '4', '5', 'freeze'])
+```
+
+`hostStacked` puts the named cards on top of the deck, in order, ahead of
+whatever the shuffle put there. Cards are named by what is printed on them
+(`'7'`) or by their definition (`'freeze'`, `'swapCards'`, `'plus4'`). The
+opening deal takes one card per player off the top in seat order starting with
+the host, so with three bots entries 0–3 are the four opening cards and entry 4
+is the host's first draw. Nothing is added or removed — the named cards are
+lifted out of the shuffled deck and put on top of it — so every card-conservation
+check still holds.
+
+There is also `hostSeeded`, which pins the room's shuffle. **Prefer a stack.** A
+seed can produce the round you want, but only by accident: you search for one
+that happens to deal it, and it stops meaning that the moment the deck's
+contents change. Three specs broke that way in a single afternoon of adding
+cards to the chaos deck. A stack names the cards it wants, so it goes on
+meaning what it says. What is left in `support/seeds.ts` is the handful of
+rounds whose *shape* is the point — a bust, a flip — rather than any card in
+particular.
+
+Both hooks need `LETITRIDE_TEST_HOOKS=1` and are ignored without it.
+
+## Why it is not slower than it is
+
+Almost nothing here is waiting on the code — it is waiting on the *game*. A
+round is deliberately unhurried: a title card, a card dealt at a time, bots
+thinking, a closing card. Played at the speed a person sees, the suite spends
+about three minutes watching a table take its time.
+
+So the suite runs the same game at a quarter of the pace. `LETITRIDE_PACE`
+scales every beat the server keeps and, through the catalog, every beat the
+client keeps — together, so what shrinks is the waiting and not the sequencing.
+Nothing about the order of play changes: the animation gate still holds the
+table until the client says it has finished, it just finishes sooner.
+
+It is gated behind the test hooks and only ever speeds a table up, so a public
+server cannot have the pacing pulled out from under its players.
+
+```sh
+E2E_PACE=1 bun run test:headed       # watch it at the speed a player sees
+```
+
+If you are iterating, the fastest loop is a server you leave running:
+
+```sh
+PORT=8099 LETITRIDE_TEST_HOOKS=1 LETITRIDE_PACE=0.25 java -jar backend/build/libs/let-it-ride.jar &
+E2E_BASE_URL=http://127.0.0.1:8099 bun run test tests/scenarios.spec.ts
+```
+
+**Careful with a pace this quick**: a spec that races the table can pass at one
+speed and fail at another. Both that have done so were the spec's own fault —
+one let the harness take a turn it meant only to watch, the other waited for an
+outcome that was never guaranteed — and both are better tests for it. If a spec
+starts failing when the pace changes, suspect the spec first.
 
 ## What is covered
 

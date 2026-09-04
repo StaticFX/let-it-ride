@@ -72,6 +72,12 @@ export default defineConfig({
           PORT: String(port),
           // Lets a spec pin a room's shuffle so a run replays card for card.
           LETITRIDE_TEST_HOOKS: '1',
+          // The table is deliberately unhurried — a title card, a deal, bots
+          // thinking — and the suite spends nearly all of its time watching it
+          // wait. This runs the same game at a quarter of the pace, server and
+          // client together, so what shrinks is the waiting and not the
+          // sequencing. `E2E_PACE=1` puts it back to what a player sees.
+          LETITRIDE_PACE: process.env.E2E_PACE ?? '0.25',
         },
       },
 })

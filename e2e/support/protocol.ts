@@ -33,6 +33,8 @@ export interface Player {
   skipNextTurn: boolean
   connected: boolean
   isBot: boolean
+  /** Round-long effects this player is under — see the catalog's `marks`. */
+  marks?: string[]
 }
 
 export interface DeckConfig {
@@ -49,6 +51,8 @@ export interface GameConfig {
   totalRounds: number
   targetScore: number
   turnTimeSeconds: number
+  /** Seconds before the next round deals itself, or null to wait for the host. */
+  autoNextRoundSeconds?: number | null
 }
 
 export interface PendingActionView {
@@ -56,6 +60,22 @@ export interface PendingActionView {
   playerId: string
   cardId: string
   validTargets: string[]
+  /** The question the card asks its drawer, if it asks one. */
+  options?: string[]
+  /** What is being pointed at: a seat, or cards off the table. */
+  kind?: 'player' | 'card' | 'catalog'
+  /** The cards that may be picked, when `kind` is `card`. */
+  validCards?: string[]
+  /** How many picks are owed before the card resolves. */
+  picks?: number
+  /** What is for sale, when `kind` is `catalog`. */
+  offers?: { id: string; price: number; card: Card }[]
+  /** Why the table is stopped; "play" is a card that was just drawn. */
+  phase?: string
+  /** Everybody who owes an answer — one name for nearly every prompt. */
+  responders?: string[]
+  /** Who has answered. What they said is never sent while the prompt is open. */
+  answered?: string[]
 }
 
 export interface AnimationGate {
@@ -82,11 +102,15 @@ export interface GameStateView {
   gameWinnerId?: string
   flip7PlayerId?: string
   roundDeltas: Record<string, number>
+  /** Points moved by something other than hand scoring; already inside the deltas. */
+  roundAdjustments?: Record<string, number>
   turnDeadline?: number
   roundIntroUntil?: number
   roundOutroFrom?: number
   roundOutroUntil?: number
   animationGate?: AnimationGate
+  /** Epoch millis the next round deals itself, under the host's autostart setting. */
+  nextRoundAt?: number
 }
 
 export type ServerMessage =
@@ -104,7 +128,7 @@ export interface GameEvent {
 export type ClientMessage =
   | { type: 'HIT' }
   | { type: 'STAY' }
-  | { type: 'PLAY_ACTION'; targetPlayerId: string; cardDefId: string }
+  | { type: 'PLAY_ACTION'; targetPlayerId: string; cardDefId: string; choice?: string; cards?: string[] }
   | { type: 'SET_CONFIG'; config: GameConfig }
   | { type: 'START_GAME' }
   | { type: 'NEXT_ROUND' }
@@ -124,6 +148,8 @@ export interface CatalogResponse {
     scoring: string
   }[]
   rules: { id: string; name: string; description: string }[]
+  /** Round-long effects a player can be put under. Older servers omit it. */
+  marks?: { id: string; name: string; description: string; sigil: string }[]
   decks: {
     id: string
     name: string

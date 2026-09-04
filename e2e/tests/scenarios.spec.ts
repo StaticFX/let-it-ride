@@ -1,5 +1,9 @@
 import { test, expect, alwaysHit } from '../support/fixtures'
-import { FLIP_SEVEN, LOCAL_ACTION_CARD, LOCAL_BUST } from '../support/seeds'
+import { FLIP_SEVEN, LOCAL_BUST } from '../support/seeds'
+
+/** Cards named the way a stacked deck names them — see `hostStacked`. */
+const FREEZE = 'freeze'
+const SWAP_CARDS = 'swapCards'
 
 /**
  * The moments a round is built around — an action card in your hand, a bust, a
@@ -11,21 +15,22 @@ import { FLIP_SEVEN, LOCAL_ACTION_CARD, LOCAL_BUST } from '../support/seeds'
  */
 
 test.describe('an action card in your hand', () => {
-  test(LOCAL_ACTION_CARD.what, async ({ app, page }) => {
+  test('the local player is handed an action card and picks who it lands on', async ({ app, page }) => {
     test.slow()
 
-    await app.setUpScenario(LOCAL_ACTION_CARD)
-    // Watch from the first card: on this deck the opening card itself can be
-    // the action card, and `start()` would answer that prompt for us.
+    // Four low cards to open with, then a freeze straight into my hand. Said
+    // outright rather than hunted for: a seed only produces this by accident
+    // and stops the moment the deck's contents change.
+    await app.hostStacked('devin', ['2', '3', '4', '5', FREEZE])
     await app.startAndWatch()
 
-    // Draw until the deck hands us one.
     const drawn = await app.table.playUntil(
       (snapshot) => snapshot.screen !== 'board' || !!snapshot.pending?.mine,
       { policy: alwaysHit, description: 'an action card of my own' },
     )
-    expect(drawn.screen, 'the seeded round did not deal me an action card').toBe('board')
+    expect(drawn.screen, 'the stacked deck did not deal me an action card').toBe('board')
     expect(drawn.pending?.mine).toBe(true)
+    expect(drawn.pending?.cardDefId).toBe(FREEZE)
 
     // The table stops and asks. The card is on screen and the prompt is mine.
     await expect(page.getByTestId('pending-action')).toBeVisible()
@@ -62,12 +67,10 @@ test.describe('an action card in your hand', () => {
   test('a card somebody else is holding is shown, but not offered to me', async ({ app, page }) => {
     test.slow()
 
-    // The bots draw far more cards than the local player does, so one of them
-    // holding an action card is the common case — and the table has to say so
-    // without letting the local player answer for them.
-    await app.setUpScenario(LOCAL_ACTION_CARD)
-    // Watch from the first card: on this deck the opening card itself can be
-    // the action card, and `start()` would answer that prompt for us.
+    // A freeze as the second player's opening card, so somebody else is holding
+    // it before the local player has done anything at all. The table has to say
+    // so without letting the local player answer for them.
+    await app.hostStacked('devin', ['2', FREEZE, '4', '5'])
     await app.startAndWatch()
 
     const theirs = await app.table.playUntil(
@@ -78,8 +81,61 @@ test.describe('an action card in your hand', () => {
     )
 
     expect(theirs.screen, 'the seeded round ended before a bot drew an action card').toBe('board')
-    await expect(page.getByTestId('turn-prompt')).toHaveText('is picking a target…')
+    // Either wording will do — some cards point at a seat and some at cards on
+    // the table. What matters is the next line: it is not my pick to make.
+    await expect(page.getByTestId('turn-prompt')).toHaveText(/is picking (a target|cards)…/)
     expect(theirs.seats.some((seat) => seat.targetable), 'seats were offered for a card that is not mine').toBe(false)
+  })
+})
+
+test.describe('a card that points at cards', () => {
+  test('a card that asks for cards puts the picker on the table itself', async ({ app, page }) => {
+    test.slow()
+
+    // Everyone opens with a card in hand — a trade needs two seats holding
+    // something — and then the swap lands in mine.
+    await app.hostStacked('devin', ['2', '3', '4', '5', SWAP_CARDS])
+    await app.startAndWatch()
+
+    const drawn = await app.table.playUntil(
+      (snapshot) =>
+        snapshot.screen !== 'board' ||
+        (!!snapshot.pending?.mine && snapshot.pickableCards.length > 0),
+      { policy: alwaysHit, description: 'a card of my own that picks cards' },
+    )
+    expect(drawn.screen, 'the stacked deck did not deal me a card-picking card').toBe('board')
+    expect(drawn.pending?.cardDefId).toBe(SWAP_CARDS)
+
+    // The seats are out of it entirely — the pick is made off the table.
+    expect(drawn.seats.some((seat) => seat.targetable), 'seats were offered for a pick made on cards').toBe(false)
+    // Two cards ask for cards and they word it differently — one is a trade,
+    // the other a bet. What matters is that the table is asking me for cards.
+    await expect(page.getByTestId('turn-prompt')).toHaveText(/pick \d+ more cards?!|bet a card, face down/)
+
+    const first = drawn.pickableCards[0]
+    await app.table.pickCard(first)
+
+    // One down: it is marked, and it is no longer one of the ones on offer.
+    const halfway = await app.table.playUntil(
+      (snapshot) =>
+        snapshot.screen !== 'board' ||
+        !snapshot.pending?.mine ||
+        snapshot.pickedCards.includes(first),
+      { timeoutMs: 20_000, description: 'the first card to be marked' },
+    )
+    if (halfway.screen === 'board' && halfway.pending?.mine) {
+      expect(halfway.pickableCards, 'a picked card was still on offer').not.toContain(first)
+      // Two cards off one seat would trade a hand with itself, so the rest of
+      // that seat's cards step back with it.
+      expect(halfway.pickableCards.length).toBeGreaterThan(0)
+    }
+
+    // Playing on answers the rest of it; the prompt has to let go either way.
+    const settled = await app.table.playUntil(
+      (snapshot) => snapshot.screen !== 'board' || !snapshot.pending?.mine,
+      { policy: alwaysHit, timeoutMs: 45_000, description: 'the swap to resolve' },
+    )
+    expect(settled.pending?.mine ?? false).toBe(false)
   })
 })
 

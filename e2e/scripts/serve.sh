@@ -22,5 +22,5 @@ if [ ! -f "$jar" ]; then
   exit 1
 fi
 
-echo "e2e: serving $jar on port ${PORT:-8080} (test hooks: ${LETITRIDE_TEST_HOOKS:-off})"
+echo "e2e: serving $jar on port ${PORT:-8080} (test hooks: ${LETITRIDE_TEST_HOOKS:-off}, pace: ${LETITRIDE_PACE:-1})"
 exec java -jar "$jar"

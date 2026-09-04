@@ -2,9 +2,11 @@ import { create } from 'zustand'
 import type {
   ActionCardInfo,
   Catalog,
+  DeckPresetInfo,
   GameEvent,
   GameStateView,
   LobbyRuleInfo,
+  MarkInfo,
   PassiveCardInfo,
   ServerMessage,
 } from '../game/types'
@@ -109,7 +111,18 @@ export function findRule(catalog: Catalog | null, id: string): LobbyRuleInfo | u
   return catalog?.rules.find((r) => r.id === id)
 }
 
-export function findDeck(catalog: Catalog | null, id?: string) {
-  if (!catalog) return undefined
-  return catalog.decks.find((d) => d.id === id) ?? catalog.decks[0]
+export function findMark(catalog: Catalog | null, id: string): MarkInfo | undefined {
+  return catalog?.marks?.find((m) => m.id === id)
+}
+
+/**
+ * The preset a config names, or undefined when it names none.
+ *
+ * Deliberately not "the first preset" as a fallback: a table playing a deck
+ * somebody built would otherwise be described everywhere by a deck it is not
+ * playing — the wrong name, the wrong card list, the wrong count.
+ */
+export function findDeck(catalog: Catalog | null, id?: string): DeckPresetInfo | undefined {
+  if (!catalog || !id) return undefined
+  return catalog.decks.find((d) => d.id === id)
 }

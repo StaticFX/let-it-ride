@@ -52,9 +52,32 @@ sealed class GameEvent {
     @SerialName("swap")
     data class Swap(val fromPlayerId: String, val toPlayerId: String) : GameEvent()
 
+    /**
+     * Two cards changed hands. [firstCard] went from [firstPlayerId] to
+     * [secondPlayerId] and [secondCard] came the other way, so the table can
+     * fly them past each other rather than announcing the result.
+     */
+    @Serializable
+    @SerialName("cardsSwapped")
+    data class CardsSwapped(
+        val firstPlayerId: String,
+        val firstCard: Card,
+        val secondPlayerId: String,
+        val secondCard: Card,
+    ) : GameEvent()
+
     @Serializable
     @SerialName("freeze")
     data class Freeze(val playerId: String) : GameEvent()
+
+    /**
+     * [playerId] came under [markId] for the rest of the round — see [MarkDef].
+     * Sent only when the mark is new: marking a player who already carries it
+     * changes nothing and announces nothing.
+     */
+    @Serializable
+    @SerialName("marked")
+    data class Marked(val playerId: String, val markId: String) : GameEvent()
 
     @Serializable
     @SerialName("actionPlayed")
@@ -83,9 +106,34 @@ sealed class GameEvent {
     @SerialName("flip7")
     data class Flip7(val playerId: String) : GameEvent()
 
+    /**
+     * The coin was called and thrown. [call] is what the player said, [result]
+     * is the face it landed on — both travel together so the coin can land on
+     * the announced face instead of the client guessing from the outcome.
+     * They match exactly when the player won.
+     */
     @Serializable
-    @SerialName("doubleOrNothing")
-    data class DoubleOrNothing(val playerId: String, val won: Boolean) : GameEvent()
+    @SerialName("coinFlip")
+    data class CoinFlip(val playerId: String, val call: String, val result: String) : GameEvent()
+
+    /**
+     * Assassination's bottle stopped on [victimId]. The server spins it — four
+     * clients rolling their own would each show a different bottle — and the
+     * bust event that follows is the same one every other bust sends.
+     */
+    @Serializable
+    @SerialName("bottleSpin")
+    data class BottleSpin(val victimId: String) : GameEvent()
+
+    /**
+     * Every hand in [playerIds] moved one seat. The list is in seat order and
+     * only holds the seats that took part; [direction] is "left" or "right",
+     * and for "right" each player's hand went to the next id in the list
+     * (wrapping), for "left" to the previous one.
+     */
+    @Serializable
+    @SerialName("tableSpun")
+    data class TableSpun(val direction: String, val playerIds: List<String>) : GameEvent()
 
     /**
      * [card] is the card the spin is about to produce. It is announced up front
@@ -103,6 +151,70 @@ sealed class GameEvent {
     @Serializable
     @SerialName("deckReshuffled")
     data class DeckReshuffled(val cards: Int) : GameEvent()
+
+    /**
+     * The "bounty" house rule paid out: [bustedPlayerId] went into the round in
+     * front and busted, so every id in [collectorIds] collects [points]. Sent
+     * ahead of [RoundScored], whose deltas already include the payout, so the
+     * table can make a moment of it before the scoreboard appears.
+     */
+    @Serializable
+    @SerialName("bounty")
+    data class BountyPaid(
+        val bustedPlayerId: String,
+        val collectorIds: List<String>,
+        val points: Int,
+    ) : GameEvent()
+
+    /**
+     * "Anti flip": [playerId] gave up their flip bonus to take [points] off
+     * [targetPlayerId] instead. Both sides of it land in the round's deltas, so
+     * this is only the announcement.
+     */
+    @Serializable
+    @SerialName("antiFlip")
+    data class AntiFlip(
+        val playerId: String,
+        val targetPlayerId: String,
+        val points: Int,
+    ) : GameEvent()
+
+    /**
+     * "Comeback": both throws at once, because neither could see the other's
+     * until now. [challengerWon] settles it — a draw is neither.
+     */
+    @Serializable
+    @SerialName("throws")
+    data class Throws(
+        val challengerId: String,
+        val challengerThrow: String,
+        val leaderId: String,
+        val leaderThrow: String,
+        val challengerWon: Boolean,
+    ) : GameEvent()
+
+    /** Two players' banked scores changed places. */
+    @Serializable
+    @SerialName("scoresSwapped")
+    data class ScoresSwapped(
+        val firstPlayerId: String,
+        val firstScore: Int,
+        val secondPlayerId: String,
+        val secondScore: Int,
+    ) : GameEvent()
+
+    /**
+     * "All in": every bet turned face up at once, and [halvedIds] bet the
+     * highest or the lowest of them.
+     */
+    @Serializable
+    @SerialName("allIn")
+    data class AllIn(val bets: Map<String, Card>, val halvedIds: List<String>) : GameEvent()
+
+    /** [playerId] bought [card] and the round is [price] the poorer for it. */
+    @Serializable
+    @SerialName("bought")
+    data class Bought(val playerId: String, val card: Card, val price: Int) : GameEvent()
 
     @Serializable
     @SerialName("roundScored")

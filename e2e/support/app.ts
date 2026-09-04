@@ -49,9 +49,37 @@ export class App {
    * after this point is the real join flow.
    */
   async hostSeeded(name: string, seed: number): Promise<string> {
-    const room = await this.api.createRoom(name, seed)
+    const room = await this.api.createRoom(name, { seed })
     await this.join(name, room.roomCode)
     await expect(this.page.getByTestId('start-game')).toBeVisible()
+    return room.roomCode
+  }
+
+  /**
+   * Opens a table whose deck starts with exactly these cards, named by what is
+   * printed on them ("7") or by their definition ("swapCards", "plus4").
+   *
+   * This is what to reach for when a spec wants a particular round. The opening
+   * deal takes one card per player off the top in seat order, starting with the
+   * host — so with three bots, entries 0..3 are the four opening cards and
+   * entry 4 is the host's first draw.
+   *
+   * Unlike a seed, a stack keeps meaning what it says when the deck's contents
+   * change: it names the cards it wants rather than a shuffle that happened to
+   * produce them.
+   */
+  async hostStacked(
+    name: string,
+    stack: string[],
+    options: { bots?: number; deck?: string; turnSeconds?: number } = {},
+  ): Promise<string> {
+    const room = await this.api.createRoom(name, { stack })
+    await this.join(name, room.roomCode)
+    await expect(this.page.getByTestId('start-game')).toBeVisible()
+    await this.addBotsUntil(1 + (options.bots ?? 3))
+    // A generous clock by default: a timeout would take a turn away and the
+    // round would stop being the one the stack describes.
+    await this.configure({ deck: options.deck ?? 'chaos', turnSeconds: options.turnSeconds ?? 120 })
     return room.roomCode
   }
 

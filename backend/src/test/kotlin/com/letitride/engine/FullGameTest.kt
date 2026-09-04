@@ -59,10 +59,24 @@ class FullGameTest {
     /** Mirrors what the room's pacer does, with a simple deterministic policy. */
     private fun step(state: GameState, rng: Rng): GameState {
         state.pendingAction?.let { pending ->
-            val target = state.players
-                .firstOrNull { it.status == PlayerStatus.ACTIVE && it.id != pending.playerId }
-                ?.id ?: pending.playerId
-            return t(state, GameAction.PlayAction(pending.playerId, target, pending.cardDefId), rng)
+            // Whoever the prompt is still waiting on — one player for nearly
+            // every card, the whole table for the ones that ask at once. A
+            // driver that only ever answered as the drawer would leave those
+            // open and the table would simply stop.
+            val actor = pending.waitingOn.firstOrNull() ?: pending.playerId
+            val target = pending.validTargets.firstOrNull { it != actor }
+                ?: pending.validTargets.firstOrNull()
+                ?: actor
+            // Cards that ask a question get a random answer, so a run covers
+            // both sides of every coin and both directions of every spin.
+            val choice = rng.pick(pending.options)
+            // ...and a card that asks for cards is given ones the player is
+            // actually holding, which is what a client would offer them.
+            val own = state.player(actor)?.let { p -> (p.hand + p.passives).map { it.id } }.orEmpty()
+            val cards = pending.validCards.filter { it in own }.take(pending.picks).ifEmpty {
+                pending.validCards.take(pending.picks)
+            }
+            return t(state, GameAction.PlayAction(actor, target, pending.cardDefId, choice, cards), rng)
         }
         if (state.forcedDraws != null) return t(state, GameAction.ForcedDraw, rng)
         if (state.dealQueue.isNotEmpty()) return t(state, GameAction.DealTo(state.dealQueue.first()), rng)
@@ -144,10 +158,15 @@ class FullGameTest {
 
     private fun stepAction(state: GameState): GameAction {
         state.pendingAction?.let { pending ->
-            val target = state.players
-                .firstOrNull { it.status == PlayerStatus.ACTIVE && it.id != pending.playerId }
-                ?.id ?: pending.playerId
-            return GameAction.PlayAction(pending.playerId, target, pending.cardDefId)
+            val actor = pending.waitingOn.firstOrNull() ?: pending.playerId
+            val target = pending.validTargets.firstOrNull { it != actor }
+                ?: pending.validTargets.firstOrNull()
+                ?: actor
+            val own = state.player(actor)?.let { p -> (p.hand + p.passives).map { it.id } }.orEmpty()
+            val cards = pending.validCards.filter { it in own }.take(pending.picks).ifEmpty {
+                pending.validCards.take(pending.picks)
+            }
+            return GameAction.PlayAction(actor, target, pending.cardDefId, pending.options.firstOrNull(), cards)
         }
         if (state.forcedDraws != null) return GameAction.ForcedDraw
         if (state.dealQueue.isNotEmpty()) return GameAction.DealTo(state.dealQueue.first())

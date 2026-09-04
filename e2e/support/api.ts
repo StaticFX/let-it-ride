@@ -38,9 +38,21 @@ export class Api {
    * Opens a room. [seed] fixes its shuffles, which the server only honours when
    * it was started with LETITRIDE_TEST_HOOKS=1 — as this suite's server is.
    */
-  async createRoom(name: string, seed?: number): Promise<CreateRoomResponse> {
+  /**
+   * Opens a room. `seed` fixes its shuffles; `stack` puts named cards on top of
+   * the deck, in order, which is the direct way to ask for a particular round.
+   * Both need the server's test hooks on, and both are ignored without them.
+   */
+  async createRoom(
+    name: string,
+    options: { seed?: number; stack?: string[] } = {},
+  ): Promise<CreateRoomResponse> {
     const response = await this.request.post('/api/rooms', {
-      data: seed === undefined ? { name } : { name, seed },
+      data: {
+        name,
+        ...(options.seed === undefined ? {} : { seed: options.seed }),
+        ...(options.stack?.length ? { stack: options.stack } : {}),
+      },
     })
     if (!response.ok()) throw new Error(`POST /api/rooms returned ${response.status()}`)
     return response.json() as Promise<CreateRoomResponse>

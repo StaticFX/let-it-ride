@@ -21,6 +21,20 @@ data class LobbyRule(
     val forceSelfTarget: Boolean = false,
     /** Passive cards you draw are handed to a random other player. */
     val passivesToRandomOther: Boolean = false,
+    /** How many unique number cards trigger the flip bonus. */
+    val flipTarget: Int? = null,
+    /** Hitting [flipTarget] takes the whole game, not just the round. */
+    val flipWinsGame: Boolean = false,
+    /** Points every other player collects when the outright leader busts. */
+    val bountyPoints: Int = 0,
+    /** Flipping out becomes a choice: keep the bonus, or take it off somebody. */
+    val antiFlip: Boolean = false,
+    /**
+     * Cards that take something away may be aimed at a seat that is already
+     * out, and a round may cost a player more than they made — so a score can
+     * go below zero.
+     */
+    val extreme: Boolean = false,
 )
 
 object LobbyRules {
@@ -60,7 +74,39 @@ object LobbyRules {
         allowStayWithEmptyHand = true,
     )
 
-    val all: List<LobbyRule> = listOf(BLACKJACKING, DOUBLE_IT, WOMP_WOMP, DOUBLE_DRAW, NO_FORCED_FIRST)
+    val FLIP_9 = LobbyRule(
+        id = "flip9",
+        name = "flip 9",
+        description = "the first to 9 different cards wins the game outright",
+        flipTarget = 9,
+        flipWinsGame = true,
+    )
+
+    val BOUNTY = LobbyRule(
+        id = "bounty",
+        name = "bounty",
+        description = "when the player in the lead busts, everyone else collects 10 points",
+        bountyPoints = 10,
+    )
+
+    val ANTI_FLIP = LobbyRule(
+        id = "antiFlip",
+        name = "anti flip",
+        description = "flip out and you choose: bank the bonus, or take it off somebody else",
+        antiFlip = true,
+    )
+
+    val EXTREME = LobbyRule(
+        id = "extreme",
+        name = "extreme",
+        description = "nothing is safe once you are out, and scores can go below zero",
+        extreme = true,
+    )
+
+    val all: List<LobbyRule> = listOf(
+        BLACKJACKING, DOUBLE_IT, WOMP_WOMP, DOUBLE_DRAW, NO_FORCED_FIRST,
+        FLIP_9, BOUNTY, ANTI_FLIP, EXTREME,
+    )
 
     private val byId = all.associateBy { it.id }
 
@@ -75,6 +121,16 @@ class RuleSet(val rules: List<LobbyRule>) {
     val actionRepeat: Int = rules.maxOfOrNull { it.actionRepeat } ?: 1
     val forceSelfTarget: Boolean = rules.any { it.forceSelfTarget }
     val passivesToRandomOther: Boolean = rules.any { it.passivesToRandomOther }
+    val flipTarget: Int = rules.mapNotNull { it.flipTarget }.maxOrNull() ?: FLIP7_TARGET
+    val flipWinsGame: Boolean = rules.any { it.flipWinsGame }
+    val bountyPoints: Int = rules.maxOfOrNull { it.bountyPoints } ?: 0
+    val antiFlip: Boolean = rules.any { it.antiFlip }
+
+    /** Whether a card that takes something away may reach a seat already out. */
+    val reachesFinished: Boolean = rules.any { it.extreme }
+
+    /** Whether a round may leave a player worse off than they started it. */
+    val allowsNegative: Boolean = rules.any { it.extreme }
 
     companion object {
         fun of(config: GameConfig) = RuleSet(LobbyRules.resolve(config.ruleIds))

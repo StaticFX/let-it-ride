@@ -118,6 +118,44 @@ class BustTest {
     }
 
     @Test
+    fun `a leader who busts on the threshold is worth the same bounty`() {
+        val dealt = startedAndDealt(
+            config(rules = listOf(LobbyRules.BLACKJACKING.id, LobbyRules.BOUNTY.id)),
+            openingCards = listOf(num(13), num(2)),
+            rest = listOf(num(9)),
+        )
+        val state = dealt.copy(players = dealt.players.map { if (it.id == "a") it.copy(score = 50) else it })
+
+        var after = t(state, GameAction.Hit("a"))
+        assertEquals(Ctx.BUST_THRESHOLD, after.player("a")!!.bustReason)
+        after = t(after, GameAction.Stay("b"))
+        assertEquals(2 + 10, after.roundDeltas["b"], "the rule cares that the leader is out, not how")
+    }
+
+    @Test
+    fun `a leader whose second chance saves them pays no bounty`() {
+        val dealt = startedAndDealt(
+            config(rules = listOf(LobbyRules.BOUNTY.id)),
+            openingCards = listOf(num(5), num(2)),
+            rest = listOf(num(5, id = "dup")),
+        )
+        val state = dealt.copy(
+            players = dealt.players.map {
+                when (it.id) {
+                    "a" -> it.copy(score = 50, passives = listOf(passive(SECOND_LIFE.id)))
+                    else -> it
+                }
+            },
+        )
+
+        var after = t(state, GameAction.Hit("a"))
+        assertEquals(PlayerStatus.ACTIVE, after.status("a"))
+        after = t(after, GameAction.Stay("b"))
+        after = t(after, GameAction.Stay("a"))
+        assertEquals(2, after.roundDeltas["b"], "nobody collected on a leader who is still standing")
+    }
+
+    @Test
     fun `stealing a card you already hold busts the thief`() {
         val dealt = startedAndDealt(
             openingCards = listOf(num(7), num(7, id = "b-seven")),

@@ -2,9 +2,11 @@ import { useState, useRef, useCallback } from 'react'
 import { theme } from '../../theme'
 import { RoughBox } from './RoughShapes'
 
-export function SketchSlider({ min, max, step, value, onChange, label, testId }: {
+export function SketchSlider({ min, max, step, value, onChange, label, testId, format }: {
   min: number; max: number; step: number; value: number; onChange: (v: number) => void
   label?: string; testId?: string
+  /** How the value reads beside the label — for a slider whose zero means "off". */
+  format?: (value: number) => string
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -43,7 +45,9 @@ export function SketchSlider({ min, max, step, value, onChange, label, testId }:
           marginBottom: 4, display: 'flex', justifyContent: 'space-between',
         }}>
           <span>{label}</span>
-          <span style={{ fontFamily: theme.fontDisplay, fontSize: 20, fontWeight: 700, color: ink }}>{value}</span>
+          <span style={{ fontFamily: theme.fontDisplay, fontSize: 20, fontWeight: 700, color: ink }}>
+            {format ? format(value) : value}
+          </span>
         </div>
       )}
       <div

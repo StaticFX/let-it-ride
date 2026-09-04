@@ -123,6 +123,110 @@ export function RoughCircle({
   )
 }
 
+// --- RoughSeal ---
+
+export type SealShape = 'circle' | 'hexagon' | 'shield' | 'scallop'
+
+interface RoughSealProps {
+  size: number
+  shape?: SealShape
+  stroke?: string
+  strokeWidth?: number
+  roughness?: number
+  boil?: boolean
+  style?: CSSProperties
+}
+
+/**
+ * The stamp a passive card's sigil is struck inside. The shape is doing the
+ * same job the colour is — telling one card from another before either is read
+ * — so it is drawn from the catalog rather than being the same ring every time.
+ *
+ * Struck twice, slightly out of register, the way a real stamp lands.
+ */
+export function RoughSeal({
+  size, shape = 'circle', stroke = '#15140f', strokeWidth = 2.2,
+  roughness = 2, boil = true, style = {},
+}: RoughSealProps) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const seedOffset = useSeedOffset()
+  const t = useBoilTick(boil)
+  const seed = (seedOffset + t * 23) & 0xffff
+
+  useEffect(() => {
+    if (!svgRef.current || size <= 0) return
+    const c = size / 2
+    const r = c - strokeWidth - 1
+
+    // Every shape is written as a closed path so the double strike is one code
+    // path — rough.js wobbles the outline either way.
+    const path = (radius: number): string => {
+      switch (shape) {
+        case 'hexagon':
+        case 'scallop': {
+          // A token's flat sides, or the same points pulled into scallops.
+          const points = shape === 'hexagon' ? 6 : 8
+          const scalloped = shape === 'scallop'
+          let d = ''
+          for (let i = 0; i < points; i++) {
+            const a = (i / points) * Math.PI * 2 - Math.PI / 2
+            const x = c + Math.cos(a) * radius
+            const y = c + Math.sin(a) * radius
+            if (i === 0) {
+              d += `M ${x} ${y}`
+            } else if (scalloped) {
+              // Bulge outward between the points, so the edge reads as lace.
+              const prev = ((i - 1) / points) * Math.PI * 2 - Math.PI / 2
+              const mid = (prev + a) / 2
+              const bulge = radius * 1.24
+              d += ` Q ${c + Math.cos(mid) * bulge} ${c + Math.sin(mid) * bulge} ${x} ${y}`
+            } else {
+              d += ` L ${x} ${y}`
+            }
+          }
+          return `${d} Z`
+        }
+        case 'shield': {
+          const w = radius * 0.94
+          const top = c - radius * 0.92
+          const shoulder = c + radius * 0.15
+          const point = c + radius * 1.0
+          return [
+            `M ${c - w} ${top}`,
+            `L ${c + w} ${top}`,
+            `L ${c + w} ${shoulder}`,
+            `Q ${c + w} ${point} ${c} ${point}`,
+            `Q ${c - w} ${point} ${c - w} ${shoulder}`,
+            'Z',
+          ].join(' ')
+        }
+        default:
+          return ''
+      }
+    }
+
+    drawInto(svgRef.current, (rc) => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      const strike = (radius: number, width: number, s: number) =>
+        shape === 'circle'
+          ? rc.ellipse(c, c, radius * 2, radius * 1.96, rcOpts({ stroke, strokeWidth: width, roughness, seed: s }))
+          : rc.path(path(radius), rcOpts({ stroke, strokeWidth: width, roughness, seed: s, fill: undefined }))
+
+      g.appendChild(strike(r, strokeWidth, seed))
+      // The second, lighter strike a hair off the first.
+      g.appendChild(strike(r * 0.96, strokeWidth * 0.55, (seed + 7) & 0xffff))
+      return g
+    })
+  }, [size, shape, stroke, strokeWidth, roughness, seed])
+
+  return (
+    <svg ref={svgRef} width={size} height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', overflow: 'visible', ...style }}
+    />
+  )
+}
+
 // --- RoughSquiggle ---
 interface RoughSquiggleProps {
   width: number

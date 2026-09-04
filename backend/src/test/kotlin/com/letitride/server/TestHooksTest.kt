@@ -35,6 +35,39 @@ class TestHooksTest {
         }
     }
 
+    // ─── Pacing ───
+
+    private fun env(hooks: String?, pace: String?): (String) -> String? = { name ->
+        when (name) {
+            TEST_HOOKS_ENV -> hooks
+            PACE_ENV -> pace
+            else -> null
+        }
+    }
+
+    @Test
+    fun `a server without the test hooks runs at full pace, whatever it is asked`() {
+        // The gate matters more than the value: a public server must not be
+        // able to have the pacing pulled out from under its players.
+        assertEquals(1.0, pacingFactor(env(hooks = null, pace = "0.1")))
+        assertEquals(1.0, pacingFactor(env(hooks = "0", pace = "0.1")))
+    }
+
+    @Test
+    fun `with the hooks on it takes the pace it is given`() {
+        assertEquals(0.25, pacingFactor(env(hooks = "1", pace = "0.25")))
+        assertEquals(1.0, pacingFactor(env(hooks = "1", pace = null)), "the default is what a player sees")
+    }
+
+    @Test
+    fun `it only ever speeds a table up, and never to a standstill`() {
+        assertEquals(1.0, pacingFactor(env(hooks = "1", pace = "4")), "slowing a table down is nobody's business")
+        assertEquals(0.05, pacingFactor(env(hooks = "1", pace = "0")), "a pace of zero would race the client")
+        assertEquals(0.05, pacingFactor(env(hooks = "1", pace = "-3")))
+        assertEquals(1.0, pacingFactor(env(hooks = "1", pace = "banana")))
+        assertEquals(1.0, pacingFactor(env(hooks = "1", pace = "NaN")))
+    }
+
     @Test
     fun `a create-room body without a seed still parses`() {
         val request = appJson.decodeFromString(CreateRoomRequest.serializer(), """{"name":"devin"}""")

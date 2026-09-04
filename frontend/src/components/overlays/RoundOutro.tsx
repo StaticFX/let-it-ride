@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Player } from '../../game/types'
+import { signedPoints } from '../../game/types'
 
 interface RoundOutroProps {
   round: number
@@ -8,26 +9,37 @@ interface RoundOutroProps {
   points: number
   /** Set when the round was cut short by a flip 7. */
   flip7: boolean
+  /** What this room plays to — 7, or 9 under "flip 9". */
+  flipTarget: number
   /** Epoch millis the card gives way to the scoreboard. */
   untilMs: number
 }
 
-const FADE_OUT_MS = 420
+/** How long before the handover the card starts clearing itself off. */
+const EXIT_MS = 420
+/** The dissolve that takes the table away as the card arrives. */
+const ENTER_MS = 320
 
 /**
- * The round's closing card. Mirrors the intro: the table stays visible behind
- * it for a beat so the last hand can be seen, then this hands over to the
- * scoreboard. The window is the server's, timed to start after whatever
- * animation ended the round has finished.
+ * The round's closing card. Mirrors the intro: the table is still there as this
+ * arrives, so the last hand can be seen, and dissolves away under it — then the
+ * card clears and the scoreboard takes the screen. The window is the server's,
+ * timed to start after whatever animation ended the round has finished.
+ *
+ * The backdrop goes fully opaque and stays that way. It used to sit at 75% and
+ * then fade itself out over the last beat, which meant the round ended by
+ * dissolving back to a live table for 420ms before the scoreboard cut in. Only
+ * the writing leaves now; the felt behind it is the same felt the scoreboard is
+ * on, so the handover has nothing to show.
  */
-export function RoundOutro({ round, winner, points, flip7, untilMs }: RoundOutroProps) {
+export function RoundOutro({ round, winner, points, flip7, flipTarget, untilMs }: RoundOutroProps) {
   const [phase, setPhase] = useState<'in' | 'hold' | 'out'>('in')
 
   useEffect(() => {
     const settle = window.setTimeout(() => setPhase('hold'), 60)
     const leave = window.setTimeout(
       () => setPhase('out'),
-      Math.max(160, untilMs - Date.now() - FADE_OUT_MS),
+      Math.max(160, untilMs - Date.now() - EXIT_MS),
     )
     return () => {
       window.clearTimeout(settle)
@@ -39,14 +51,14 @@ export function RoundOutro({ round, winner, points, flip7, untilMs }: RoundOutro
 
   return (
     <div
-      className="fixed inset-0 z-[240] flex flex-col items-center justify-center pointer-events-none backdrop-blur-[10px] bg-[var(--felt)]/75"
+      className="fixed inset-0 z-[240] flex flex-col items-center justify-center pointer-events-none bg-[var(--felt)]"
       data-testid="round-outro"
       data-round={round}
       data-winner={winner?.name ?? ''}
       data-flip7={flip7}
       style={{
-        opacity: phase === 'out' ? 0 : 1,
-        transition: phase === 'in' ? 'opacity 260ms ease-out' : `opacity ${FADE_OUT_MS}ms ease-in`,
+        opacity: phase === 'in' ? 0 : 1,
+        transition: `opacity ${ENTER_MS}ms ease-out`,
       }}
     >
       <div
@@ -87,8 +99,8 @@ export function RoundOutro({ round, winner, points, flip7, untilMs }: RoundOutro
             transition: 'transform 380ms cubic-bezier(.2,.9,.3,1.3) 120ms, opacity 300ms ease-out 120ms',
           }}
         >
-          +{points}
-          {flip7 && <span className="display text-2xl text-[var(--accent)] ml-2">flip 7!</span>}
+          {signedPoints(points)}
+          {flip7 && <span className="display text-2xl text-[var(--accent)] ml-2">flip {flipTarget}!</span>}
         </div>
       )}
     </div>

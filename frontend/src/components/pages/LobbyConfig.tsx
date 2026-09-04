@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useCatalog } from '../../state/gameStore'
-import type { Card as CardType, GameConfig } from '../../game/types'
+import type { Card as CardType, DeckConfig, GameConfig } from '../../game/types'
+import { CUSTOM_DECK_ID } from '../../game/types'
+import { DeckBuilder } from './DeckBuilder'
 import { PlayingCard } from '../cards/PlayingCard'
 import { SketchSlider } from '../ui/SketchSlider'
 import { SketchOption } from '../ui/SketchOption'
@@ -29,13 +31,18 @@ function Separator() {
   )
 }
 
+/** The last deck this browser built, so it survives leaving the table. */
+const BUILT_DECK_KEY = 'let-it-ride:deck'
+
 export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
   const catalog = useCatalog()
   const [inspectedCard, setInspectedCard] = useState<CardType | null>(null)
 
   if (!catalog) return <p className="text-muted text-center">loading the deck…</p>
 
-  const preset = catalog.decks.find((d) => d.id === config.deckPresetId) ?? catalog.decks[0]
+  // Undefined for a deck somebody built, which is the point of the id.
+  const preset = catalog.decks.find((d) => d.id === config.deckPresetId)
+  const building = config.deckPresetId === CUSTOM_DECK_ID
 
   function patch(next: Partial<GameConfig>) {
     onChange({ ...config, ...next })
@@ -45,6 +52,20 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
     const deck = catalog!.decks.find((d) => d.id === deckId)
     if (!deck) return
     patch({ deckPresetId: deck.id, deck: deck.deck })
+  }
+
+  /**
+   * Starts a build from whatever is on the table, so nobody begins with an
+   * empty deck and a list of everything it is missing.
+   */
+  function startBuilding() {
+    const from = preset?.deck ?? config.deck
+    patch({ deckPresetId: CUSTOM_DECK_ID, deck: from })
+  }
+
+  function editDeck(deck: DeckConfig) {
+    patch({ deckPresetId: CUSTOM_DECK_ID, deck })
+    localStorage.setItem(BUILT_DECK_KEY, JSON.stringify(deck))
   }
 
   function toggleRule(ruleId: string) {
@@ -64,28 +85,48 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
             <DeckPresetPile
               key={deck.id}
               preset={deck}
-              selected={preset.id === deck.id}
+              selected={preset?.id === deck.id}
               onClick={() => selectDeck(deck.id)}
             />
           ))}
+          <button
+            onClick={startBuilding}
+            data-testid="build-own-deck"
+            data-selected={building}
+            className={`display text-base px-3 self-center bg-transparent border-none cursor-pointer -rotate-1 ${
+              building ? 'text-[var(--accent)]' : 'text-[var(--ink-soft)]'
+            }`}
+          >
+            build
+            <br />
+            your own
+          </button>
         </div>
-        <p className="text-muted text-center text-[13px] mb-3 leading-snug italic">{preset.description}</p>
+        <p className="text-muted text-center text-[13px] mb-3 leading-snug italic">
+          {preset?.description ?? 'a deck of your own'}
+        </p>
 
-        <label>cards in {preset.name}:</label>
-        <div className="sketch-box-light flex flex-wrap gap-1.5 p-2 mt-1 mb-2 rounded">
-          {preset.contents.map((entry) => (
-            <button
-              key={entry.card.id}
-              onClick={() => setInspectedCard(entry.card)}
-              className="relative bg-transparent border-none p-0 cursor-pointer transition-transform duration-100 hover:scale-110 hover:-rotate-2"
-            >
-              <PlayingCard card={entry.card} size="small" />
-              <span className="absolute -bottom-0.5 -right-0.5 z-10 display text-[10px] text-[var(--card-face)] bg-[var(--ink)] rounded-full px-1 leading-[14px] min-w-[16px] text-center">
-                {entry.count}x
-              </span>
-            </button>
-          ))}
-        </div>
+        {building ? (
+          <DeckBuilder deck={config.deck} catalog={catalog} onChange={editDeck} />
+        ) : (
+          <>
+            <label>cards in {preset?.name}:</label>
+            <div className="sketch-box-light flex flex-wrap gap-1.5 p-2 mt-1 mb-2 rounded">
+              {preset?.contents.map((entry) => (
+                <button
+                  key={entry.card.id}
+                  onClick={() => setInspectedCard(entry.card)}
+                  className="relative bg-transparent border-none p-0 cursor-pointer transition-transform duration-100 hover:scale-110 hover:-rotate-2"
+                >
+                  <PlayingCard card={entry.card} size="small" />
+                  <span className="absolute -bottom-0.5 -right-0.5 z-10 display text-[10px] text-[var(--card-face)] bg-[var(--ink)] rounded-full px-1 leading-[14px] min-w-[16px] text-center">
+                    {entry.count}x
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         <Separator />
 
@@ -140,6 +181,21 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
           step={5}
           value={config.turnTimeSeconds}
           onChange={(v) => patch({ turnTimeSeconds: v })}
+        />
+
+        <div className="h-3" />
+
+        {/* Zero is off rather than instant — nobody wants a scoreboard they
+            cannot read, and "off" is what waiting for the host is called. */}
+        <SketchSlider
+          testId="autostart-slider"
+          label="next round starts by itself"
+          min={0}
+          max={60}
+          step={5}
+          value={config.autoNextRoundSeconds ?? 0}
+          onChange={(v) => patch({ autoNextRoundSeconds: v === 0 ? null : v })}
+          format={(v) => (v === 0 ? 'off' : `after ${v}s`)}
         />
 
         <Separator />

@@ -37,18 +37,35 @@ function App() {
 
   // The round's closing beats — the last animation, then the outro card — run
   // on the table, so the scoreboard waits for the window the server set.
+  //
+  // One timer at the deadline rather than a poll. The swap happens exactly
+  // once, so polling for it re-rendered the whole app a dozen times a second to
+  // learn nothing — and worse, it crossed `roundOutroUntil` on a tick of its
+  // own, never the same tick as the table's own clock, so for whatever gap fell
+  // between the two the loser was left on screen alone. That is how the table
+  // came back for a moment between the outro card and the scoreboard.
+  //
+  // The clock is therefore read once at mount and then only ever pushed to the
+  // deadline itself, which is the only reading this screen has a use for.
+  // Seeding it from the clock rather than from zero is what keeps somebody
+  // reconnecting into a finished round from seeing the table for a frame first.
   const [clock, setClock] = useState(() => Date.now())
   useEffect(() => {
     if (!outroUntil) return
-    const interval = window.setInterval(() => setClock(Date.now()), 80)
-    return () => window.clearInterval(interval)
+    const timer = window.setTimeout(
+      () => setClock(Math.max(Date.now(), outroUntil)),
+      Math.max(0, outroUntil - Date.now()),
+    )
+    return () => window.clearTimeout(timer)
   }, [outroUntil])
 
   const closing = phase === 'ROUND_END' || phase === 'GAME_END'
   const holdingTable = closing && !!outroUntil && clock < outroUntil
   const displayPhase = holdingTable ? 'PLAYING' : phase
 
-  // Cards animate in from the deck once each; a new round deals a fresh set.
+  // A card animates in from the deck once per trip. The table prunes as it
+  // goes, so this is only for the stretches where there is no table to do it —
+  // back in the lobby, with a fresh deck about to be built.
   useEffect(() => {
     if (phase === 'LOBBY') resetDealtCards()
   }, [phase])

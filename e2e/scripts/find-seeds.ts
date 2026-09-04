@@ -23,6 +23,14 @@ const BOTS = 3
 type Outcome = {
   seed: number
   localDrewAction: boolean
+  /**
+   * What the local player's *first* prompt asked for. A spec that clicks a seat
+   * needs 'seat'; one that answers a question needs 'choice'. Null when the
+   * round never handed them one.
+   */
+  localFirstPrompt: 'seat' | 'choice' | 'cards' | 'shop' | null
+  /** A bot was left holding a card that points at a seat, with the round still on. */
+  botDrewSeatAction: boolean
   localBusted: boolean
   anyoneBusted: boolean
   flip7: boolean
@@ -52,6 +60,8 @@ function playOneRound(seed: number, deck: string, code: string): Promise<Outcome
     const outcome: Outcome = {
       seed,
       localDrewAction: false,
+      localFirstPrompt: null,
+      botDrewSeatAction: false,
       localBusted: false,
       anyoneBusted: false,
       flip7: false,
@@ -102,10 +112,17 @@ function playOneRound(seed: number, deck: string, code: string): Promise<Outcome
       const pending = state.pendingAction
       if (pending?.playerId === 'seed-finder') {
         outcome.localDrewAction = true
+        outcome.localFirstPrompt ??=
+          pending.kind === 'card' ? 'cards'
+            : pending.kind === 'catalog' ? 'shop'
+              : pending.options?.length ? 'choice' : 'seat'
         const target = pending.validTargets.find((id) => id !== 'seed-finder') ?? pending.validTargets[0]
         if (target) send({ type: 'PLAY_ACTION', targetPlayerId: target, cardDefId: pending.cardDefId })
         return
       }
+      // Somebody else is on the picker. Only a seat-targeting card counts: a
+      // card-picking one puts a different prompt on screen.
+      if (pending && pending.kind !== 'card') outcome.botDrewSeatAction = true
       if (pending || state.forcedDraws || state.dealQueue.length > 0) return
       if (state.roundIntroUntil && Date.now() < state.roundIntroUntil) return
 
@@ -145,7 +162,8 @@ async function main(): Promise<void> {
       results.push(outcome)
       console.log(
         `seed ${String(outcome.seed).padStart(5)}  ` +
-        `localAction=${outcome.localDrewAction ? 'yes' : ' no'}  ` +
+        `localFirst=${(outcome.localFirstPrompt ?? '-').padEnd(6)}  ` +
+        `botSeatAction=${outcome.botDrewSeatAction ? 'yes' : ' no'}  ` +
         `localBust=${outcome.localBusted ? 'yes' : ' no'}  ` +
         `anyBust=${outcome.anyoneBusted ? 'yes' : ' no'}  ` +
         `flip7=${outcome.flip7 ? 'yes' : ' no'}`,
@@ -159,6 +177,14 @@ async function main(): Promise<void> {
   }
 
   pick('the local player draws an action card in round 1', (o) => o.localDrewAction)
+  pick("the local player's first prompt is a seat pick", (o) => o.localFirstPrompt === 'seat')
+  pick("...and it's a card pick", (o) => o.localFirstPrompt === 'cards')
+  pick('...and it is the shop', (o) => o.localFirstPrompt === 'shop')
+  pick('a bot is left picking a seat', (o) => o.botDrewSeatAction)
+  pick(
+    'seat pick for me, a card for a bot, and nobody busts',
+    (o) => o.localFirstPrompt === 'seat' && o.botDrewSeatAction && !o.anyoneBusted,
+  )
   pick('the local player busts in round 1', (o) => o.localBusted)
   pick('somebody busts in round 1', (o) => o.anyoneBusted)
   pick('a flip 7 lands in round 1', (o) => o.flip7)

@@ -4,6 +4,7 @@ import com.letitride.engine.Card
 import com.letitride.engine.CardKind
 import com.letitride.engine.Catalog
 import com.letitride.engine.DeckConfig
+import com.letitride.engine.DeckLimits
 import com.letitride.engine.DeckPreset
 import com.letitride.engine.DeckPresets
 import com.letitride.engine.ForcedDraws
@@ -13,7 +14,9 @@ import com.letitride.engine.GamePhase
 import com.letitride.engine.GameState
 import com.letitride.engine.LobbyRules
 import com.letitride.engine.PassiveScoring
+import com.letitride.engine.PickKind
 import com.letitride.engine.Player
+import com.letitride.engine.RuleSet
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -33,6 +36,41 @@ data class PendingActionView(
     val cardId: String,
     /** The only seats this card may be pointed at; the picker offers no others. */
     val validTargets: List<String>,
+    /**
+     * The question the card asks its drawer — "heads"/"tails", "left"/"right".
+     * Non-empty means the client has to send a `choice` back with the pick, and
+     * the table is waiting on the answer even when there is only one seat to
+     * point at. Empty for every card that only wants a target.
+     */
+    val options: List<String> = emptyList(),
+    /**
+     * What the drawer is pointing at — a seat, or cards off the table. The
+     * client picks its picker from this.
+     */
+    val kind: PickKind = PickKind.PLAYER,
+    /** The cards that may be picked, when [kind] is [PickKind.CARD]. */
+    val validCards: List<String> = emptyList(),
+    /** How many picks are owed before the card resolves. */
+    val picks: Int = 1,
+    /** What is for sale, when [kind] is `catalog`. Priced by the server. */
+    val offers: List<com.letitride.engine.Offer> = emptyList(),
+    /**
+     * Why the table is stopped — see [com.letitride.engine.PHASE_PLAY]. Anything
+     * other than "play" is a question something set up earlier, which arrives
+     * with no card being drawn and so needs saying out loud.
+     */
+    val phase: String = com.letitride.engine.PHASE_PLAY,
+    /**
+     * Everybody who owes an answer. One name for nearly every prompt; the
+     * handful that ask the table at once name everybody.
+     */
+    val responders: List<String> = emptyList(),
+    /**
+     * Who has answered so far — the names only. What they said is never sent
+     * while the prompt is open, which is what makes a simultaneous prompt
+     * secret without any per-viewer filtering: there is nothing here to leak.
+     */
+    val answered: List<String> = emptyList(),
 )
 
 /**
@@ -76,7 +114,19 @@ data class GameStateView(
     val roundWinnerId: String? = null,
     val gameWinnerId: String? = null,
     val flip7PlayerId: String? = null,
+    /**
+     * Unique cards this room's rules actually play to — 7 normally, 9 with
+     * "flip 9" on. The catalog's copy is only the default, so anything that
+     * counts down to the flip has to read it from here.
+     */
+    val flip7Target: Int,
     val roundDeltas: Map<String, Int> = emptyMap(),
+    /**
+     * Points moved during the round by something other than hand scoring, so a
+     * player who scored nothing can be told why rather than shown a bare zero.
+     * Already folded into [roundDeltas]; this is the itemisation.
+     */
+    val roundAdjustments: Map<String, Int> = emptyMap(),
     /** Epoch millis the current actor's clock runs out, or null when nothing is timed. */
     val turnDeadline: Long? = null,
     /**
@@ -90,6 +140,12 @@ data class GameStateView(
     val roundOutroUntil: Long? = null,
     /** The animation the table is currently held on, if any. */
     val animationGate: AnimationGateView? = null,
+    /**
+     * Epoch millis the next round deals itself, under the host's autostart
+     * setting. Null when the table is waiting to be told — and always null once
+     * the game is settled.
+     */
+    val nextRoundAt: Long? = null,
 )
 
 fun GameState.toView(
@@ -100,6 +156,7 @@ fun GameState.toView(
     roundOutroFrom: Long? = null,
     roundOutroUntil: Long? = null,
     animationGate: AnimationGateView? = null,
+    nextRoundAt: Long? = null,
 ) = GameStateView(
     roomCode = roomCode,
     hostId = hostId,
@@ -112,19 +169,38 @@ fun GameState.toView(
     deckCount = deck.size,
     discardCount = discard.size,
     pendingAction = pendingAction?.let {
-        PendingActionView(it.cardDefId, it.playerId, it.card.id, it.validTargets)
+        // Named, because the list has grown past the point where the order of
+        // it means anything to a reader.
+        PendingActionView(
+            cardDefId = it.cardDefId,
+            playerId = it.playerId,
+            cardId = it.card.id,
+            validTargets = it.validTargets,
+            options = it.options,
+            kind = it.kind,
+            validCards = it.validCards,
+            picks = it.picks,
+            offers = it.offers,
+            phase = it.phase,
+            responders = it.respondents,
+            // The names of who has answered, never what any of them said.
+            answered = it.answers.keys.toList(),
+        )
     },
     forcedDraws = forcedDraws,
     dealQueue = dealQueue,
     roundWinnerId = roundWinnerId,
     gameWinnerId = gameWinnerId,
     flip7PlayerId = flip7PlayerId,
+    flip7Target = RuleSet.of(config).flipTarget,
     roundDeltas = roundDeltas,
+    roundAdjustments = roundAdjustments,
     turnDeadline = turnDeadline,
     roundIntroUntil = roundIntroUntil,
     roundOutroFrom = roundOutroFrom,
     roundOutroUntil = roundOutroUntil,
     animationGate = animationGate,
+    nextRoundAt = nextRoundAt,
 )
 
 // ═══════════════════════════════════════════
@@ -141,9 +217,23 @@ sealed class ClientMessage {
     @SerialName("STAY")
     data object Stay : ClientMessage()
 
+    /**
+     * [choice] answers the card's [PendingActionView.options]. It defaults to
+     * null so a client that never sends one still decodes — the engine falls
+     * back to the card's first option rather than refusing the play.
+     */
     @Serializable
     @SerialName("PLAY_ACTION")
-    data class PlayAction(val targetPlayerId: String, val cardDefId: String) : ClientMessage()
+    data class PlayAction(
+        val targetPlayerId: String,
+        val cardDefId: String,
+        val choice: String? = null,
+        /**
+         * The cards picked, for a card that points at cards rather than a seat.
+         * Empty for every card that only wants a target.
+         */
+        val cards: List<String> = emptyList(),
+    ) : ClientMessage()
 
     @Serializable
     @SerialName("SET_CONFIG")
@@ -222,6 +312,24 @@ data class CreateRoomRequest(
      * unless the server was started with test hooks on — see [TEST_HOOKS_ENV].
      */
     val seed: Long? = null,
+    /**
+     * Cards to deal off the top, in order, ahead of whatever the shuffle put
+     * there. Each entry names a card by what is printed on it ("7") or by its
+     * definition ("swapCards", "plus4"); anything the deck does not hold is
+     * skipped.
+     *
+     * This is what a spec should reach for when it wants a particular round.
+     * A seed can do the same thing but only by accident — you search for one
+     * that happens to deal what you wanted, and it stops meaning that the
+     * moment the deck's contents change. A stack says what it wants.
+     *
+     * Nothing is added or removed: the named cards are lifted out of the
+     * shuffled deck and put on top of it, so the deck is still the deck.
+     *
+     * Ignored unless the server was started with test hooks on — see
+     * [TEST_HOOKS_ENV].
+     */
+    val stack: List<String>? = null,
 )
 
 /**
@@ -233,6 +341,26 @@ const val TEST_HOOKS_ENV = "LETITRIDE_TEST_HOOKS"
 
 fun testHooksEnabled(env: (String) -> String? = System::getenv): Boolean =
     env(TEST_HOOKS_ENV)?.lowercase() in setOf("1", "true", "yes")
+
+/**
+ * Scales every pace the game keeps — the title card, the deal, bots thinking,
+ * the beat an animation is given. Set to 0.25 and a round plays out in a
+ * quarter of the time.
+ *
+ * This exists for the end-to-end suite, which spends nearly all of its time
+ * waiting for a table that is deliberately unhurried, and it is gated behind
+ * the test hooks for the same reason they are: a public server must not be
+ * able to have the pacing pulled out from under its players.
+ *
+ * Only ever speeds things up. Slowing a table down is not something a client
+ * or an operator has any business doing by accident.
+ */
+const val PACE_ENV = "LETITRIDE_PACE"
+
+fun pacingFactor(env: (String) -> String? = System::getenv): Double {
+    if (!testHooksEnabled(env)) return 1.0
+    return env(PACE_ENV)?.toDoubleOrNull()?.takeIf { it.isFinite() }?.coerceIn(0.05, 1.0) ?: 1.0
+}
 
 @Serializable
 data class CreateRoomResponse(val roomCode: String, val playerId: String)
@@ -260,6 +388,16 @@ data class ActionCardInfo(
     val description: String,
     val sigil: String,
     val selfTarget: Boolean,
+    /** The question this card asks its drawer, if any — see [PendingActionView.options]. */
+    val options: List<String> = emptyList(),
+    /**
+     * False for a definition that is not a card at all — a house rule asking a
+     * question. It ships so the client can draw the prompt, but nothing may
+     * list it among the cards or put it in a deck.
+     */
+    val deckable: Boolean = true,
+    /** What it costs to buy outright — see the "mutate" card. */
+    val price: Int = 0,
 )
 
 @Serializable
@@ -270,10 +408,23 @@ data class PassiveCardInfo(
     val sigil: String,
     val bonusPoints: Int,
     val scoring: String,
+    /** The ink this card prints in, and the stamp its sigil is struck in. */
+    val accent: String,
+    val seal: String,
+    /** What it costs to buy outright — see the "mutate" card. */
+    val price: Int = 0,
 )
 
 @Serializable
 data class LobbyRuleInfo(val id: String, val name: String, val description: String)
+
+/**
+ * An effect a player carries for the rest of a round. Marks arrive on the
+ * player rather than as cards, so the client needs their faces up front the
+ * same way it needs the card faces.
+ */
+@Serializable
+data class MarkInfo(val id: String, val name: String, val description: String, val sigil: String)
 
 /** One row of a deck listing: a card face plus how many copies are in the deck. */
 @Serializable
@@ -289,16 +440,43 @@ data class DeckPresetInfo(
     val contents: List<DeckEntryInfo>,
 )
 
+/**
+ * What a deck somebody builds has to be before a table will play it. Shipped so
+ * the builder can say the same thing the server would, rather than the two of
+ * them keeping their own copy of the rules and drifting apart.
+ */
+@Serializable
+data class DeckLimitsInfo(
+    val minNumberCards: Int,
+    val maxCards: Int,
+    val maxCopies: Int,
+    val maxSpecials: Int,
+    val minNumberShare: Double,
+)
+
 @Serializable
 data class CatalogResponse(
     val actions: List<ActionCardInfo>,
     val passives: List<PassiveCardInfo>,
     val rules: List<LobbyRuleInfo>,
+    val marks: List<MarkInfo>,
     val decks: List<DeckPresetInfo>,
     val flip7Bonus: Int,
+    /**
+     * What a table with no house rules plays to. A room can raise it, so
+     * anything showing a live game's progress wants [GameStateView.flip7Target]
+     * instead — this one is for the rules page, which has no room to speak of.
+     */
     val flip7Target: Int,
     val minPlayers: Int,
     val maxPlayers: Int,
+    val deckLimits: DeckLimitsInfo,
+    /**
+     * How fast this server is running the table, as a multiplier on every
+     * animation the client times. 1.0 always, except under the end-to-end
+     * suite — see [PACE_ENV].
+     */
+    val pace: Double = 1.0,
 )
 
 private fun DeckPreset.contents(): List<DeckEntryInfo> {
@@ -339,7 +517,9 @@ private fun DeckPreset.contents(): List<DeckEntryInfo> {
 
 fun buildCatalog(): CatalogResponse = CatalogResponse(
     actions = Catalog.actions.values.map {
-        ActionCardInfo(it.id, it.name, it.description, it.sigil, it.selfTarget)
+        ActionCardInfo(
+            it.id, it.name, it.description, it.sigil, it.selfTarget, it.options, it.deckable, it.price,
+        )
     },
     passives = Catalog.passives.values.map {
         PassiveCardInfo(
@@ -349,9 +529,13 @@ fun buildCatalog(): CatalogResponse = CatalogResponse(
                 PassiveScoring.DOUBLE_NUMBERS -> "double"
                 PassiveScoring.NONE -> "none"
             },
+            it.accent,
+            it.seal.name.lowercase(),
+            it.price,
         )
     },
     rules = LobbyRules.all.map { LobbyRuleInfo(it.id, it.name, it.description) },
+    marks = Catalog.marks.values.map { MarkInfo(it.id, it.name, it.description, it.sigil) },
     decks = DeckPresets.all.map {
         DeckPresetInfo(it.id, it.name, it.description, it.cardCount, it.deck, it.contents())
     },
@@ -359,4 +543,12 @@ fun buildCatalog(): CatalogResponse = CatalogResponse(
     flip7Target = com.letitride.engine.FLIP7_TARGET,
     minPlayers = com.letitride.engine.MIN_PLAYERS,
     maxPlayers = com.letitride.engine.MAX_PLAYERS,
+    deckLimits = DeckLimitsInfo(
+        minNumberCards = DeckLimits.MIN_NUMBER_CARDS,
+        maxCards = DeckLimits.MAX_CARDS,
+        maxCopies = DeckLimits.MAX_COPIES,
+        maxSpecials = DeckLimits.MAX_SPECIALS,
+        minNumberShare = DeckLimits.MIN_NUMBER_SHARE,
+    ),
+    pace = pacingFactor(),
 )

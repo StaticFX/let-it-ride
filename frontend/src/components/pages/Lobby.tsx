@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGameStore, findRule } from '../../state/gameStore'
 import { connect, createRoom, leaveGame, lookupRoom, send } from '../../net/client'
 import type { GameConfig } from '../../game/types'
@@ -6,6 +6,7 @@ import { CardBack } from '../cards/CardBack'
 import { PlayingCard } from '../cards/PlayingCard'
 import { SketchButton } from '../ui/Button'
 import { LobbyConfig } from './LobbyConfig'
+import { deckSize, describeDeck } from '../../game/deck'
 import { RulesPage } from '../rules/RulesPage'
 import { Countdown } from '../overlays/Countdown'
 import { SoundToggle } from '../ui/SoundToggle'
@@ -59,7 +60,17 @@ export function Lobby() {
 
   const players = state?.players ?? []
   const config = state?.config
-  const preset = catalog?.decks.find((d) => d.id === config?.deckPresetId) ?? catalog?.decks[0]
+  // Undefined for a deck somebody built. Deliberately not falling back to the
+  // first preset: a table playing its own deck would otherwise be described by
+  // one it is not playing, down to the card list.
+  const preset = catalog?.decks.find((d) => d.id === config?.deckPresetId)
+  // ...so a deck with no preset behind it has to describe itself from what the
+  // config actually holds.
+  const builtCardCount = config ? deckSize(config.deck) : 0
+  const builtContents = useMemo(
+    () => (preset || !config || !catalog ? [] : describeDeck(config.deck, catalog)),
+    [preset, config, catalog],
+  )
 
   // Which screen actually shows is a function of the connection: in a session
   // you are in the room (or its settings), out of one you are at the front
@@ -148,7 +159,11 @@ export function Lobby() {
     send({ type: 'START_GAME' })
   }, [])
 
-  if (showRules) return <RulesPage onClose={() => setShowRules(false)} config={config} />
+  // Once there is a room, its own flip target answers for the house rules the
+  // host has switched on; before that there is only the catalog's default.
+  if (showRules) {
+    return <RulesPage onClose={() => setShowRules(false)} config={config} flip7Target={state?.flip7Target} />
+  }
 
   // ── Settings ──
   if (view === 'settings' && config) {
@@ -253,7 +268,7 @@ export function Lobby() {
   }
 
   // ── Connecting ──
-  if (connection === 'connecting' || !state || !config || !preset) {
+  if (connection === 'connecting' || !state || !config) {
     return (
       <div className="page-shell justify-center" data-testid="connecting-screen">
         <div className="text-center">
@@ -304,8 +319,10 @@ export function Lobby() {
           <div className="flex items-center justify-between mb-3">
             <p>
               <span className="text-muted">deck: </span>
-              <span className="display text-xl" data-testid="table-deck-name">{preset.name}</span>
-              <small className="ml-1.5">({preset.cardCount} cards)</small>
+              <span className="display text-xl" data-testid="table-deck-name">
+                {preset?.name ?? 'a deck of your own'}
+              </span>
+              <small className="ml-1.5">({preset?.cardCount ?? builtCardCount} cards)</small>
             </p>
             <button
               onClick={() => setShowDeckCards(!showDeckCards)}
@@ -318,7 +335,7 @@ export function Lobby() {
 
           {showDeckCards && (
             <div className="sketch-box-light flex flex-wrap gap-1.5 p-2 mb-4 rounded">
-              {preset.contents.map((entry) => (
+              {(preset?.contents ?? builtContents).map((entry) => (
                 <div key={entry.card.id} className="relative">
                   <PlayingCard card={entry.card} size="small" />
                   <span className="absolute -bottom-0.5 -right-0.5 z-10 display text-[10px] text-[var(--card-face)] bg-[var(--ink)] rounded-full px-1 leading-[14px] min-w-[16px] text-center">
@@ -336,6 +353,12 @@ export function Lobby() {
           <p className="mb-1">
             <span className="text-muted">turn timer: </span>
             <span className="display text-xl" data-testid="table-timer">{config.turnTimeSeconds}s</span>
+          </p>
+          <p className="mb-1">
+            <span className="text-muted">next round: </span>
+            <span className="display text-xl" data-testid="table-autostart">
+              {config.autoNextRoundSeconds ? `auto after ${config.autoNextRoundSeconds}s` : 'when the host says'}
+            </span>
           </p>
           {config.ruleIds.length > 0 && (
             <p>

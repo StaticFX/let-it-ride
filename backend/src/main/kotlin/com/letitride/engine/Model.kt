@@ -64,6 +64,12 @@ data class Player(
     val skipNextTurn: Boolean = false,
     val connected: Boolean = true,
     val isBot: Boolean = false,
+    /**
+     * Effects this player is under for the rest of the round — see [MarkDef].
+     * A mark is not a card: it cannot be stolen, swapped or scored, and it is
+     * wiped when the round is dealt again.
+     */
+    val marks: Set<String> = emptySet(),
 )
 
 // ─── Config ───
@@ -108,12 +114,98 @@ data class GameConfig(
     val totalRounds: Int = 5,
     val targetScore: Int = 200,
     val turnTimeSeconds: Int = 30,
+    /**
+     * Seconds the scoreboard is left up before the next round deals itself, or
+     * null to wait for the host. The countdown is the server's — five browsers
+     * each running their own would drift — and pressing the button early always
+     * wins, so it is a floor rather than a gate.
+     */
+    val autoNextRoundSeconds: Int? = null,
 )
 
 // ─── Game state ───
 
 @Serializable
 enum class GamePhase { LOBBY, PLAYING, ROUND_END, GAME_END }
+
+/**
+ * Why the table is stopped.
+ *
+ * Nearly always [PHASE_PLAY]: a card was drawn and is being pointed somewhere.
+ * Anything else is a question something set up earlier — a bomb going off long
+ * after the card that armed it was spent — and those carry their own targets,
+ * because the card's target rule described how it was played rather than what
+ * is being asked now.
+ */
+const val PHASE_PLAY = "play"
+
+/** A player who was carrying a bomb busted, and is taking somebody with them. */
+const val PHASE_BUST = "bust"
+
+/** Somebody flipped out under "anti flip" and is deciding what to do with it. */
+const val PHASE_FLIP_CHOICE = "flipChoice"
+
+/** ...and chose to spend it, so now they are picking who pays. */
+const val PHASE_FLIP_TARGET = "flipTarget"
+
+/** Two players are throwing against each other, at the same time. */
+const val PHASE_THROW = "throw"
+
+/** The whole table is betting a card face down. */
+const val PHASE_BET = "bet"
+
+/** Somebody is buying a card out of their own score. */
+const val PHASE_BUY = "buy"
+
+/** What a card asks its drawer to point at. */
+@Serializable
+enum class PickKind {
+    /** A seat at the table. */
+    @SerialName("player")
+    PLAYER,
+
+    /** Cards lying on the table, whoever is holding them. */
+    @SerialName("card")
+    CARD,
+
+    /**
+     * A card that is not in play at all — one the deck could deal, chosen from
+     * a list of what it holds and what each would cost. The pick comes back in
+     * the same field a card pick does; what it names is an offer rather than a
+     * card on the table.
+     */
+    @SerialName("catalog")
+    CATALOG,
+}
+
+/**
+ * One card on sale, and what it costs. The server prices it and decides who can
+ * afford it — the client only has to draw the face and the number under it.
+ */
+@Serializable
+data class Offer(
+    /** Names a card the deck could deal — see `offerIdFor`. */
+    val id: String,
+    val price: Int,
+    /** A face to draw. Not a card in the game; nothing is holding it. */
+    val card: Card,
+)
+
+/**
+ * One responder's answer to a prompt.
+ *
+ * Answers are held on the server and never sent anywhere while the prompt is
+ * open — not even to the player who gave one. That is what makes a simultaneous
+ * prompt secret without any per-viewer projection: there is nothing to leak,
+ * because nothing is transmitted. What everybody threw is announced by the
+ * event the resolution emits, all at once, after it is too late to change.
+ */
+@Serializable
+data class Answer(
+    val targetId: String? = null,
+    val choice: String? = null,
+    val cards: List<String> = emptyList(),
+)
 
 @Serializable
 data class PendingAction(
@@ -123,7 +215,38 @@ data class PendingAction(
     val card: Card,
     /** Who this card could actually be played on, worked out when it was drawn. */
     val validTargets: List<String> = emptyList(),
-)
+    /**
+     * The question the drawer has to answer, if the card asks one — heads or
+     * tails, left or right. Empty for every card that only needs a target.
+     */
+    val options: List<String> = emptyList(),
+    /** What is being pointed at. Nearly every card points at a seat. */
+    val kind: PickKind = PickKind.PLAYER,
+    /** The cards that may be picked, when [kind] is [PickKind.CARD]. */
+    val validCards: List<String> = emptyList(),
+    /** How many picks are owed before the card resolves. Swapping wants two. */
+    val picks: Int = 1,
+    /** Why the table is stopped — see [PHASE_PLAY]. */
+    val phase: String = PHASE_PLAY,
+    /** What is for sale, when [kind] is [PickKind.CATALOG]. */
+    val offers: List<Offer> = emptyList(),
+    /**
+     * Everybody who owes an answer before this resolves. Empty means [playerId]
+     * alone, which is every prompt but the handful that ask the table at once —
+     * so the common case says nothing and costs nothing.
+     */
+    val responders: List<String> = emptyList(),
+    /** What each responder has said. Server-side only — see [Answer]. */
+    val answers: Map<String, Answer> = emptyMap(),
+) {
+    /** Everyone who has to answer, with the single-responder case spelled out. */
+    val respondents: List<String> get() = responders.ifEmpty { listOf(playerId) }
+
+    /** Who has not answered yet. */
+    val waitingOn: List<String> get() = respondents.filterNot { it in answers }
+
+    val allAnswered: Boolean get() = waitingOn.isEmpty()
+}
 
 @Serializable
 data class ForcedDraws(
@@ -153,6 +276,13 @@ data class GameState(
     val flip7PlayerId: String? = null,
     /** Points each player banked in the round that just ended, for the summary screen. */
     val roundDeltas: Map<String, Int> = emptyMap(),
+    /**
+     * Points added or taken away during the round that are not hand scoring —
+     * an anti-flip deduction, and later a purchase or a penalty. Folded into the
+     * deltas when the round is scored, and wiped with everything else when the
+     * next one is dealt.
+     */
+    val roundAdjustments: Map<String, Int> = emptyMap(),
 ) {
     fun player(id: String): Player? = players.firstOrNull { it.id == id }
 
@@ -204,6 +334,14 @@ sealed class GameAction {
         val fromPlayerId: String,
         val targetPlayerId: String,
         val cardDefId: String,
+        /** The drawer's answer to [PendingAction.options]; null when none was asked. */
+        val choice: String? = null,
+        /**
+         * The cards picked, for a card that points at cards rather than a seat.
+         * Empty for every card that only wants a target — which is nearly all
+         * of them, so it stays out of the way of the common case.
+         */
+        val cards: List<String> = emptyList(),
     ) : GameAction()
 
     @Serializable

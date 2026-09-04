@@ -19,14 +19,13 @@ export interface Scenario {
   what: string
 }
 
-/** The local player draws an action card and has to pick who it lands on. */
-export const LOCAL_ACTION_CARD: Scenario = {
-  seed: 2,
-  deck: 'chaos',
-  bots: 3,
-  policy: 'alwaysHit',
-  what: 'the local player is handed an action card in round 1 and nobody busts',
-}
+/**
+ * These pin a room's *shuffle*. Prefer `app.hostStacked` for anything that
+ * wants particular cards: it names the cards it wants, so it goes on meaning
+ * that when the deck's contents change, where a seed quietly stops. What is
+ * left here is the two rounds whose *shape* is the point — a bust, a flip —
+ * rather than any card in particular.
+ */
 
 /** The local player draws a duplicate and the round ends on them. */
 export const LOCAL_BUST: Scenario = {

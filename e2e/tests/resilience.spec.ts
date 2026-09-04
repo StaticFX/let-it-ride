@@ -1,4 +1,4 @@
-import { test, expect, alwaysHit } from '../support/fixtures'
+import { test, expect, alwaysHit, stayAfter } from '../support/fixtures'
 
 /**
  * What happens when things go wrong: the network drops, a player walks away
@@ -179,9 +179,14 @@ test.describe('the table under stress', () => {
       app.table.hitButton.click({ force: true }),
     ])
 
+    // Watching, not playing: `playUntil` takes a turn whenever it finds one
+    // going spare, and its default policy draws. If the turn came back round
+    // before the first draw was noticed, the harness itself would deal the
+    // second card this test is looking for. Going out instead keeps the only
+    // cards that arrive the ones the burst asked for.
     const after = await app.table.playUntil(
       (s) => s.screen !== 'board' || (s.seats.find((seat) => seat.isSelf)?.handSize ?? 0) !== myHand || !s.myTurn,
-      { timeoutMs: 30_000, description: 'the draw to land' },
+      { timeoutMs: 30_000, policy: stayAfter(1), description: 'the draw to land' },
     )
 
     if (after.screen === 'board') {

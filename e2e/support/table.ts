@@ -38,6 +38,14 @@ export interface Snapshot {
   deckCount: number
   discardCount: number
   pending: { cardDefId: string; cardId: string; mine: boolean; chosen: string } | null
+  /**
+   * Cards on the table the local player may still point the prompt at — some
+   * cards ask for cards rather than for a seat. Empty whenever nothing is being
+   * picked, or when the pick is not the local player's to make.
+   */
+  pickableCards: string[]
+  /** ...and the ones already picked, so a two-card pick can be seen mid-way. */
+  pickedCards: string[]
   seats: Seat[]
   showingIntro: boolean
   showingOutro: boolean
@@ -143,6 +151,10 @@ export class Table {
       }))
 
       const actionButtons = $('[data-testid="action-buttons"]')
+      const cardIds = (selector: string) =>
+        Array.from(document.querySelectorAll(selector))
+          .map((card) => attr(card, 'data-card-id') ?? '')
+          .filter(Boolean)
 
       return {
         screen,
@@ -162,6 +174,8 @@ export class Table {
               chosen: attr(pending, 'data-chosen') ?? '',
             }
           : null,
+        pickableCards: cardIds('[data-pickable="true"]'),
+        pickedCards: cardIds('[data-picked="true"]'),
         seats,
         showingIntro: !!$('[data-testid="round-intro"]'),
         showingOutro: !!$('[data-testid="round-outro"]'),
@@ -240,8 +254,10 @@ export class Table {
       }
 
       if (snapshot.screen === 'board') {
-        if (snapshot.pending?.mine && !snapshot.pending.chosen) {
-          await this.answerTargetPrompt(snapshot)
+        // A card-picking prompt is answered over several clicks, so it stays
+        // answerable while there is anything still on offer.
+        if (snapshot.pending?.mine && (!snapshot.pending.chosen || snapshot.pickableCards.length > 0)) {
+          await this.answerPrompt(snapshot)
         } else if (snapshot.myTurn && snapshot.buttonsVisible) {
           await this.takeTurn(snapshot, policy)
         }
@@ -274,12 +290,35 @@ export class Table {
     await button.click({ timeout: 8_000 }).catch(() => undefined)
   }
 
-  private async answerTargetPrompt(snapshot: Snapshot): Promise<void> {
+  /**
+   * Answers whatever the table is asking the local player for: cards off the
+   * table, a seat, or a question. One click per pass — a card that wants two
+   * picks comes back round on the next snapshot.
+   *
+   * A prompt can also pass to somebody else between the read and the click, so
+   * every one of these is allowed to miss.
+   */
+  private async answerPrompt(snapshot: Snapshot): Promise<void> {
+    if (snapshot.pickableCards.length > 0) {
+      await this.pickCard(snapshot.pickableCards[0]).catch(() => undefined)
+      return
+    }
+
     const targets = snapshot.seats.filter((seat) => seat.targetable)
-    if (targets.length === 0) return
-    // Prefer somebody else, the way a person would.
-    const target = targets.find((seat) => !seat.isSelf) ?? targets[0]
-    await this.pickTarget(target.id).catch(() => undefined)
+    if (targets.length > 0) {
+      // Prefer somebody else, the way a person would.
+      const target = targets.find((seat) => !seat.isSelf) ?? targets[0]
+      await this.pickTarget(target.id).catch(() => undefined)
+      return
+    }
+
+    // Heads or tails, left or right: a card that asks rather than points.
+    const option = this.page.locator('[data-testid="choice-option"][data-picked="false"]').first()
+    if (await option.count()) await option.click({ timeout: 4_000 }).catch(() => undefined)
+  }
+
+  async pickCard(cardId: string): Promise<void> {
+    await this.page.locator(`[data-card-id="${cardId}"][data-pickable="true"]`).first().click({ timeout: 8_000 })
   }
 
   /**
