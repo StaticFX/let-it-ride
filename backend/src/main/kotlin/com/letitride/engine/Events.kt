@@ -19,6 +19,49 @@ sealed class GameEvent {
     data class PassiveGained(val playerId: String, val card: Card) : GameEvent()
 
     /**
+     * Somebody drew a gambler card. Announced instead of [Draw], because this is
+     * the one draw the table may not watch: everyone has to see that a card went
+     * into a hidden hand — that is what keeps the count honest and the moment
+     * readable — and nobody but its owner may see which.
+     *
+     * [card] is filled in only in the drawer's own copy of the batch; every
+     * other client is sent the same event with it nulled out. See
+     * `Room.redactFor`, which is the single place that happens.
+     *
+     * [kept] is false when there was no room for it and it went to the discard
+     * pile instead. Refusing the draw outright would leave the card on top of
+     * the deck for the next player to find, and the one after that.
+     */
+    @Serializable
+    @SerialName("gamblerDrawn")
+    data class GamblerDrawn(
+        val playerId: String,
+        val card: Card? = null,
+        val kept: Boolean = true,
+    ) : GameEvent()
+
+    /**
+     * A gambler card came out of a hidden hand and went face up. Public, and
+     * completely so: playing one is how the table finds out what you were
+     * carrying, and half the point of holding it was that they did not know.
+     *
+     * [firstSeen] is true the first time this card has been played at this
+     * table, and is what the client turns into how long it holds the reveal for.
+     * A card nobody has seen has to be *read* — name, and what it does — which
+     * is four seconds of somebody's attention; the fifth nullify of the evening
+     * needs a beat and no more. The room works it out (see `Room.markFirstSight`)
+     * because the player of the card owns the animation gate, and they are the
+     * one person who certainly already knows what it does.
+     */
+    @Serializable
+    @SerialName("gamblerPlayed")
+    data class GamblerPlayed(
+        val playerId: String,
+        val card: Card,
+        val firstSeen: Boolean = false,
+    ) : GameEvent()
+
+    /**
      * [card] is what tipped them over and [matched] is the card already in hand
      * it collided with, so the table can point at the pair rather than just
      * announcing a bust.
@@ -158,6 +201,62 @@ sealed class GameEvent {
     data class DeckReshuffled(val cards: Int) : GameEvent()
 
     /**
+     * A gambler card was stopped by another one. Public — both cards are face up
+     * by the time this happens, which is the price of playing either.
+     *
+     * [returned] is the difference between the two cards that do it: a nullified
+     * card is spent, and one stopped by a "nahhh" goes back to the hand it came
+     * out of and can be played again.
+     */
+    @Serializable
+    @SerialName("gamblerCountered")
+    data class GamblerCountered(
+        val playerId: String,
+        val card: Card,
+        val returned: Boolean = false,
+    ) : GameEvent()
+
+    /** A gambler card came back to the hand that played it — see "nahhh". */
+    @Serializable
+    @SerialName("gamblerReturned")
+    data class GamblerReturned(val playerId: String, val card: Card) : GameEvent()
+
+    /**
+     * A gambler card aimed at somebody was turned round on the player who threw
+     * it — see "deflect". [toPlayerId] is where it is pointing now.
+     */
+    @Serializable
+    @SerialName("gamblerDeflected")
+    data class GamblerDeflected(
+        val playerId: String,
+        val toPlayerId: String,
+        val card: Card,
+    ) : GameEvent()
+
+    /**
+     * A card was drawn and handed straight on to somebody else — see the
+     * "redirect" gambler card. The card is public: the table watched it come off
+     * the deck before anybody decided whose it was.
+     */
+    @Serializable
+    @SerialName("redirected")
+    data class Redirected(
+        val fromPlayerId: String,
+        val toPlayerId: String,
+        val card: Card,
+    ) : GameEvent()
+
+    /**
+     * Somebody shuffled the deck on purpose, rather than it running dry and
+     * being folded back together. Told apart from [DeckReshuffled] because they
+     * mean opposite things to whoever was counting cards: one is the pile you
+     * were reading being scrambled, the other is it growing back.
+     */
+    @Serializable
+    @SerialName("deckShuffled")
+    data class DeckShuffled(val cards: Int) : GameEvent()
+
+    /**
      * The "bounty" house rule paid out: [bustedPlayerId] went into the round in
      * front and busted, so every id in [collectorIds] collects [points]. Sent
      * ahead of [RoundScored], whose deltas already include the payout, so the
@@ -216,10 +315,65 @@ sealed class GameEvent {
     @SerialName("allIn")
     data class AllIn(val bets: Map<String, Card>, val halvedIds: List<String>) : GameEvent()
 
-    /** [playerId] bought [card] and the round is [price] the poorer for it. */
+    /** Gambler cards went back to the dealer for a share of their price. */
+    @Serializable
+    @SerialName("soldBack")
+    data class SoldBack(val playerId: String, val cards: List<Card>, val points: Int) : GameEvent()
+
+    /** A tithe collected off everybody else's round — see "taxes". */
+    @Serializable
+    @SerialName("taxed")
+    data class Taxed(val playerId: String, val points: Int) : GameEvent()
+
+    /** A loan came due — see "loan". */
+    @Serializable
+    @SerialName("loanRepaid")
+    data class LoanRepaid(val playerId: String, val points: Int) : GameEvent()
+
+    /** Somebody who was out of the round is back in it — see "revive". */
+    @Serializable
+    @SerialName("revived")
+    data class Revived(val playerId: String) : GameEvent()
+
+    /** The shop opened between rounds, and what is on the block — rolling rules. */
+    @Serializable
+    @SerialName("shopOpened")
+    data class ShopOpened(val lot: Card? = null) : GameEvent()
+
+    /**
+     * Every sealed bid turned over at once, and what the lot went for.
+     *
+     * The same shape [AllIn] has and for the same reason: the moment *is* the
+     * card. [winnerId] is null when nobody wanted it, and [rigged] names anybody
+     * whose "rigged bid" fired after the close, in the order they fired.
+     */
+    @Serializable
+    @SerialName("auction")
+    data class AuctionClosed(
+        val lot: Card,
+        val bids: Map<String, Int> = emptyMap(),
+        val winnerId: String? = null,
+        val price: Int = 0,
+        val rigged: List<String> = emptyList(),
+    ) : GameEvent()
+
+    /**
+     * [playerId] bought [card] and is [price] the poorer for it.
+     *
+     * [hidden] is set for a card that goes into a hand nobody may see. The buyer
+     * and the price stay public — a score that moves has to be accountable —
+     * and the face is cut out for everybody but the buyer by the same
+     * projection that hides the rest of the tray. An older server never sets it,
+     * which is the in-round shop, whose purchases were always face up.
+     */
     @Serializable
     @SerialName("bought")
-    data class Bought(val playerId: String, val card: Card, val price: Int) : GameEvent()
+    data class Bought(
+        val playerId: String,
+        val card: Card,
+        val price: Int,
+        val hidden: Boolean = false,
+    ) : GameEvent()
 
     @Serializable
     @SerialName("roundScored")

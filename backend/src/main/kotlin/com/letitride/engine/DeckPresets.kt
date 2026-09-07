@@ -46,6 +46,13 @@ object DeckLimits {
     /** Of any one card — a deck of forty freezes is not a game. */
     const val MAX_COPIES = 20
     const val MAX_SPECIALS = 40
+    /**
+     * Gambler cards in the deck itself. Well under [MAX_SPECIALS] on purpose:
+     * drawing one draws you another card, so they are the second thing in the
+     * game that can chain, and the point of one is that it is a surprise. The
+     * dealer's stock for the shop is a separate pile and is not counted here.
+     */
+    const val MAX_GAMBLERS = 24
     /** Number cards as a share of the whole, for the reason above. */
     const val MIN_NUMBER_SHARE = 0.4
 }
@@ -77,15 +84,27 @@ fun sanitizeDeck(deck: DeckConfig): DeckConfig? {
     val passives = deck.passiveCards
         .filter { Catalog.passive(it)?.deckable == true }
         .take(DeckLimits.MAX_SPECIALS)
+    val gamblers = deck.gamblerCards
+        .filter { Catalog.gambler(it)?.obtainable == true }
+        .take(DeckLimits.MAX_GAMBLERS)
 
     val numberCount = numbers.sumOf { it.count }
     if (numberCount < DeckLimits.MIN_NUMBER_CARDS) return null
 
-    val total = numberCount + actions.size + passives.size
+    // Gambler cards count toward the share for a stronger reason than the rest
+    // of the specials do. A fizzling action card deals its drawer a replacement;
+    // a gambler card deals one *unconditionally*, every time. A deck that was
+    // mostly gambler cards would draw through itself in one turn.
+    val total = numberCount + actions.size + passives.size + gamblers.size
     if (total > DeckLimits.MAX_CARDS) return null
     if (numberCount < total * DeckLimits.MIN_NUMBER_SHARE) return null
 
-    return DeckConfig(numberCards = numbers, actionCards = actions, passiveCards = passives)
+    return DeckConfig(
+        numberCards = numbers,
+        actionCards = actions,
+        passiveCards = passives,
+        gamblerCards = gamblers,
+    )
 }
 
 object DeckPresets {
@@ -102,16 +121,73 @@ object DeckPresets {
         ),
     )
 
-    /** The house variant: numbers run to 13 and the modifier mix is heavier. */
+    /**
+     * The house variant: numbers run to 13 and the modifier mix is heavier.
+     *
+     * The two swap cards are there because the discordia and the antimatter are:
+     * a card whose whole point is that you can push it onto somebody else is a
+     * flat penalty in a deck with no way to move one. Any deck dealing a card
+     * nobody wants owes the table a way to pass it on — see `DeckTest`.
+     *
+     * One antimatter, which is the harshest card in the game and is here on
+     * purpose: this is the house deck and the house plays for keeps. Taking it
+     * back out is one line if a table finds it too much.
+     */
     val LET_IT_RIDE = DeckPreset(
         id = "letitride",
         name = "Let It Ride",
-        description = "0-13 number cards, freeze & draw 3, passives",
+        description = "0-13 number cards, freeze & draw 3, swaps, passives",
         deck = DeckConfig(
             numberCards = flip7Numbers(13),
-            actionCards = times(DRAW_THREE.id, 3) + times(FREEZE.id, 3),
-            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id, DISCORDIA.id) +
+            actionCards = times(DRAW_THREE.id, 3) + times(FREEZE.id, 3) + times(SWAP_CARDS.id, 2),
+            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id, DISCORDIA.id, ANTIMATTER.id) +
                 times(PLUS_TEN.id, 2) + times(PLUS_FOUR.id, 5),
+        ),
+    )
+
+    /**
+     * The deck rolling rules is played with.
+     *
+     * Fifteen gambler cards in a deck of a hundred and twenty-odd, which is
+     * about one draw in eight. Deliberately thin: drawing one has to feel like
+     * finding something, and it draws you another card on top, so a deck full of
+     * them would turn every turn into a handful. The dealer's shop stocks from
+     * a separate reserve, so the shelves are not competing with the table for
+     * the same fifteen cards.
+     *
+     * It carries the house's swaps and the two curses for the same reason
+     * `LET_IT_RIDE` does, and rather more so: rolling rules forces "extreme" on,
+     * which is what lets a round take a score below nothing — a curse nobody can
+     * pass on would be a worse card here than anywhere else.
+     */
+    val ROLLING_RULES = DeckPreset(
+        id = "rollingrules",
+        name = "Rolling Rules",
+        description = "0-13, the house mix, and gambler cards for the hand nobody can see",
+        deck = DeckConfig(
+            numberCards = flip7Numbers(13),
+            actionCards = times(DRAW_THREE.id, 3) + times(FREEZE.id, 3) + times(SWAP_CARDS.id, 2),
+            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id, DISCORDIA.id) +
+                times(PLUS_TEN.id, 2) + times(PLUS_FOUR.id, 4),
+            gamblerCards = times(REDIRECT.id, 2) + times(SHUFFLE.id, 2) + times(DRAW_TWO.id, 2) +
+                times(SECOND_OPINION.id, 2) + times(CHEATING.id, 1) + times(FUCK_IT.id, 1) +
+                // The counters. Thinner than the rest on purpose: a table where
+                // everybody is holding a nullify is a table where nothing ever
+                // happens, and the window only opens when somebody *can* answer,
+                // so every one of these in play is a pause somebody has to sit
+                // through as well as a card somebody gets to use.
+                times(NULLIFY.id, 2) + times(NAHHH.id, 2) + DEFLECT.id + COPYCAT.id +
+                // ...and the rest of the set, one each. The deck is where you
+                // *find* one; the shop is where you go looking, so the deck's
+                // job is variety rather than supply.
+                listOf(
+                    POUCH.id, SPLIT_THE_POT.id, REVIVE.id, DOUBLE_DOWN.id,
+                    TAXES.id, ALREADY_DOWN.id, LOAN.id, FORESEER.id, BACK_TO_THE_SHOP.id, RIGGED_BID.id,
+                    // One of each jackpot. They are what the auction sells, so
+                    // finding one in the deck should stay a story rather than a
+                    // Tuesday.
+                    NOT_THIS_TIME.id, STACKED_DECK.id, TRADE_IN.id, COOLER_REVIVE.id, HOUSE_RULES.id,
+                ),
         ),
     )
 
@@ -148,7 +224,7 @@ object DeckPresets {
                 times(SUICIDE_BOMBER.id, 2) + times(COMEBACK.id, 2) + times(ALL_IN.id, 2) +
                 times(MUTATE.id, 2),
             passiveCards = times(ARMOR.id, 2) + times(SECOND_LIFE.id, 2) +
-                listOf(DOUBLE_POINTS.id) + times(DISCORDIA.id, 2) +
+                listOf(DOUBLE_POINTS.id) + times(DISCORDIA.id, 2) + times(ANTIMATTER.id, 2) +
                 times(PLUS_TEN.id, 3) + times(PLUS_FOUR.id, 5),
         ),
     )
@@ -176,7 +252,8 @@ object DeckPresets {
         ),
     )
 
-    val all: List<DeckPreset> = listOf(FLIP7, LET_IT_RIDE, PURE, CLASSIC52, CHAOS, GAMBLER, FRIENDLY)
+    val all: List<DeckPreset> =
+        listOf(FLIP7, LET_IT_RIDE, ROLLING_RULES, PURE, CLASSIC52, CHAOS, GAMBLER, FRIENDLY)
 
     private val byId = all.associateBy { it.id }
 

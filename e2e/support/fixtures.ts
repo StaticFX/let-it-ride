@@ -155,5 +155,5 @@ export const test = base.extend<Fixtures>({
 })
 
 export { expect } from '@playwright/test'
-export { alwaysHit, stayAfter } from './table'
-export type { Snapshot, Seat, Policy } from './table'
+export { alwaysHit, stayAfter, neverCounters, countersWithAnything, buysNothing, buysCheapest, bids } from './table'
+export type { Snapshot, Seat, Policy, ResponsePolicy, ShopPolicy, GamblerCard, ShopOffer } from './table'

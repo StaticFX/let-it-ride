@@ -105,7 +105,7 @@ test.describe('http api', () => {
       expect(passive.name).toBeTruthy()
       expect(passive.description).toBeTruthy()
       expect(passive.sigil, `${passive.id} needs a sigil to draw`).toBeTruthy()
-      expect(['flat', 'double', 'none', 'voidUnlessFlip', 'halve']).toContain(passive.scoring)
+      expect(['flat', 'double', 'none', 'voidUnlessFlip', 'halve', 'negate']).toContain(passive.scoring)
     }
 
     // The effect cards are cards like any other — everything in this game is —

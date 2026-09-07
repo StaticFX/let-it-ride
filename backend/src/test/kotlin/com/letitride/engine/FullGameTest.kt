@@ -1,5 +1,6 @@
 package com.letitride.engine
 
+import com.letitride.server.botShop
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -19,14 +20,17 @@ class FullGameTest {
         playerCount: Int,
         seed: Long,
         maxSteps: Int = 20_000,
+        mode: GameMode = GameMode.CLASSIC,
+        winCondition: WinCondition = WinCondition.FIRST_TO_SCORE,
     ): GameState {
         val rng = Rng(seed)
         val players = (0 until playerCount).map { "p$it" }
         val config = GameConfig(
             deckPresetId = preset.id,
             deck = preset.deck,
+            mode = mode,
             ruleIds = rules,
-            winCondition = WinCondition.FIRST_TO_SCORE,
+            winCondition = winCondition,
             targetScore = 200,
             totalRounds = 12,
         )
@@ -58,6 +62,25 @@ class FullGameTest {
 
     /** Mirrors what the room's pacer does, with a simple deterministic policy. */
     private fun step(state: GameState, rng: Rng): GameState {
+        // An open window comes before everything, exactly as it does in
+        // `promptOf`. A card in flight interrupts the table, and an interrupted
+        // table refuses to deal — so a driver that worked through its deal queue
+        // first would sit on a `DealTo` the engine will not take, for ever. That
+        // is reachable on the opening deal itself: an action card turned up mid
+        // deal, aimed at somebody, and somebody else holding a nullify.
+        state.openResponse?.let { window ->
+            // Both ways, off the same seeded stream: a driver that always
+            // countered would never once shut a window by everybody declining,
+            // which is how most of them actually shut.
+            val actor = window.awaiting.first()
+            val counter = Engine.respondableGamblers(state, actor).firstOrNull()
+            return if (counter != null && rng.nextBoolean()) {
+                t(state, GameAction.PlayGambler(actor, counter), rng)
+            } else {
+                t(state, GameAction.PassResponse(actor), rng)
+            }
+        }
+
         state.pendingAction?.let { pending ->
             // Whoever the prompt is still waiting on — one player for nearly
             // every card, the whole table for the ones that ask at once. A
@@ -78,12 +101,54 @@ class FullGameTest {
             }
             return t(state, GameAction.PlayAction(actor, target, pending.cardDefId, choice, cards), rng)
         }
+        // A card that has landed goes off before anything else moves — the room
+        // does this once the table has finished watching it.
+        if (state.pendingOutcomes.isNotEmpty()) return t(state, GameAction.ResolveOutcome, rng)
         if (state.forcedDraws != null) return t(state, GameAction.ForcedDraw, rng)
         if (state.dealQueue.isNotEmpty()) return t(state, GameAction.DealTo(state.dealQueue.first()), rng)
+        // The shop, which in rolling rules is where "next round" goes first.
+        // Somebody has to finish shopping or the window never shuts, and
+        // somebody has to *buy* now and then or the sweep would only ever prove
+        // that a shop can be walked past.
+        state.interlude?.let { shop ->
+            if (shop.closed) return t(state, GameAction.OpenRound, rng)
+            val shopper = state.waitingOnShop.firstOrNull()
+                ?: return t(state, GameAction.CloseInterlude, rng)
+            // The shipped bot's own policy, rather than a policy invented here.
+            //
+            // It checks room and money — the engine refuses a purchase into a
+            // full tray silently, the way it refuses a mistimed hit, so a driver
+            // that asked anyway would sit there asking. And it keeps something
+            // back: a first attempt that spent every point it could see never
+            // reached the target score in twenty thousand steps, because in a
+            // game where the money *is* the score a table that buys everything
+            // never wins. That is a true thing about the mode, and `botBudget`
+            // is where the answer to it lives.
+            val offerId = botShop(state, shopper)
+            return if (offerId != null) {
+                t(state, GameAction.Buy(shopper, offerId), rng)
+            } else {
+                t(state, GameAction.FinishShopping(shopper), rng)
+            }
+        }
+
         if (state.phase == GamePhase.ROUND_END) return t(state, GameAction.NextRound, rng)
 
+        // Rolling rules: somebody spends a gambler card before anybody takes a
+        // turn. Without this the mode's preset would play through these sweeps
+        // with every tray filling up and nothing ever coming out of one — the
+        // test would pass, and would have proved only that gambler cards can be
+        // held. Whoever can go first, so the whole table gets used.
+        for (player in state.players) {
+            val playable = Engine.playableGamblers(state, player.id).firstOrNull() ?: continue
+            return t(state, GameAction.PlayGambler(player.id, playable), rng)
+        }
+
         val current = state.currentPlayer ?: return t(state, GameAction.NextRound, rng)
-        return if (current.hand.size < 3) {
+        // A table that will not let this seat stop is not offered a stay: the
+        // engine refuses it, and a driver that kept asking would sit here for
+        // ever. The bots take the same answer from the same place.
+        return if (current.hand.size < 3 || !Engine.canStay(state, current)) {
             t(state, GameAction.Hit(current.id), rng)
         } else {
             t(state, GameAction.Stay(current.id), rng)
@@ -93,6 +158,10 @@ class FullGameTest {
     private fun assertHandsAreLegal(state: GameState) {
         for (player in state.players) {
             if (player.status == PlayerStatus.BUST) continue
+            // "The cooler revive" hands a hand back with its duplicates still in
+            // it and makes them harmless for the rest of the round, which is the
+            // whole card. This invariant predates it and has to say so.
+            if (player.passives.any { it.defId == COOLER.id }) continue
             val labels = player.hand.map { it.label }
             assertEquals(
                 labels.size, labels.distinct().size,
@@ -127,6 +196,55 @@ class FullGameTest {
     @Test
     fun `all house rules at once still terminate`() {
         playToTheEnd(DeckPresets.CHAOS, rules = LobbyRules.all.map { it.id }, playerCount = 4, seed = 11)
+    }
+
+    /**
+     * Rolling rules with the mode actually on, which is a different game from
+     * the same deck played classic: "extreme" is forced, so a round can take a
+     * score below nothing, and the driver spends gambler cards the moment it can.
+     *
+     * Several seeds because the interesting states here are the ones only a
+     * particular order of draws reaches — a redirect landing on somebody's
+     * duplicate, a hand filling to its cap, a second opinion throwing back the
+     * last card in the deck.
+     *
+     * Played to a number of rounds rather than to a score, and that is about the
+     * driver rather than the mode. This one plays every gambler card the moment
+     * it can, which includes playing "fuck it" every single time anybody goes
+     * out — so every score snaps back to nothing and the race to two hundred is
+     * unwinnable by construction. Five hundred and eighty-six rounds of it went
+     * by before this was written down. A rounds-limited game exercises exactly
+     * the same machinery and is guaranteed to end.
+     */
+    @Test
+    fun `rolling rules plays out under every shuffle`() {
+        for (seed in 1L..12L) {
+            val state = playToTheEnd(
+                DeckPresets.ROLLING_RULES,
+                rules = emptyList(),
+                playerCount = 4,
+                seed = seed,
+                mode = GameMode.ROLLING_RULES,
+                winCondition = WinCondition.ROUNDS,
+            )
+            assertTrue(
+                state.players.all { it.gamblers.size <= Engine.gamblerLimitFor(state, it.id) },
+                "somebody ended the game holding more than they may",
+            )
+        }
+    }
+
+    /** ...and with every house rule stacked on top of it. */
+    @Test
+    fun `rolling rules survives all the house rules at once`() {
+        playToTheEnd(
+            DeckPresets.ROLLING_RULES,
+            rules = LobbyRules.all.map { it.id },
+            playerCount = 4,
+            seed = 17,
+            mode = GameMode.ROLLING_RULES,
+            winCondition = WinCondition.ROUNDS,
+        )
     }
 
     @Test

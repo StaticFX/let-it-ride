@@ -9,8 +9,10 @@ import com.letitride.engine.ALL_IN_ID
 import com.letitride.engine.PickKind
 import com.letitride.engine.Rng
 import com.letitride.engine.SWAP_CARDS
+import com.letitride.engine.ANTIMATTER
 import com.letitride.engine.action
 import com.letitride.engine.num
+import com.letitride.engine.passive
 import com.letitride.engine.startedAndDealt
 import com.letitride.engine.t
 import kotlin.test.Test
@@ -34,7 +36,7 @@ class PendingActionViewTest {
 
     @Test
     fun `a freeze offers every player still in the round`() {
-        val view = freezePending().toView("ABCD", "a", null)
+        val view = freezePending().toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
         val pending = view.pendingAction
         assertTrue(pending != null, "there should be a card waiting on a target")
         assertEquals(FREEZE.id, pending.cardDefId)
@@ -43,7 +45,7 @@ class PendingActionViewTest {
 
     @Test
     fun `the serialised payload actually carries validTargets and cardId`() {
-        val view = freezePending().toView("ABCD", "a", null)
+        val view = freezePending().toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
         val payload = appJson.encodeToString(
             ServerMessage.serializer(),
             ServerMessage.State(view, emptyList()),
@@ -55,7 +57,7 @@ class PendingActionViewTest {
 
     @Test
     fun `a card waiting on a target survives a round trip`() {
-        val view = freezePending().toView("ABCD", "a", null)
+        val view = freezePending().toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
         val payload = appJson.encodeToString(ServerMessage.serializer(), ServerMessage.State(view, emptyList()))
         val decoded = appJson.decodeFromString(ServerMessage.serializer(), payload) as ServerMessage.State
 
@@ -73,13 +75,13 @@ class PendingActionViewTest {
             rest = listOf(action(FREEZE.id, id = "freeze-1"), action(FREEZE.id, id = "freeze-2")),
         )
         state = t(state, GameAction.Hit("a"))
-        val first = state.toView("ABCD", "a", null).pendingAction?.cardId
+        val first = state.toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null).pendingAction?.cardId
         assertEquals("freeze-1", first)
 
         // a freezes b, the turn comes round to c, who turns up the second one.
         state = t(state, GameAction.PlayAction("a", "b", FREEZE.id))
         state = t(state, GameAction.Hit("c"))
-        val second = state.toView("ABCD", "c", null).pendingAction?.cardId
+        val second = state.toView(viewerId = null, roomCode = "ABCD", hostId = "c", turnDeadline = null).pendingAction?.cardId
 
         assertEquals("freeze-2", second)
         assertTrue(first != second, "two copies of a card must not share an id")
@@ -94,7 +96,7 @@ class PendingActionViewTest {
                 rest = listOf(action(COIN_FLIP.id)),
             ),
             GameAction.Hit("a"),
-        ).toView("ABCD", "a", null)
+        ).toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
 
         val pending = view.pendingAction
         assertTrue(pending != null, "a coin flip has to stop the table for a call")
@@ -110,7 +112,7 @@ class PendingActionViewTest {
 
     @Test
     fun `a card that only wants a target sends an empty option list`() {
-        val view = freezePending().toView("ABCD", "a", null)
+        val view = freezePending().toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
         assertEquals(emptyList(), view.pendingAction?.options)
         val payload = appJson.encodeToString(ServerMessage.serializer(), ServerMessage.State(view, emptyList()))
         assertTrue("\"options\":[]" in payload, "wire payload was: $payload")
@@ -139,7 +141,7 @@ class PendingActionViewTest {
             openingCards = listOf(num(1), num(2)),
             rest = listOf(action(SWAP_CARDS.id)),
         )
-        val view = t(dealt, GameAction.Hit("a")).toView("ABCD", "a", null)
+        val view = t(dealt, GameAction.Hit("a")).toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
 
         val pending = view.pendingAction
         assertTrue(pending != null, "the table has to stop for the cards to be picked")
@@ -179,7 +181,7 @@ class PendingActionViewTest {
         var state = t(dealt, GameAction.Hit("a"))
         state = t(state, GameAction.PlayAction("a", "a", ALL_IN_ID, cards = listOf("a-2")))
 
-        val view = state.toView("ABCD", "a", null)
+        val view = state.toView(viewerId = null, roomCode = "ABCD", hostId = "a", turnDeadline = null)
         val pending = view.pendingAction
         assertTrue(pending != null, "the table is waiting on the rest of the bets")
         assertEquals(listOf("a", "b", "c"), pending.responders)
@@ -217,5 +219,36 @@ class PendingActionViewTest {
                 "advertised target $target was not actually frozen",
             )
         }
+    }
+
+    @Test
+    fun `a seat that may not go out is named, so the client can take the button away`() {
+        // The rule is the server's; the client only hides a button. Working it
+        // out twice is how the two of them come to disagree.
+        val dealt = startedAndDealt(openingCards = listOf(num(4), num(6)))
+        val state = dealt.copy(
+            players = dealt.players.map {
+                if (it.id == "a") it.copy(passives = listOf(passive(ANTIMATTER.id))) else it
+            },
+        )
+
+        val view = state.toView(viewerId = null, roomCode = "ROOM", hostId = "a", turnDeadline = null)
+        assertEquals(listOf("a"), view.cannotStayIds)
+    }
+
+    @Test
+    fun `a seat whose bust still costs it is named, so the felt stops saying cancelled`() {
+        // Every busted seat is struck through and shown a dead number. That is
+        // the truth for everybody but an antimatter holder, and the client is
+        // told which is which rather than reading the rule off the cards.
+        val dealt = startedAndDealt(openingCards = listOf(num(4), num(6)))
+        val state = dealt.copy(
+            players = dealt.players.map {
+                if (it.id == "a") it.copy(passives = listOf(passive(ANTIMATTER.id))) else it
+            },
+        )
+
+        val view = state.toView(viewerId = null, roomCode = "ROOM", hostId = "a", turnDeadline = null)
+        assertEquals(listOf("a"), view.bustStillCountsIds)
     }
 }

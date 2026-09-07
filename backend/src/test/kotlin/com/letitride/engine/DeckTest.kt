@@ -75,4 +75,25 @@ class DeckTest {
         val b = Rng(7).shuffled(cards).map { it.id }
         assertEquals(a, b)
     }
+
+    @Test
+    fun `a deck that deals a card nobody wants deals a way to pass it on`() {
+        // A discordia or an antimatter is only a card if it can be got rid of.
+        // In a deck with nothing that moves a modifier it is a flat penalty on
+        // whoever drew it, which is a different card from the one designed —
+        // see [PassiveCardDef.isCurse]. A card that hands one out counts too:
+        // it names what it gives in `skipHolding`.
+        val movers = setOf(SWAP_CARDS.id, SWAP.id)
+        for (preset in DeckPresets.all) {
+            val given = preset.deck.actionCards.mapNotNull { Catalog.action(it)?.skipHolding }
+            val unwanted = (preset.deck.passiveCards + given)
+                .mapNotNull { Catalog.passive(it) }
+                .filter { it.isCurse }
+            if (unwanted.isEmpty()) continue
+            assertTrue(
+                preset.deck.actionCards.any { it in movers },
+                "${preset.id} deals a ${unwanted.first().name} and no way to pass it on",
+            )
+        }
+    }
 }

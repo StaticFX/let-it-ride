@@ -1,5 +1,5 @@
 import type { Offer } from '../../game/types'
-import { PlayingCard } from '../cards/PlayingCard'
+import { OfferShelf } from './OfferShelf'
 
 /**
  * The deck, laid out with a price on every card.
@@ -11,7 +11,7 @@ import { PlayingCard } from '../cards/PlayingCard'
  * The purse is what the round has left the buyer, not their score: a second
  * purchase has to come out of what the first one left behind.
  */
-export function Shop({ offers, purse, chosen, waiting, onPick, x, y }: {
+export function Shop({ offers, purse, chosen, waiting, onPick, x, y, testId = 'shop' }: {
   offers: Offer[]
   purse: number
   /** The id already picked, while the answer is on its way to the server. */
@@ -21,12 +21,19 @@ export function Shop({ offers, purse, chosen, waiting, onPick, x, y }: {
   onPick: (offerId: string) => void
   x: number
   y: number
+  /**
+   * Stable handle for the end-to-end suite. The sheet has an id because it is
+   * the only shop today; a second one somewhere else has to be tellable from
+   * this one, while the offers inside it keep their own ids either way so
+   * "click an offer" stays one thing a spec knows how to do.
+   */
+  testId?: string
 }) {
   return (
     <div
       className="fixed z-[240] -translate-x-1/2 shop-sheet"
       style={{ left: x, top: y }}
-      data-testid="shop"
+      data-testid={testId}
       data-offers={offers.length}
       data-chosen={chosen ?? ''}
     >
@@ -35,31 +42,13 @@ export function Shop({ offers, purse, chosen, waiting, onPick, x, y }: {
           buy a card — <span className="text-[var(--accent)]">{purse}</span> to spend
         </div>
 
-        <div className="flex flex-wrap justify-center gap-2.5 max-w-[560px] max-h-[46vh] overflow-y-auto py-1">
-          {offers.map((offer) => {
-            const picked = chosen === offer.id
-            const spent = !!chosen && !picked
-            return (
-              <button
-                key={offer.id}
-                onClick={() => !chosen && onPick(offer.id)}
-                disabled={!!chosen}
-                data-testid="shop-offer"
-                data-offer-id={offer.id}
-                data-price={offer.price}
-                data-picked={picked}
-                className={`relative bg-transparent border-none p-0 transition-transform duration-150 ${
-                  chosen ? 'cursor-default' : 'cursor-pointer hover:scale-110 hover:-rotate-2'
-                } ${picked ? 'scale-110 -rotate-2' : ''} ${spent ? 'opacity-30' : ''}`}
-              >
-                <PlayingCard card={offer.card} size="small" glowing={picked} />
-                <span className="absolute -bottom-1 -right-1 z-10 display text-[11px] text-[var(--card-face)] bg-[var(--ink)] rounded-full px-1.5 leading-[15px]">
-                  {offer.price}
-                </span>
-              </button>
-            )
-          })}
-        </div>
+        <OfferShelf
+          offers={offers}
+          purse={purse}
+          chosen={chosen}
+          onPick={onPick}
+          className="max-w-[560px] max-h-[46vh] overflow-y-auto"
+        />
 
         {chosen && <small>{waiting ? 'when the table settles…' : 'bought!'}</small>}
       </div>

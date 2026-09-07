@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test'
-import { Table, type Policy, type Screen } from './table'
+import { Table, type Policy, type ResponsePolicy, type ShopPolicy, type Screen } from './table'
 import type { Api } from './api'
 import type { Scenario } from './seeds'
 
@@ -80,6 +80,40 @@ export class App {
     // A generous clock by default: a timeout would take a turn away and the
     // round would stop being the one the stack describes.
     await this.configure({ deck: options.deck ?? 'chaos', turnSeconds: options.turnSeconds ?? 120 })
+    return room.roomCode
+  }
+
+  /**
+   * Opens a rolling rules table, with the deck stacked the same way
+   * [hostStacked] stacks one.
+   *
+   * A gambler card is named by its definition ("shuffle", "redirect") like any
+   * other, so putting one in somebody's hand is a matter of counting seats: the
+   * deal takes one card per player off the top, and a gambler card does not
+   * cost a draw — so an entry that is one goes into that player's hidden hand
+   * and the next entry is dealt to them instead.
+   *
+   * The mode goes on through the settings screen rather than through the API,
+   * because that is the control a player actually uses and a spec that skipped
+   * it would not notice the day it broke.
+   */
+  async hostRollingRules(
+    name: string,
+    stack: string[] = [],
+    options: { bots?: number; turnSeconds?: number; shopSeconds?: number } = {},
+  ): Promise<string> {
+    const room = await this.api.createRoom(name, { stack })
+    await this.join(name, room.roomCode)
+    await expect(this.page.getByTestId('start-game')).toBeVisible()
+    await this.addBotsUntil(1 + (options.bots ?? 1))
+    // The shortest shop the server will accept, unless a spec wants otherwise.
+    // The window shuts early when everybody says they are done, so this only
+    // ever bites on the one player still deciding — which in a spec is nobody.
+    await this.configure({
+      mode: 'rollingRules',
+      turnSeconds: options.turnSeconds ?? 120,
+      shopSeconds: options.shopSeconds ?? 15,
+    })
     return room.roomCode
   }
 
@@ -248,13 +282,21 @@ export class App {
 
   /** Sets up a short game: one deck, one win condition, a generous clock. */
   async configure(options: {
+    mode?: 'classic' | 'rollingRules'
     deck?: string
     rounds?: number
     targetScore?: number
     turnSeconds?: number
+    shopSeconds?: number
     rules?: string[]
   }): Promise<void> {
     await this.openSettings()
+    // First: choosing rolling rules brings its own deck and its own house rule
+    // with it, so anything set before it would be overwritten.
+    if (options.mode) {
+      await this.page.getByTestId(`mode-${options.mode}`).click()
+      await expect(this.page.getByTestId(`mode-${options.mode}`)).toHaveAttribute('data-selected', 'true')
+    }
     if (options.deck) await this.chooseDeck(options.deck)
     if (options.rounds !== undefined) {
       await this.chooseWinCondition('rounds')
@@ -265,6 +307,7 @@ export class App {
       await this.setSlider('target-score-slider', options.targetScore)
     }
     if (options.turnSeconds !== undefined) await this.setSlider('turn-timer-slider', options.turnSeconds)
+    if (options.shopSeconds !== undefined) await this.setSlider('shop-timer-slider', options.shopSeconds)
     for (const rule of options.rules ?? []) await this.toggleRule(rule)
     await this.closeSettings()
   }
@@ -292,16 +335,32 @@ export class App {
    * Plays round after round until the game is over, taking the host's
    * "next round" button whenever it appears.
    */
-  async playToGameOver(options: { policy?: Policy; maxRounds?: number } = {}): Promise<void> {
-    const maxRounds = options.maxRounds ?? 25
+  async playToGameOver(
+    options: { policy?: Policy; respond?: ResponsePolicy; shop?: ShopPolicy; maxRounds?: number } = {},
+  ): Promise<void> {
+    const { policy, respond, shop, maxRounds = 25 } = options
     for (let round = 0; round < maxRounds; round++) {
-      const end = await this.table.playRound({ policy: options.policy })
+      const end = await this.table.playRound({ policy, respond, shop })
       if (end.screen === 'gameOver') return
 
       const nextRound = this.page.getByTestId('next-round')
       if (await nextRound.isVisible()) await nextRound.click()
 
-      if ((await this.waitForScreen(['board', 'gameOver'])) === 'gameOver') return
+      // In rolling rules the next round is on the other side of the shop, and a
+      // window nobody walks through is a window that sits out its whole clock.
+      // Waiting for the board without ever taking the interlude would spend a
+      // deadline a round and eventually blow the timeout above.
+      let screen = await this.waitForScreen(['board', 'interlude', 'gameOver'])
+      if (screen === 'interlude') {
+        await this.table.playUntil((snapshot) => snapshot.screen !== 'interlude', {
+          policy, respond, shop,
+          timeoutMs: 90_000,
+          description: 'the window between rounds to close',
+        })
+        screen = await this.waitForScreen(['board', 'gameOver'])
+      }
+      if (screen === 'gameOver') return
+
       await this.table.waitForPlay()
     }
     throw new Error(`the game had not finished after ${maxRounds} rounds`)

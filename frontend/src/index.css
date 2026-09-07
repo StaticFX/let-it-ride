@@ -449,6 +449,129 @@ label {
 /* Somebody who has asked for less movement should not have the whole viewport
    thrown at them. A bust still strikes the name through, scatters the hand and
    makes its noise — only the table stays put. */
+/* ─── The run at the target ───
+   A pencil line under each name on the scoreboard, filled as far as that player
+   has got. It is quiet for most of a game on purpose: a bar that shouts from
+   the first round has nothing left to say in the last one.
+
+   Two thresholds, and the second is the one worth having. At `close` the fill
+   goes to the accent and starts breathing. At `brink` it is struck twice as
+   heavily, glows, and the row says "match point" — which is the moment the
+   scoreboard stops being a tally and becomes the thing everybody is watching. */
+
+.score-bar {
+  position: relative;
+  height: 3px;
+  margin: 3px 2px 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  overflow: visible;
+}
+
+.score-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--run, 0%);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+  /* The run is drawn rather than snapped: points landing on the scoreboard
+     push it along, which is the whole of what a payout looks like from here. */
+  transition: width 520ms cubic-bezier(.25, .9, .3, 1), background-color 400ms ease;
+}
+
+.score-bar[data-close="true"] .score-bar-fill {
+  /* Warm rather than hot: three steps, so "in the running" and "about to take
+     it" do not read as the same thing across a whole scoreboard. */
+  background: color-mix(in srgb, var(--accent) 62%, var(--ink));
+  animation: scoreRunPulse 1.6s ease-in-out infinite;
+}
+
+.score-bar[data-brink="true"] .score-bar-fill {
+  background: var(--accent);
+}
+
+.score-bar[data-brink="true"] {
+  height: 5px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ...and the line it belongs to warms up with it, so the seat about to take
+   the game reads as hot from across the room rather than on inspection. */
+[data-testid="score-row"][data-brink="true"] {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 12%, transparent),
+    transparent 88%
+  );
+  border-radius: 2px;
+}
+
+.score-bar[data-brink="true"] .score-bar-fill {
+  animation: scoreRunBrink 900ms ease-in-out infinite;
+}
+
+/* The last of it, scratched past the end of the line — the bar is full and the
+   pencil kept going. */
+.score-bar[data-brink="true"]::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: var(--run, 0%);
+  width: 10px;
+  transform: translateX(-4px) skewX(-18deg);
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0.5;
+  animation: scoreRunEdge 900ms ease-in-out infinite;
+}
+
+@keyframes scoreRunPulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+@keyframes scoreRunBrink {
+  0%, 100% { opacity: 0.8; box-shadow: 0 0 0 rgba(176, 68, 50, 0); }
+  50% { opacity: 1; box-shadow: 0 0 9px 1px rgba(176, 68, 50, 0.55); }
+}
+
+@keyframes scoreRunEdge {
+  0%, 100% { opacity: 0.35; transform: translateX(-4px) skewX(-18deg) scaleY(1); }
+  50% { opacity: 0.8; transform: translateX(-1px) skewX(-18deg) scaleY(1.3); }
+}
+
+.score-brink-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  color: var(--card-face);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  transform: rotate(-2deg);
+  animation: brinkTag 1.8s ease-in-out infinite;
+}
+
+/* A total that has just been written down. */
+.score-total {
+  animation: scoreLand 520ms cubic-bezier(.2, .9, .3, 1.4) both;
+}
+
+@keyframes scoreLand {
+  0% { transform: translateY(-6px) scale(1.35); color: var(--accent); }
+  60% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(0) scale(1); color: var(--ink); }
+}
+
+@keyframes brinkTag {
+  0%, 100% { transform: rotate(-2deg) scale(1); }
+  50% { transform: rotate(-2deg) scale(1.07); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shake,
   .shake-bust {
@@ -749,6 +872,46 @@ label {
 .fizzle-caption {
   animation: fadeUp calc(var(--fizzle-dur, 2400ms) * 0.14) ease-out both;
   animation-delay: calc(var(--fizzle-dur, 2400ms) * 0.34);
+}
+
+/* ─── A gambler card turning over ───
+   The mode's signature moment, and the longest hold in the game. Everything is
+   written as a fraction of --reveal-dur because that number is not fixed: a
+   card this table has not seen is held nearly three times as long as one it
+   has, and the whole shape of the animation has to stretch with it rather than
+   the card simply sitting still for longer at the end. */
+
+.gambler-reveal {
+  animation: gamblerRevealNote var(--reveal-dur, 1600ms) ease-out both;
+}
+
+/* Only the fade is on the whole thing; the card does its own turning over
+   inside it. Everything is a fraction of --reveal-dur because that number is
+   not fixed — a card this table has not seen is held nearly three times as
+   long, and the shape has to stretch with it rather than the card simply
+   sitting still for longer at the end. */
+@keyframes gamblerRevealNote {
+  0%   { opacity: 0; }
+  6%   { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* The card turns face up as it arrives, which is the whole gesture: it was in a
+   hand nobody could see, and now it is not.
+   How big it is drawn is deliberately *not* in here — it is a plain transform
+   on the element outside this one, so that switching the animation off for
+   reduced motion loses the turn and keeps the size. A card blown up to be read
+   still has to be blown up when nothing is moving. */
+.gambler-reveal-card {
+  animation: gamblerRevealFlip calc(var(--reveal-dur, 1600ms) * 0.16) cubic-bezier(.2, .9, .3, 1.3) both;
+  transform-origin: center;
+}
+
+@keyframes gamblerRevealFlip {
+  0%   { transform: rotateY(88deg); }
+  70%  { transform: rotateY(-7deg); }
+  100% { transform: rotateY(0deg); }
 }
 
 /* ─── Points changing hands ───
@@ -1079,10 +1242,146 @@ label {
   filter: drop-shadow(2px 3px 0 rgba(176, 68, 50, 0.4));
 }
 
+/* ...and one that can still be taken back out of the answer, which is every
+   picked card until the last of them completes the pick and sends it. A
+   two-card pick is two decisions, and the first one has to be undoable or a
+   misclick spends the card. */
+.card-takeable {
+  cursor: pointer;
+}
+
+.card-takeable:hover {
+  outline-style: dashed;
+  filter: drop-shadow(2px 3px 0 rgba(176, 68, 50, 0.2)) grayscale(0.35);
+}
+
 .card-unpickable {
   cursor: not-allowed;
   opacity: 0.35;
   filter: grayscale(0.7);
+}
+
+/* ─── The run at the target ───
+   A pencil line under each name on the scoreboard, filled as far as that player
+   has got. It is quiet for most of a game on purpose: a bar that shouts from
+   the first round has nothing left to say in the last one.
+
+   Two thresholds, and the second is the one worth having. At `close` the fill
+   goes to the accent and starts breathing. At `brink` it is struck twice as
+   heavily, glows, and the row says "match point" — which is the moment the
+   scoreboard stops being a tally and becomes the thing everybody is watching. */
+
+.score-bar {
+  position: relative;
+  height: 3px;
+  margin: 3px 2px 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  overflow: visible;
+}
+
+.score-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--run, 0%);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+  /* The run is drawn rather than snapped: points landing on the scoreboard
+     push it along, which is the whole of what a payout looks like from here. */
+  transition: width 520ms cubic-bezier(.25, .9, .3, 1), background-color 400ms ease;
+}
+
+.score-bar[data-close="true"] .score-bar-fill {
+  /* Warm rather than hot: three steps, so "in the running" and "about to take
+     it" do not read as the same thing across a whole scoreboard. */
+  background: color-mix(in srgb, var(--accent) 62%, var(--ink));
+  animation: scoreRunPulse 1.6s ease-in-out infinite;
+}
+
+.score-bar[data-brink="true"] .score-bar-fill {
+  background: var(--accent);
+}
+
+.score-bar[data-brink="true"] {
+  height: 5px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ...and the line it belongs to warms up with it, so the seat about to take
+   the game reads as hot from across the room rather than on inspection. */
+[data-testid="score-row"][data-brink="true"] {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 12%, transparent),
+    transparent 88%
+  );
+  border-radius: 2px;
+}
+
+.score-bar[data-brink="true"] .score-bar-fill {
+  animation: scoreRunBrink 900ms ease-in-out infinite;
+}
+
+/* The last of it, scratched past the end of the line — the bar is full and the
+   pencil kept going. */
+.score-bar[data-brink="true"]::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: var(--run, 0%);
+  width: 10px;
+  transform: translateX(-4px) skewX(-18deg);
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0.5;
+  animation: scoreRunEdge 900ms ease-in-out infinite;
+}
+
+@keyframes scoreRunPulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+@keyframes scoreRunBrink {
+  0%, 100% { opacity: 0.8; box-shadow: 0 0 0 rgba(176, 68, 50, 0); }
+  50% { opacity: 1; box-shadow: 0 0 9px 1px rgba(176, 68, 50, 0.55); }
+}
+
+@keyframes scoreRunEdge {
+  0%, 100% { opacity: 0.35; transform: translateX(-4px) skewX(-18deg) scaleY(1); }
+  50% { opacity: 0.8; transform: translateX(-1px) skewX(-18deg) scaleY(1.3); }
+}
+
+.score-brink-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  color: var(--card-face);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  transform: rotate(-2deg);
+  animation: brinkTag 1.8s ease-in-out infinite;
+}
+
+/* A total that has just been written down. */
+.score-total {
+  animation: scoreLand 520ms cubic-bezier(.2, .9, .3, 1.4) both;
+}
+
+@keyframes scoreLand {
+  0% { transform: translateY(-6px) scale(1.35); color: var(--accent); }
+  60% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(0) scale(1); color: var(--ink); }
+}
+
+@keyframes brinkTag {
+  0%, 100% { transform: rotate(-2deg) scale(1); }
+  50% { transform: rotate(-2deg) scale(1.07); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1097,9 +1396,20 @@ label {
   .fizzle-note,
   .fizzle-strike,
   .fizzle-caption,
+  .gambler-reveal,
+  .gambler-reveal-card,
   .points-toll,
   .points-take,
+  .score-total,
+  .score-bar-fill,
+  .score-brink-tag,
   .showdown {
     animation: none;
+  }
+
+  /* The bar still fills — that is information, not decoration — it simply
+     arrives rather than being drawn along. */
+  .score-bar-fill {
+    transition: none;
   }
 }

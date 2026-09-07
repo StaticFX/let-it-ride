@@ -128,6 +128,23 @@ test.describe('a card that points at cards', () => {
       // Two cards off one seat would trade a hand with itself, so the rest of
       // that seat's cards step back with it.
       expect(halfway.pickableCards.length).toBeGreaterThan(0)
+
+      // A pick that is not finished is a pick that can be taken back. The
+      // answer only goes to the server on the click that completes it, so
+      // everything up to that point is still mine to change.
+      expect(halfway.takeableCards, 'a half-made pick could not be undone').toContain(first)
+      await app.table.unpickCard(first)
+      const undone = await app.table.playUntil(
+        (snapshot) =>
+          snapshot.screen !== 'board' ||
+          !snapshot.pending?.mine ||
+          !snapshot.pickedCards.includes(first),
+        { timeoutMs: 20_000, description: 'the pick to be taken back' },
+      )
+      if (undone.screen === 'board' && undone.pending?.mine) {
+        expect(undone.pickableCards, 'the card that was taken back is on offer again').toContain(first)
+        await app.table.pickCard(first)
+      }
     }
 
     // Playing on answers the rest of it; the prompt has to let go either way.

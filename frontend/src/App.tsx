@@ -4,6 +4,7 @@ import { fetchCatalog } from './net/client'
 import { Lobby } from './components/pages/Lobby'
 import { GameBoard } from './components/game/GameBoard'
 import { RoundSummary } from './components/pages/RoundSummary'
+import { Interlude } from './components/pages/Interlude'
 import { GameOver } from './components/pages/GameOver'
 import { EscapeMenu } from './components/overlays/EscapeMenu'
 import { DisconnectOverlay } from './components/overlays/DisconnectOverlay'
@@ -14,6 +15,7 @@ import { prefetchAudio, unlockAudio } from './audio/sfx'
 function App() {
   const phase = useGameStore((s) => s.state?.phase) ?? 'LOBBY'
   const outroUntil = useGameStore((s) => s.state?.roundOutroUntil)
+  const interlude = useGameStore((s) => s.state?.interlude)
   const catalog = useGameStore((s) => s.catalog)
   const [catalogError, setCatalogError] = useState<string | null>(null)
 
@@ -62,7 +64,20 @@ function App() {
 
   const closing = phase === 'ROUND_END' || phase === 'GAME_END'
   const holdingTable = closing && !!outroUntil && clock < outroUntil
-  const displayPhase = holdingTable ? 'PLAYING' : phase
+  /**
+   * The shop is `ROUND_END` with a shop on it rather than a phase of its own.
+   *
+   * A new value in `GamePhase` is the one wire change that cannot degrade: a tab
+   * that has not reloaded would fall through the switch below to `default` and
+   * dump the player into the lobby. This way an older client shows the plain
+   * scoreboard and waits for the host, which is exactly the classic
+   * between-rounds behaviour and is correct.
+   *
+   * It is sequenced *after* the summary by the server opening it late, not by a
+   * second clock over here.
+   */
+  const shopping = phase === 'ROUND_END' && !!interlude
+  const displayPhase = holdingTable ? 'PLAYING' : shopping ? 'INTERLUDE' : phase
 
   // A card animates in from the deck once per trip. The table prunes as it
   // goes, so this is only for the stretches where there is no table to do it —
@@ -94,6 +109,9 @@ function App() {
   switch (displayPhase) {
     case 'PLAYING':
       screen = <GameBoard />
+      break
+    case 'INTERLUDE':
+      screen = <Interlude />
       break
     case 'ROUND_END':
       screen = <RoundSummary />

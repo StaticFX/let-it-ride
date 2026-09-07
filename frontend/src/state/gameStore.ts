@@ -3,6 +3,7 @@ import type {
   ActionCardInfo,
   Catalog,
   DeckPresetInfo,
+  GamblerCardInfo,
   GameEvent,
   GameStateView,
   LobbyRuleInfo,
@@ -104,6 +105,18 @@ export function findAction(catalog: Catalog | null, defId?: string): ActionCardI
 export function findPassive(catalog: Catalog | null, defId?: string): PassiveCardInfo | undefined {
   if (!catalog || !defId) return undefined
   return catalog.passives.find((p) => p.id === defId)
+}
+
+/**
+ * A gambler card's face — rolling rules.
+ *
+ * Its own lookup rather than a third arm on the two above, because a gambler
+ * card's id lives in a catalog of its own and asking the wrong one would draw
+ * the wrong card entirely rather than simply finding nothing.
+ */
+export function findGambler(catalog: Catalog | null, defId?: string): GamblerCardInfo | undefined {
+  if (!catalog || !defId) return undefined
+  return catalog.gamblers?.find((g) => g.id === defId)
 }
 
 export function findRule(catalog: Catalog | null, id: string): LobbyRuleInfo | undefined {

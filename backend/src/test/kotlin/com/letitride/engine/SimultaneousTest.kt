@@ -49,10 +49,23 @@ class SimultaneousTest {
     }
 
     @Test
-    fun `winning the throw trades the two scores`() {
+    fun `the throws are read before the scores move`() {
         var state = t(trailing(), GameAction.Hit("a"))
         state = t(state, GameAction.PlayAction("a", "a", COMEBACK_ID, choice = THROW_PAPER))
         val result = tr(state, GameAction.PlayAction("c", "a", COMEBACK_ID, choice = THROW_ROCK))
+
+        assertTrue(result.events.filterIsInstance<GameEvent.Throws>().single().challengerWon)
+        assertEquals(5, result.state.player("a")!!.score, "nothing has moved yet")
+        assertEquals(1, result.state.pendingOutcomes.size, "the swap is waiting on the reveal")
+    }
+
+    @Test
+    fun `winning the throw trades the two scores`() {
+        var state = t(trailing(), GameAction.Hit("a"))
+        state = t(state, GameAction.PlayAction("a", "a", COMEBACK_ID, choice = THROW_PAPER))
+        // The second throw turns them both over; the scores move once the table
+        // has read them.
+        val result = settled(tr(state, GameAction.PlayAction("c", "a", COMEBACK_ID, choice = THROW_ROCK)))
         state = result.state
 
         assertNull(state.pendingAction)
@@ -140,8 +153,13 @@ class SimultaneousTest {
         )
     }
 
+    /**
+     * One bet, and then whatever the table owes once it is in — the last bet
+     * turns them all over, and what that costs lands after everybody has read
+     * them. See [PendingOutcome].
+     */
     private fun bet(state: GameState, playerId: String, cardId: String) =
-        t(state, GameAction.PlayAction(playerId, playerId, ALL_IN_ID, cards = listOf(cardId)))
+        settle(t(state, GameAction.PlayAction(playerId, playerId, ALL_IN_ID, cards = listOf(cardId))))
 
     @Test
     fun `it asks everybody holding a hand`() {
@@ -172,7 +190,12 @@ class SimultaneousTest {
         state = bet(state, "a", "a-2")
         state = bet(state, "b", "b-9")
         state = bet(state, "c", "c-5")
-        val result = tr(state, GameAction.PlayAction("d", "d", ALL_IN_ID, cards = listOf("d-7")))
+        val thrown = tr(state, GameAction.PlayAction("d", "d", ALL_IN_ID, cards = listOf("d-7")))
+        assertTrue(
+            thrown.state.players.none { p -> p.passives.any { it.defId == HALVED.id } },
+            "the bets are read before they are paid for",
+        )
+        val result = settled(thrown)
         state = result.state
 
         assertNull(state.pendingAction)

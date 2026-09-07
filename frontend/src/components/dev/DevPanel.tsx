@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGameStore } from '../../state/gameStore'
 import { connect, createRoom, leaveGame, send } from '../../net/client'
-import type { Card, DevPlayerPatch, DevSetup, Player, PlayerStatus } from '../../game/types'
+import { modeOf, type Card, type DevPlayerPatch, type DevSetup, type Player, type PlayerStatus } from '../../game/types'
 import { PlayingCard } from '../cards/PlayingCard'
 import { DevCardPicker } from './DevCardPicker'
 import { buildPalette, buildScenarios, cardName } from './devSetup'
@@ -31,6 +31,7 @@ type Picking =
   | { kind: 'stack' }
   | { kind: 'hand'; playerId: string }
   | { kind: 'passives'; playerId: string }
+  | { kind: 'gamblers'; playerId: string }
   | null
 
 const STATUSES: PlayerStatus[] = ['active', 'stayed', 'bust']
@@ -106,7 +107,11 @@ export function DevPanel() {
     () => (catalog ? buildPalette(deck ?? catalog.decks[0]?.deck, catalog) : null),
     [catalog, deck],
   )
-  const scenarios = useMemo(() => (state ? buildScenarios(state, meId) : []), [state, meId])
+  const scenarios = useMemo(() => (state ? buildScenarios(state, meId, catalog) : []), [state, meId, catalog])
+  // Everybody's tray, which only a server running the test hooks sends — see
+  // `devGamblers`. Withheld in classic too, where every tray is legitimately
+  // empty and a row of them would be five controls that do nothing.
+  const trays = modeOf(state?.config) === 'rollingRules' ? state?.devGamblers : undefined
   // The cards no deck contains — a bomb, an unlucky 7 — which is exactly the
   // set worth one click per seat rather than a trip through the card picker.
   const effects = useMemo(
@@ -136,6 +141,8 @@ export function DevPanel() {
     if (!player) return
     if (picking.kind === 'hand') {
       patchPlayer(player.id, { hand: [...player.hand.map(cardName), name] })
+    } else if (picking.kind === 'gamblers') {
+      patchPlayer(player.id, { gamblers: [...(trays?.[player.id] ?? []).map(cardName), name] })
     } else {
       patchPlayer(player.id, { passives: [...player.passives.map(cardName), name] })
     }
@@ -213,6 +220,7 @@ export function DevPanel() {
                 players={state.players}
                 meId={meId}
                 effects={effects}
+                trays={trays}
                 onPatch={patchPlayer}
                 picking={picking}
                 onPickerOpen={setPicking}
@@ -405,6 +413,7 @@ function PlayersTab({
   players,
   meId,
   effects,
+  trays,
   onPatch,
   picking,
   onPickerOpen,
@@ -414,6 +423,8 @@ function PlayersTab({
   meId: string | null
   /** The cards nothing deals — see the effect cards in `CardDefs`. */
   effects: { id: string; name: string }[]
+  /** Everybody's hidden tray, or nothing at all when the mode is not on. */
+  trays: Record<string, Card[]> | undefined
   onPatch: (playerId: string, patch: Omit<DevPlayerPatch, 'playerId'>) => void
   picking: Picking
   onPickerOpen: (picking: Picking) => void
@@ -424,6 +435,9 @@ function PlayersTab({
       {players.map((player) => {
         const hand = player.hand.map(cardName)
         const passives = player.passives.map(cardName)
+        // Undefined rather than empty when the mode is off, so a classic table
+        // shows no row at all instead of an empty one nothing can go into.
+        const tray = trays?.[player.id]
         return (
           <div
             key={player.id}
@@ -473,6 +487,21 @@ function PlayersTab({
               testId="dev-passives"
             />
             {picking?.kind === 'passives' && picking.playerId === player.id && picker}
+
+            {tray && (
+              <>
+                <CardRow
+                  label="tray"
+                  cards={tray}
+                  onRemove={(index) =>
+                    onPatch(player.id, { gamblers: tray.map(cardName).filter((_, i) => i !== index) })
+                  }
+                  onAdd={() => onPickerOpen({ kind: 'gamblers', playerId: player.id })}
+                  testId="dev-gamblers"
+                />
+                {picking?.kind === 'gamblers' && picking.playerId === player.id && picker}
+              </>
+            )}
 
             {effects.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1">

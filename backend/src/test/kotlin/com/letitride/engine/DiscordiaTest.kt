@@ -155,16 +155,44 @@ class DiscordiaTest {
     }
 
     @Test
-    fun `a round that only cost points never puts anybody in the red`() {
-        // b's hand is worth 2 and the toll is 10; without "extreme" the round
-        // bottoms out at nothing rather than taking the difference off the
-        // scoreboard.
+    fun `a toll is worth the same on a bad round as on a good one`() {
+        // b's hand is worth 2 and the toll is 10. Every other way of losing
+        // points bottoms out at nothing; this one does not, or "takes 10 points
+        // off you" would mean ten points or two, whichever the round allowed.
         var state = holding(withPending(FREEZE.id), "b", DISCORDIA.id)
         state = t(state, GameAction.PlayAction("a", "b", FREEZE.id))
         state = t(state, GameAction.Stay("a"))
 
-        assertEquals(0, state.roundDeltas["b"])
-        assertEquals(0, state.player("b")!!.score)
+        assertEquals(-8, state.roundDeltas["b"], "their 2, and 8 more")
+        assertEquals(-8, state.player("b")!!.score)
+        assertEquals(DISCORDIA_TOLL + 1, state.roundDeltas["a"], "and all ten of them landed")
+    }
+
+    @Test
+    fun `the floor only comes down as far as what was taken`() {
+        // A toll of ten cannot cost eleven. What a player earns still cannot put
+        // them in the red — only what was taken from them can, and only that far.
+        var state = holding(withPending(FREEZE.id), "b", DISCORDIA.id)
+        state = t(state, GameAction.PlayAction("a", "b", FREEZE.id))
+        // b's hand is worth nothing at all: the toll is the whole of it.
+        state = state.copy(
+            players = state.players.map { if (it.id == "b") it.copy(hand = emptyList(), handValue = 0) else it },
+        )
+        state = t(state, GameAction.Stay("a"))
+
+        assertEquals(-DISCORDIA_TOLL, state.roundDeltas["b"])
+    }
+
+    @Test
+    fun `an anti-flip deduction still stops at nothing`() {
+        // The floor is lifted by a toll, not by every way of losing points.
+        var state = holding(withPending(FREEZE.id), "b", DISCORDIA.id)
+        state = t(state, GameAction.PlayAction("a", "b", FREEZE.id))
+        // Something else took 40 off them as well; that part is still floored.
+        state = state.copy(roundAdjustments = state.roundAdjustments + ("b" to -50))
+        state = t(state, GameAction.Stay("a"))
+
+        assertEquals(-DISCORDIA_TOLL, state.roundDeltas["b"], "the toll bites; the rest does not")
     }
 
     @Test

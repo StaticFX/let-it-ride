@@ -83,8 +83,12 @@ test.describe('the turn clock', () => {
     test.slow()
 
     await app.hostVersusBots('devin')
+    // The friendly deck, which has no attacks in it. A spec about the clock has
+    // to be given a turn to put a clock on, and any deck that can take a player
+    // out can take this one out before it has had one — a freeze drawn on the
+    // opening deal ends your round before it starts.
     // The shortest clock the lobby offers, so this does not take all day.
-    await app.configure({ turnSeconds: 10 })
+    await app.configure({ deck: 'friendly', turnSeconds: 10 })
     await expect(page.getByTestId('table-timer')).toHaveText('10s')
 
     await app.start()
@@ -112,7 +116,8 @@ test.describe('the turn clock', () => {
 
   test('is shown for a human and counts down; bots are not on it', async ({ app, page }) => {
     await app.hostVersusBots('devin')
-    await app.configure({ turnSeconds: 30 })
+    // No attacks — see above; the clock needs a turn to be shown on.
+    await app.configure({ deck: 'friendly', turnSeconds: 30 })
     await app.start()
 
     await app.table.playUntil((s) => s.myTurn && s.buttonsVisible, {
@@ -163,6 +168,9 @@ test.describe('the table under stress', () => {
     test.slow()
 
     await app.hostVersusBots('devin')
+    // No attacks — the burst has to land on a turn, and a deck that can take
+    // this seat out can take it out before it has one. See the clock above.
+    await app.configure({ deck: 'friendly' })
     await app.start()
 
     const before = await app.table.playUntil((s) => s.myTurn && s.buttonsVisible, {

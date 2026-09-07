@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Card as CardType, Player } from '../../game/types'
-import { useGame } from '../../hooks/useGame'
+import { PAYOUT_FLIGHT_MS, useGame } from '../../hooks/useGame'
 import { useWindowSize } from '../../hooks/useWindowSize'
-import { findAction, useCatalog } from '../../state/gameStore'
+import { findAction, findGambler, useCatalog } from '../../state/gameStore'
 import { RoughBox } from '../ui/RoughShapes'
 import { PlayingCard } from '../cards/PlayingCard'
 import { CardBack } from '../cards/CardBack'
@@ -30,7 +30,11 @@ import { SpinningBottle } from '../overlays/SpinningBottle'
 import { TableSwirl } from '../overlays/TableSwirl'
 import { Showdown } from '../overlays/Showdown'
 import { FizzleNote } from '../overlays/FizzleNote'
+import { GamblerReveal } from '../overlays/GamblerReveal'
+import { ResponseStack } from '../overlays/ResponseStack'
+import { CounteredCard } from '../overlays/CounteredCard'
 import { PointsFlight } from '../overlays/PointsFlight'
+import { PointsAward } from '../overlays/PointsAward'
 import { Shop } from '../overlays/Shop'
 
 const SEAT_POSITIONS = [
@@ -51,6 +55,9 @@ const DEFERRED_PROMPTS: Record<string, string> = {
   throw: 'throw!',
   bet: 'bet a card, face down',
   buy: 'buy something',
+  gambler: 'your call!',
+  redirect: 'keep it, or hand it on?',
+  secondOpinion: 'keep it, or take another?',
 }
 
 /**
@@ -73,20 +80,29 @@ export function GameBoard() {
   const { w, h } = useWindowSize()
   const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null)
   const [inspectedCard, setInspectedCard] = useState<CardType | null>(null)
+  // Where each player's line on the scoreboard is, so the round's points have
+  // somewhere to land. Measured when a payout starts rather than kept in state:
+  // the scoreboard does not move, and a rect in state is a rect that goes stale.
+  const scoreRows = useRef(new Map<string, HTMLDivElement>())
+  const measureScoreRow = useCallback(
+    (playerId: string) => scoreRows.current.get(playerId)?.getBoundingClientRect() ?? null,
+    [],
+  )
   // Whether the felt is being drawn by the shader. If it is not — no WebGL2 —
   // the CSS vignette below goes back to carrying the turn on its own.
   const [feltLive, setFeltLive] = useState(false)
 
   const {
     players, me, others, currentPlayer, turnIndex, round, roundStartPlayer,
-    deckCount, discardCount, localPlayerId, isMyTurn, isEliminated, mustDraw,
+    deckCount, discardCount, localPlayerId, isMyTurn, isEliminated, mustDraw, cannotStay,
     isDealing, dealingPlayerId, pendingDef, isPickingTarget, pendingIsLocal, validTargets,
     targetChosen, pickTarget, hit, stay, animating,
     pendingOptions, needsChoice, seatIsImplied, optionChosen, pickOption,
-    picksCards, picksNeeded, cardsChosen, canPickCard, pickCard, pendingIsDeferred, pendingPhase, validCards,
+    picksCards, picksNeeded, cardsChosen, canPickCard, canUnpickCard, pickCard,
+    pendingIsDeferred, pendingPhase, validCards,
     picksFromCatalog, offers, purse, pickOffer,
     pendingAwaitingOthers, responders, answeredBy,
-    animations, bust, flights, slots, dismissSlots,
+    worthOf, writtenOff, totalOf, award, animations, bust, flights, slots, dismissSlots,
     showRoundIntro, showRoundOutro, introUntil, outroUntil, timer,
     clockIsClose, clockUrgency,
   } = game
@@ -102,6 +118,14 @@ export function GameBoard() {
   const deckCenter = { x: w / 2 - 20, y: h * 0.42 }
   /** Where a card being played is held up before it is sent at a seat. */
   const cardStage = { x: w / 2, y: h * 0.62 }
+  /**
+   * ...and where a pile of cards answering each other sits, which is higher.
+   *
+   * A stack is taller than one card and it comes with a button underneath it,
+   * and at the card stage the two of them were printed straight across the
+   * local player's hand.
+   */
+  const responseStage = { x: w / 2, y: h * 0.55 }
 
   /**
    * Where a seat sits on screen. [others] is already in play order starting
@@ -150,6 +174,16 @@ export function GameBoard() {
   const tableSpin = animations.find((a) => a.type === 'tableSpun')
   const tolls = animations.filter((a) => a.type === 'pointsTransferred')
   const showdown = animations.find((a) => a.type === 'showdown')
+  const reveals = animations.filter((a) => a.type === 'gamblerPlayed')
+  const counters = animations.filter((a) => a.type === 'countered')
+
+  // Which of the local player's gambler cards the server says are live right
+  // now. The client only ever reads this list — whether a window is open is a
+  // rule, and rules do not live here.
+  const playableGamblerIds = game.gamblerHand
+    .filter((card) => game.canPlayGambler(card.id))
+    .map((card) => card.id)
+  const hasPlayable = playableGamblerIds.length > 0
 
   /**
    * How far [playerId]'s hand has to be thrown back for the spin, or null when
@@ -221,11 +255,17 @@ export function GameBoard() {
     if (!picksCards) return null
     const picked = cardsChosen.includes(card.id)
     const canPick = canPickCard(card.id)
+    // A card already picked stays clickable while the answer is unfinished —
+    // clicking it is how you take it back.
+    const canUnpick = canUnpickCard(card.id)
     return {
       picked,
       canPick,
-      className: picked ? 'card-picked' : canPick ? 'card-pickable' : 'card-unpickable',
-      onClick: canPick
+      canUnpick,
+      className: picked
+        ? `card-picked ${canUnpick ? 'card-takeable' : ''}`
+        : canPick ? 'card-pickable' : 'card-unpickable',
+      onClick: canPick || canUnpick
         ? (e: React.MouseEvent) => {
             e.stopPropagation()
             pickCard(card.id)
@@ -253,6 +293,7 @@ export function GameBoard() {
         data-card-label={card.label}
         data-pickable={pick?.canPick}
         data-picked={pick?.picked}
+        data-unpickable={pick?.canUnpick}
         className={`origin-bottom cursor-pointer ${pick?.className ?? ''}`}
         style={{
           marginLeft: idx === 0 ? 0 : laidOut ? 3 : size === 'normal' ? (spread ? -32 : -38) : spread ? -18 : -30,
@@ -287,6 +328,10 @@ export function GameBoard() {
       data-dealing={isDealing}
       data-picking-target={isPickingTarget}
       data-my-status={me?.status ?? 'none'}
+      data-mode={game.isRollingRules ? 'rollingRules' : 'classic'}
+      data-responding={game.canPass}
+      data-purse={game.purse}
+      data-minted-gamblers={game.state?.mintedGamblers ?? 0}
     >
       {showRoundIntro && introUntil && (
         <RoundIntro
@@ -442,9 +487,11 @@ export function GameBoard() {
             data-player-id={p.id}
             data-player-name={p.name}
             data-status={p.status}
-            data-hand-value={p.handValue}
+            data-hand-value={worthOf(p)}
             data-hand-size={p.hand.length}
             data-passive-count={p.passives.length}
+            data-gambler-count={game.gamblerCounts?.[p.id] ?? 0}
+            data-gambler-slots={game.state?.gamblerLimits?.[p.id] ?? 0}
             data-targetable={targetable}
             data-active={isActive}
             data-bot={p.isBot}
@@ -481,7 +528,7 @@ export function GameBoard() {
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`number text-[22px] leading-none ${p.status === 'bust' ? 'text-[var(--accent)]' : ''}`}>
-                      {p.handValue}
+                      {worthOf(p)}
                     </span>
                     {statusBadge(p)}
                     {timedOutIds.includes(p.id) && <span className="status-badge border border-[var(--ink-soft)]">timed out</span>}
@@ -516,6 +563,7 @@ export function GameBoard() {
                           data-card-def-id={card.defId}
                           data-pickable={pick?.canPick}
                           data-picked={pick?.picked}
+                          data-unpickable={pick?.canUnpick}
                           className={`card-fan-transition opacity-85 cursor-pointer ${pick?.className ?? ''}`}
                           style={{
                             marginLeft: idx === 0 ? 0 : isLaidOut(p) ? 3 : -30,
@@ -534,6 +582,36 @@ export function GameBoard() {
                   )}
                 </div>
               </SpunHand>
+
+              {/* What they are carrying, and only how much of it.
+                  Backs rather than nothing at all: the cap is public, so a seat
+                  that is full has to look full, and a rack that fills up over
+                  an evening is most of what makes the mode readable from across
+                  the table. Never wrapped in [DealtCard] — these were not dealt
+                  from the pile in front of you. */}
+              {game.isRollingRules && (game.gamblerCounts?.[p.id] ?? 0) > 0 && (
+                <div
+                  className="flex items-center justify-center relative mt-1"
+                  data-testid="gambler-backs"
+                  data-count={game.gamblerCounts?.[p.id] ?? 0}
+                >
+                  {Array.from({ length: game.gamblerCounts?.[p.id] ?? 0 }).map((_, idx) => (
+                    <div
+                      key={idx}
+                      className="relative"
+                      style={{
+                        marginLeft: idx === 0 ? 0 : -34,
+                        // Big enough to count from across the table, which is
+                        // the whole job of a rack you cannot read.
+                        transform: `scale(0.78) rotate(${(idx - 2) * 3}deg)`,
+                        transformOrigin: 'center',
+                      }}
+                    >
+                      <CardBack size="small" variant="gambler" />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )
@@ -568,9 +646,11 @@ export function GameBoard() {
                 data-player-id={me.id}
                 data-player-name={me.name}
                 data-status={me.status}
-                data-hand-value={me.handValue}
+                data-hand-value={worthOf(me)}
                 data-hand-size={me.hand.length}
                 data-passive-count={me.passives.length}
+                data-gambler-count={game.gamblerCounts?.[me.id] ?? 0}
+                data-gambler-slots={game.gamblerSlots}
                 data-targetable={targetable}
                 className={`flex items-end gap-[18px] px-4 py-2 relative transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)] ${isFrozen(me.id) ? 'frozen-seat' : ''}`}
                 style={{
@@ -598,7 +678,7 @@ export function GameBoard() {
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className={`number text-[28px] leading-none ${me.status === 'bust' ? 'text-[var(--accent)]' : ''}`}>
-                          {me.handValue}
+                          {worthOf(me)}
                         </span>
                         {statusBadge(me)}
                       </div>
@@ -635,6 +715,7 @@ export function GameBoard() {
                             data-card-def-id={card.defId}
                             data-pickable={pick?.canPick}
                             data-picked={pick?.picked}
+                            data-unpickable={pick?.canUnpick}
                             className={`card-fan-transition-slow opacity-85 cursor-pointer ${pick?.className ?? ''}`}
                             style={{
                               marginLeft: idx === 0 ? 0 : isLaidOut(me) ? 3 : -38,
@@ -653,6 +734,88 @@ export function GameBoard() {
                     )}
                   </div>
                 </SpunHand>
+
+                {/* The hidden hand.
+                    A sibling of [SpunHand] rather than something inside it, and
+                    that placement is load-bearing: the spin slides a whole group
+                    across the table to another chair, and a hand nobody can see
+                    does not change seats when the hands do. It also sits outside
+                    the dimming a finished seat gets, because a card played when
+                    you are out is one of the things this hand is *for*. */}
+                {game.isRollingRules && (
+                  <div
+                    className="flex items-end pb-1 relative"
+                    style={{ zIndex: hasPlayable ? 35 : 9 }}
+                    data-testid="gambler-hand"
+                    data-count={game.gamblerHand.length}
+                    data-slots={game.gamblerSlots}
+                    data-playable={playableGamblerIds.join(' ')}
+                  >
+                    {game.gamblerHand.map((card, idx) => {
+                      const playable = game.canPlayGambler(card.id)
+                      const offered = game.offeredGambler === card.id
+                      const info = findGambler(catalog, card.defId)
+                      return (
+                        <div
+                          key={card.id}
+                          data-testid="gambler-card"
+                          data-card-id={card.id}
+                          data-card-def-id={card.defId}
+                          data-gambler="true"
+                          data-rarity={info?.rarity ?? ''}
+                          data-window={info?.window ?? ''}
+                          data-playable={playable}
+                          data-offered={offered}
+                          onClick={
+                            playable
+                              ? () => game.playGambler(card.id)
+                              : () => setInspectedCard(card)
+                          }
+                          className={`card-fan-transition cursor-pointer ${
+                            offered ? 'card-picked' : playable ? 'card-pickable' : ''
+                          }`}
+                          style={{
+                            marginLeft: idx === 0 ? 0 : hasPlayable ? -34 : -58,
+                            transform: `rotate(${(idx - (game.gamblerHand.length - 1) / 2) * 3}deg)`,
+                            // A card you cannot play is still a card you can
+                            // read — held back a little rather than hidden.
+                            opacity: playable || hasPlayable === false ? 1 : 0.55,
+                          }}
+                        >
+                          {/* Not `small`. This is the one hand on the table
+                              nobody can help you read, every face in it is one
+                              you have met once or twice, and at 52px it was the
+                              smallest thing on screen — you could see that you
+                              were holding something purple and no more. */}
+                          <PlayingCard card={card} size="normal" glowing={offered} />
+                        </div>
+                      )
+                    })}
+                    {/* The empty slots, because the cap is public and you have
+                        to be able to see you have room. */}
+                    {Array.from({ length: Math.max(0, game.gamblerSlots - game.gamblerHand.length) }).map(
+                      (_, idx) => (
+                        <div
+                          key={`slot-${idx}`}
+                          data-testid="gambler-slot"
+                          className="relative"
+                          style={{ width: 30, height: 132, marginLeft: idx === 0 && game.gamblerHand.length === 0 ? 0 : 3 }}
+                        >
+                          <RoughBox
+                            width={30}
+                            height={132}
+                            stroke="var(--ink)"
+                            strokeWidth={1}
+                            roughness={2.2}
+                            dashed
+                            boil={false}
+                            style={{ opacity: 0.2 }}
+                          />
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -661,13 +824,84 @@ export function GameBoard() {
 
       {/* Scoreboard */}
       <div className="absolute left-[38px] bottom-9 z-[90]">
-        <Scoreboard players={players} currentPlayerId={currentPlayer?.id || ''} localPlayerId={localPlayerId} />
+        <Scoreboard
+          players={players}
+          currentPlayerId={currentPlayer?.id || ''}
+          localPlayerId={localPlayerId}
+          worth={worthOf}
+          writtenOff={writtenOff}
+          total={totalOf}
+          target={game.state?.config.winCondition === 'first_to_score'
+            ? game.state.config.targetScore
+            : undefined}
+          rowRef={(playerId, element) => {
+            if (element) scoreRows.current.set(playerId, element)
+            else scoreRows.current.delete(playerId)
+          }}
+        />
       </div>
+
+      {/* The round's points, going home one seat at a time. */}
+      {award && (() => {
+        const seat = seatOfId(award.playerId)
+        // Lifted clear of the hand it was made with, rather than written over it.
+        return (
+          <PointsAward
+            key={award.id}
+            points={award.points}
+            playerId={award.playerId}
+            from={{ x: seat.x, y: seat.y - 44 }}
+            measure={measureScoreRow}
+            ms={PAYOUT_FLIGHT_MS}
+          />
+        )
+      })()}
 
       {/* What is being played, opposite the running score */}
       {game.state && (
         <div className="absolute right-[38px] bottom-9 z-[55]">
           <TableNote config={game.state.config} />
+        </div>
+      )}
+
+      {/* Cards answering cards. The pile is where the pending card would be,
+          because it is the same question in a different shape: something is
+          being held over the table and somebody has to say what happens to it. */}
+      {game.responseStack.length > 0 && (
+        <ResponseStack frames={game.responseStack} x={cardStage.x} y={responseStage.y} />
+      )}
+
+      {/* ...and the way to say no.
+          Every other prompt in this game is answered by picking something, so
+          passing needed a control of its own. The other half of the answer is
+          your own tray, which is already lit and takes a click — so the button
+          says what it is for and the sub-line points at the alternative. */}
+      {game.canPass && (
+        <div
+          className="fixed z-[230] -translate-x-1/2 flex flex-col items-center gap-1.5"
+          style={{ left: cardStage.x, top: responseStage.y + 130 }}
+        >
+          <SketchButton
+            variant="ghost"
+            testId="pass"
+            onClick={game.pass}
+            disabled={game.passedThis}
+          >
+            {game.passedThis ? 'letting it stand…' : 'let it stand'}
+          </SketchButton>
+          <small className="text-[var(--ink-soft)]">
+            {playableGamblerIds.length > 0 ? 'or play something' : 'nothing you can play'}
+          </small>
+        </div>
+      )}
+
+      {/* Everybody else is watching the same question. */}
+      {game.responseStack.length > 0 && !game.canPass && game.responseWaiting > 0 && (
+        <div
+          className="fixed z-[200] -translate-x-1/2 pick-target-label"
+          style={{ left: cardStage.x, top: responseStage.y + 130 }}
+        >
+          waiting on {game.responseWaiting}…
         </div>
       )}
 
@@ -831,6 +1065,28 @@ export function GameBoard() {
         />
       ))}
 
+      {counters.map((c) => (
+        <CounteredCard
+          key={c.id}
+          card={c.card}
+          name={players.find((p) => p.id === c.playerId)?.name ?? 'somebody'}
+          returned={c.returned}
+          x={w / 2}
+          y={h * 0.44}
+          ms={c.ms}
+        />
+      ))}
+
+      {reveals.map((r) => (
+        <GamblerReveal
+          key={r.id}
+          card={r.card}
+          name={players.find((p) => p.id === r.playerId)?.name ?? 'somebody'}
+          ms={r.ms}
+          firstSeen={r.firstSeen}
+        />
+      ))}
+
       {coinTosses.map((c) => (
         <CoinToss key={c.id} call={c.call} result={c.result} x={tableCenter.x} y={tableCenter.y} ms={c.ms} />
       ))}
@@ -869,7 +1125,11 @@ export function GameBoard() {
       {/* Action buttons */}
       <div className={`action-buttons ${showButtons ? 'visible' : 'hidden'}`} data-testid="action-buttons" data-visible={showButtons}>
         <SketchButton variant="primary" testId="hit" onClick={hit}>let it ride!</SketchButton>
-        <SketchButton variant="ghost" testId="stay" onClick={stay} disabled={mustDraw}>go out</SketchButton>
+        {/* The id stays put when the wording changes: a card that will not let
+            you stop should say so on the button you are reaching for. */}
+        <SketchButton variant="ghost" testId="stay" onClick={stay} disabled={mustDraw}>
+          {cannotStay ? 'no way out' : 'go out'}
+        </SketchButton>
       </div>
 
       {/* Inspection */}

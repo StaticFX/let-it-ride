@@ -101,6 +101,56 @@ class ActionCardTest {
     }
 
     @Test
+    fun `steal reaches the modifier row as readily as the hand`() {
+        var state = withPending(STEAL.id, openingCards = listOf(num(1), num(2)))
+        state = state.copy(
+            players = state.players.map {
+                // Nothing in their hand at all: everything they have is in front
+                // of them, and a steal takes cards, not hands.
+                if (it.id == "b") {
+                    it.copy(
+                        hand = emptyList(),
+                        handValue = 0,
+                        passives = listOf(passive(DOUBLE_POINTS.id, id = "the-double")),
+                    )
+                } else {
+                    it
+                }
+            },
+        )
+        assertTrue("b" in state.pendingAction!!.validTargets, "a seat holding only modifiers is worth robbing")
+
+        state = t(state, GameAction.PlayAction("a", "b", STEAL.id))
+
+        assertEquals(listOf("the-double"), state.player("a")!!.passives.map { it.id })
+        assertTrue(state.player("b")!!.passives.isEmpty())
+    }
+
+    @Test
+    fun `a stolen modifier is a card you may not have wanted`() {
+        // Reaching into the hand of the player carrying a discordia can come
+        // away with the discordia. That is the card doing its job.
+        var state = withPending(STEAL.id, openingCards = listOf(num(1), num(2)))
+        state = state.copy(
+            players = state.players.map {
+                if (it.id == "b") {
+                    it.copy(
+                        hand = emptyList(),
+                        handValue = 0,
+                        passives = listOf(passive(DISCORDIA.id, id = "the-discordia")),
+                    )
+                } else {
+                    it
+                }
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "b", STEAL.id))
+
+        assertTrue(state.player("a")!!.passives.any { it.id == "the-discordia" })
+    }
+
+    @Test
     fun `swap trades hands and recomputes both totals`() {
         var state = withPending(SWAP.id, openingCards = listOf(num(1), num(12)))
         state = t(state, GameAction.PlayAction("a", "b", SWAP.id))
@@ -124,6 +174,24 @@ class ActionCardTest {
 
         assertEquals(listOf("the-discordia"), state.player("a")!!.passives.map { it.id })
         assertEquals(listOf("the-double"), state.player("b")!!.passives.map { it.id })
+    }
+
+    @Test
+    fun `swap is offered a seat holding nothing but modifiers`() {
+        var state = withPending(SWAP.id, players = listOf("a", "b", "c"), openingCards = listOf(num(1), num(2), num(3)))
+        state = state.copy(
+            players = state.players.map {
+                // b has spent their hand and is sitting behind a x2 alone. That
+                // is well worth swapping for, and a rule that counted only the
+                // hand did not offer them.
+                if (it.id == "b") it.copy(hand = emptyList(), handValue = 0, passives = listOf(passive(DOUBLE_POINTS.id)))
+                else it
+            },
+        )
+
+        val targets = state.pendingAction!!.validTargets
+        assertTrue("b" in targets, "a modifier row is something to swap for")
+        assertTrue("c" in targets)
     }
 
     @Test
@@ -389,13 +457,18 @@ class ActionCardTest {
     @Test
     fun `assassination busts one player picked by the server`() {
         val victims = (1L..30L).map { seed ->
-            val state = t(
-                startedAndDealt(
-                    players = listOf("a", "b", "c"),
-                    openingCards = listOf(num(1), num(2), num(3)),
-                    rest = listOf(action(ASSASSINATION.id)),
+            // The bottle is spun when the card is played and the bust waits for
+            // it to stop — see [PendingOutcome].
+            val state = settle(
+                t(
+                    startedAndDealt(
+                        players = listOf("a", "b", "c"),
+                        openingCards = listOf(num(1), num(2), num(3)),
+                        rest = listOf(action(ASSASSINATION.id)),
+                    ),
+                    GameAction.Hit("a"),
+                    Rng(seed),
                 ),
-                GameAction.Hit("a"),
                 Rng(seed),
             )
             val busted = state.players.filter { it.status == PlayerStatus.BUST }
@@ -408,6 +481,22 @@ class ActionCardTest {
 
     @Test
     fun `the bottle event names the victim the server picked`() {
+        val result = settled(
+            tr(
+                startedAndDealt(
+                    players = listOf("a", "b", "c"),
+                    openingCards = listOf(num(1), num(2), num(3)),
+                    rest = listOf(action(ASSASSINATION.id)),
+                ),
+                GameAction.Hit("a"),
+            ),
+        )
+        val spin = result.events.filterIsInstance<GameEvent.BottleSpin>().single()
+        assertEquals(PlayerStatus.BUST, result.state.status(spin.victimId))
+    }
+
+    @Test
+    fun `the bottle stops before anybody busts`() {
         val result = tr(
             startedAndDealt(
                 players = listOf("a", "b", "c"),
@@ -416,12 +505,34 @@ class ActionCardTest {
             ),
             GameAction.Hit("a"),
         )
-        val spin = result.events.filterIsInstance<GameEvent.BottleSpin>().single()
-        assertEquals(PlayerStatus.BUST, result.state.status(spin.victimId))
+
+        assertEquals(1, result.events.filterIsInstance<GameEvent.BottleSpin>().size)
+        assertTrue(
+            result.events.none { it is GameEvent.Bust },
+            "the table is watching the bottle; nobody has been told yet",
+        )
+        assertTrue(result.state.players.all { it.status == PlayerStatus.ACTIVE })
+        assertEquals(1, result.state.pendingOutcomes.size, "and the bust is waiting on the animation")
     }
 
     @Test
     fun `double it spins the bottle twice and takes two players down`() {
+        val state = settle(
+            t(
+                startedAndDealt(
+                    config(rules = listOf(LobbyRules.DOUBLE_IT.id)),
+                    players = listOf("a", "b", "c"),
+                    openingCards = listOf(num(1), num(2), num(3)),
+                    rest = listOf(action(ASSASSINATION.id)),
+                ),
+                GameAction.Hit("a"),
+            ),
+        )
+        assertEquals(2, state.players.count { it.status == PlayerStatus.BUST })
+    }
+
+    @Test
+    fun `two bottles are settled one at a time`() {
         val state = t(
             startedAndDealt(
                 config(rules = listOf(LobbyRules.DOUBLE_IT.id)),
@@ -431,7 +542,11 @@ class ActionCardTest {
             ),
             GameAction.Hit("a"),
         )
-        assertEquals(2, state.players.count { it.status == PlayerStatus.BUST })
+        assertEquals(2, state.pendingOutcomes.size, "two spins, two victims, neither of them told yet")
+
+        val first = t(state, GameAction.ResolveOutcome)
+        assertEquals(1, first.players.count { it.status == PlayerStatus.BUST })
+        assertEquals(1, first.pendingOutcomes.size, "the second bottle is still on the table")
     }
 
     // ─── Don't care + ratio ───

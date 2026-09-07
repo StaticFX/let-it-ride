@@ -89,6 +89,87 @@ test.describe('the testing panel', () => {
       .toBe('bust')
   })
 
+  test('an antimatter bust is paid for rather than written off', async ({ app, page }) => {
+    test.slow()
+
+    await page.getByTestId('dev-toggle').click()
+    await page.getByTestId('dev-quick-1').click()
+    await app.table.waitForPlay()
+
+    await page.getByTestId('dev-tab-table').click()
+    await page.getByTestId('dev-clear-prompt').click()
+
+    const opening = await app.table.snapshot()
+    const me = opening.seats.find((seat) => seat.isSelf)!
+    const bot = opening.seats.find((seat) => !seat.isSelf)!
+
+    await page.getByTestId('dev-tab-players').click()
+    const mine = page.locator(`[data-testid="dev-player"][data-player-id="${me.id}"]`)
+
+    // One card, and the biggest face this deck prints. Said outright rather
+    // than played towards: this deck deals a nought, and a hand that is worth
+    // nothing is worth nothing turned over too — a round that scores zero
+    // either way would pass whatever the server did with it.
+    const held = mine.locator('[data-testid="dev-hand-card"]')
+    for (let count = await held.count(); count > 0; count -= 1) {
+      await held.first().click()
+      await expect(held).toHaveCount(count - 1)
+    }
+    await mine.getByTestId('dev-hand-add').click()
+    const biggest = mine.locator('[data-testid="dev-pick-card"]').last()
+    const face = (await biggest.getAttribute('data-card-name'))!
+    await biggest.click()
+    await expect(held).toHaveCount(1)
+
+    // The card that says you may not stop, in front of me...
+    await mine.getByTestId('dev-passives-add').click()
+    await mine.getByTestId('dev-picker-passives').click()
+    await mine.locator('[data-testid="dev-pick-card"][data-card-name="antimatter"]').click()
+    await expect(mine.locator('[data-testid="dev-passives-card"][data-card-name="antimatter"]')).toHaveCount(1)
+
+    // ...everybody else already out, so my bust is the last thing that happens
+    // in the round. A bot playing on can reach a busted seat — a steal or a
+    // swap takes the modifier row too — and this spec is about what an
+    // antimatter is worth to the seat that had it, not about who ends up with it.
+    await page.locator(`[data-testid="dev-player"][data-player-id="${bot.id}"]`)
+      .getByTestId('dev-status-stayed').click()
+
+    // ...and the second one on top of the deck. Which used to be the way *out*
+    // of it: a bust wrote the round off and the hole with it, so the harshest
+    // card in the game paid nothing.
+    await page.getByTestId('dev-tab-cards').click()
+    await page.getByTestId('dev-stage-card').click()
+    await page.locator(`[data-testid="dev-stack-picker"] [data-testid="dev-pick-card"][data-card-name="${face}"]`).click()
+    await page.getByTestId('dev-stack-apply').click()
+    await expect(page.locator('[data-testid="dev-deck-card"]').first()).toHaveAttribute('data-card-name', face)
+
+    await page.getByTestId('dev-tab-table').click()
+    await page.getByTestId('dev-turn-to').filter({ hasText: me.name }).click()
+    await page.getByTestId('dev-toggle').click()
+
+    await expect
+      .poll(async () => {
+        const snapshot = await app.table.snapshot()
+        return snapshot.myTurn && snapshot.buttonsVisible
+      }, { message: 'the turn to come back to the seat the setup handed it to' })
+      .toBe(true)
+    await app.table.hit()
+
+    const summary = await app.table.playRound({ policy: () => 'hit' })
+    expect(summary.screen).toBe('summary')
+
+    const row = page.locator(`[data-testid="summary-row"][data-player-id="${me.id}"]`)
+    await expect(row).toHaveAttribute('data-busted', 'true')
+    const points = Number(await row.getAttribute('data-points'))
+    expect(points, 'the bust cost them nothing').toBeLessThan(0)
+
+    // And the felt says so. Every other busted seat is shown what the hand
+    // added up to, struck through — "this is what it would have been worth".
+    // There is no would-have-been here; the number beside the cards is the
+    // number coming off the scoreboard.
+    await expect(row).toContainText(`= ${points}`)
+  })
+
   test('a card played on a discordia takes points off the seat holding it', async ({ app, page }) => {
     await page.getByTestId('dev-toggle').click()
     await page.getByTestId('dev-quick-1').click()
@@ -123,9 +204,13 @@ test.describe('the testing panel', () => {
     await page.getByTestId('dev-toggle').click()
 
     // Draw it, and point it at the seat that will regret being interesting.
-    await app.table.playUntil((snapshot) => snapshot.pending?.mine === true, {
-      description: 'the stacked freeze to come off the deck',
-    })
+    // Drawing rather than banking: the default policy goes out once it is
+    // holding two, and a hand that never draws never reaches the stacked card.
+    const drawn = await app.table.playUntil(
+      (snapshot) => snapshot.pending?.mine === true,
+      { policy: () => 'hit', description: 'the stacked freeze to come off the deck' },
+    )
+    expect(drawn.pending?.cardDefId, 'the stack did not deal me the freeze').toBe('freeze')
     await app.table.pickTarget(bot.id)
 
     // Go out rather than play on: a busted round says why it scored nothing
@@ -135,5 +220,40 @@ test.describe('the testing panel', () => {
 
     const mine = page.locator(`[data-testid="summary-row"][data-player-id="${me.id}"]`)
     await expect(mine.getByTestId('summary-adjustment')).toHaveAttribute('data-adjustment', '10')
+  })
+
+  test('the scoreboard makes something of a player closing on the target', async ({ app, page }) => {
+    await page.getByTestId('dev-toggle').click()
+    await page.getByTestId('dev-quick-1').click()
+    await app.table.waitForPlay()
+
+    await page.getByTestId('dev-tab-table').click()
+    await page.getByTestId('dev-clear-prompt').click()
+
+    const opening = await app.table.snapshot()
+    const me = opening.seats.find((seat) => seat.isSelf)!
+    // What a dev table plays to — see `defaultGameConfig`.
+    const target = 200
+
+    // Nobody is near it yet, so nothing on the board is shouting.
+    const mine = page.locator(`[data-testid="score-row"][data-player-id="${me.id}"]`)
+    await expect(mine).toHaveAttribute('data-close', 'false')
+    await expect(mine).toHaveAttribute('data-brink', 'false')
+
+    await page.getByTestId('dev-tab-players').click()
+    const seat = page.locator(`[data-testid="dev-player"][data-player-id="${me.id}"]`)
+    const score = seat.getByTestId('dev-score')
+
+    // Most of the way there: the line warms up.
+    await score.fill(String(Math.round(target * 0.75)))
+    await score.press('Enter')
+    await expect(mine).toHaveAttribute('data-close', 'true')
+    await expect(mine).toHaveAttribute('data-brink', 'false')
+
+    // ...and on the brink it says so out loud.
+    await score.fill(String(target - 6))
+    await score.press('Enter')
+    await expect(mine).toHaveAttribute('data-brink', 'true')
+    await expect(mine.getByTestId('match-point')).toBeVisible()
   })
 })

@@ -1,7 +1,17 @@
 import { useState } from 'react'
 import { useCatalog } from '../../state/gameStore'
-import type { Card as CardType, DeckConfig, GameConfig } from '../../game/types'
-import { CUSTOM_DECK_ID } from '../../game/types'
+import type { Card as CardType, DeckConfig, GameConfig, GameMode } from '../../game/types'
+import { CUSTOM_DECK_ID, modeOf } from '../../game/types'
+
+/**
+ * The deck rolling rules brings with it, and the house rule it always underlays.
+ *
+ * Named here rather than looked up because the mode chooser has to send both
+ * with the mode itself, and a lobby that could only describe the game after the
+ * server had corrected it would show the wrong game for one round trip.
+ */
+const ROLLING_RULES_DECK_ID = 'rollingrules'
+const EXTREME_RULE_ID = 'extreme'
 import { DeckBuilder } from './DeckBuilder'
 import { PlayingCard } from '../cards/PlayingCard'
 import { SketchSlider } from '../ui/SketchSlider'
@@ -43,6 +53,10 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
   // Undefined for a deck somebody built, which is the point of the id.
   const preset = catalog.decks.find((d) => d.id === config.deckPresetId)
   const building = config.deckPresetId === CUSTOM_DECK_ID
+  // Looked up out here rather than inside `chooseMode`: the guard above narrows
+  // `catalog` for this scope but not into a hoisted function body.
+  const rollingRulesDeck = catalog.decks.find((d) => d.id === ROLLING_RULES_DECK_ID)?.deck
+  const hasGamblerCards = (catalog.gamblers?.length ?? 0) > 0
 
   function patch(next: Partial<GameConfig>) {
     onChange({ ...config, ...next })
@@ -73,10 +87,66 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
     patch({ ruleIds: active ? config.ruleIds.filter((r) => r !== ruleId) : [...config.ruleIds, ruleId] })
   }
 
+  const mode = modeOf(config)
+
+  /**
+   * Switches the game, and brings its deck and its house rules with it.
+   *
+   * "Extreme" is sent along rather than quietly assumed. The server forces it
+   * either way, so this changes nothing about how the game plays — what it
+   * changes is that the lobby *shows* it on, which is the difference between a
+   * rule the table agreed to and one it discovers in round one.
+   */
+  function chooseMode(next: GameMode) {
+    if (next === 'rollingRules') {
+      patch({
+        mode: next,
+        deckPresetId: ROLLING_RULES_DECK_ID,
+        deck: rollingRulesDeck ?? config.deck,
+        ruleIds: [...new Set([...config.ruleIds, EXTREME_RULE_ID])],
+      })
+    } else {
+      patch({ mode: next })
+    }
+  }
+
   return (
     <>
       <div className="sketch-box rounded p-4 relative">
         <h2 className="mb-3.5 -rotate-1">~ settings ~</h2>
+
+        {/* ── Game mode ──
+            At the top because everything under it is conditioned on it. A mode
+            is not a house rule: it changes the screens you see rather than a
+            number the engine reads, and putting it in that row of small toggles
+            would have hidden a whole second hand in a tick box. */}
+        {hasGamblerCards && (
+          <>
+            <label>game mode:</label>
+            <div className="flex gap-2 mt-1 mb-2 justify-center">
+              <SketchOption
+                testId="mode-classic"
+                selected={mode === 'classic'}
+                onClick={() => chooseMode('classic')}
+              >
+                let it ride
+              </SketchOption>
+              <SketchOption
+                testId="mode-rollingRules"
+                selected={mode === 'rollingRules'}
+                onClick={() => chooseMode('rollingRules')}
+              >
+                rolling rules
+              </SketchOption>
+            </div>
+            <p className="text-muted text-center text-[13px] mb-3 leading-snug italic">
+              {mode === 'rollingRules'
+                ? 'a second hand nobody else can see, and points you can spend'
+                : 'the game as it is'}
+            </p>
+            <Separator />
+          </>
+        )}
 
         {/* ── Deck ── */}
         <label>deck:</label>
@@ -183,6 +253,25 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
           onChange={(v) => patch({ turnTimeSeconds: v })}
         />
 
+        {mode === 'rollingRules' && (
+          <>
+            <div className="h-3" />
+            {/* A ceiling rather than a schedule: the shop shuts the moment
+                everybody says they are finished, and at a table with bots on it
+                that is almost at once. This is only how long the last person
+                still deciding gets. */}
+            <SketchSlider
+              testId="shop-timer-slider"
+              label="shop timer (seconds)"
+              min={15}
+              max={180}
+              step={15}
+              value={config.shopSeconds ?? 120}
+              onChange={(v) => patch({ shopSeconds: v })}
+            />
+          </>
+        )}
+
         <div className="h-3" />
 
         {/* Zero is off rather than instant — nobody wants a scoreboard they
@@ -205,24 +294,29 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
         <div className="flex flex-col gap-1.5 mt-1.5">
           {catalog.rules.map((rule) => {
             const active = config.ruleIds.includes(rule.id)
+            // A rule the mode brings with it is shown on and cannot be taken
+            // off — the server would only put it back, and a toggle that
+            // silently undoes itself is worse than one that says why.
+            const forced = mode === 'rollingRules' && rule.id === EXTREME_RULE_ID
             return (
               <button
                 key={rule.id}
-                onClick={() => toggleRule(rule.id)}
+                onClick={forced ? undefined : () => toggleRule(rule.id)}
                 data-testid={`rule-${rule.id}`}
-                data-active={active}
-                className={`flex items-start gap-2.5 text-left bg-transparent border-none cursor-pointer p-1 rounded transition-opacity ${
-                  active ? 'opacity-100' : 'opacity-55'
-                }`}
+                data-active={active || forced}
+                data-forced={forced}
+                className={`flex items-start gap-2.5 text-left bg-transparent border-none p-1 rounded transition-opacity ${
+                  forced ? 'cursor-default' : 'cursor-pointer'
+                } ${active || forced ? 'opacity-100' : 'opacity-55'}`}
               >
                 <span
                   className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${
-                    active ? 'bg-[var(--accent)]' : 'bg-[var(--ink)]/20'
+                    active || forced ? 'bg-[var(--accent)]' : 'bg-[var(--ink)]/20'
                   }`}
                 />
                 <span>
                   <span className="display text-lg block leading-tight">{rule.name}</span>
-                  <small>{rule.description}</small>
+                  <small>{forced ? 'always on in rolling rules' : rule.description}</small>
                 </span>
               </button>
             )

@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { PlayingCard } from '../cards/PlayingCard'
 import { cardName, type Palette } from './devSetup'
 
-type Row = 'numbers' | 'actions' | 'passives'
+type Row = 'numbers' | 'actions' | 'passives' | 'gamblers'
 
 const ROWS: { id: Row; label: string }[] = [
   { id: 'numbers', label: 'numbers' },
   { id: 'actions', label: 'actions' },
   { id: 'passives', label: 'modifiers' },
+  { id: 'gamblers', label: 'gamblers' },
 ]
 
 interface DevCardPickerProps {
@@ -29,7 +30,7 @@ export function DevCardPicker({ palette, onPick, onClose, testId }: DevCardPicke
   return (
     <div className="mt-2 rounded border border-dashed border-[var(--ink-soft)] p-2" data-testid={testId}>
       <div className="mb-2 flex items-center gap-2">
-        {ROWS.map((each) => (
+        {ROWS.filter((each) => palette[each.id].length > 0).map((each) => (
           <button
             key={each.id}
             onClick={() => setRow(each.id)}

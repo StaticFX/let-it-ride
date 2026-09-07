@@ -1,12 +1,17 @@
-import type { Card as CardType } from "../../game/types";
-import { findAction, findPassive, useCatalog } from "../../state/gameStore";
+import { GAMBLER_WINDOWS_SHORT, type Card as CardType } from "../../game/types";
+import {
+  findAction,
+  findGambler,
+  findPassive,
+  useCatalog,
+} from "../../state/gameStore";
 import { theme } from "../../theme";
 import { RoughBox, RoughSeal, RoughSquiggle } from "../ui/RoughShapes";
 import { cardHash } from "./dealtCards";
 
 interface PlayingCardProps {
   card: CardType;
-  size?: "small" | "normal" | "deck";
+  size?: "small" | "normal" | "deck" | "large";
   faceDown?: boolean;
   dimmed?: boolean;
   glowing?: boolean;
@@ -17,6 +22,11 @@ const DIMS = {
   small: { w: 52, h: 76, fs: 14, num: 30, corner: 13, sigil: 26 },
   normal: { w: 92, h: 132, fs: 22, num: 64, corner: 19, sigil: 50 },
   deck: { w: 100, h: 142, fs: 22, num: 68, corner: 20, sigil: 48 },
+  // For a card you are being asked to read rather than to recognise: the shop
+  // shelf, where every face is one you have never seen and the description is
+  // the whole of the decision. `deck` is the biggest a card gets *on the table*,
+  // and on a shelf that left half the screen empty and the text at nine points.
+  large: { w: 148, h: 210, fs: 32, num: 100, corner: 28, sigil: 72 },
 };
 
 const SUIT_GLYPHS: Record<string, string> = {
@@ -42,14 +52,23 @@ export function PlayingCard({
   // The face comes from the backend's catalog. Looked up before anything is
   // drawn, because a passive is a different kind of object from an action card
   // rather than the same card in another colour.
-  const action = findAction(catalog, card.defId);
-  const passive = action ? undefined : findPassive(catalog, card.defId);
+  //
+  // A gambler card is found by its *kind* rather than by whichever catalog
+  // answers first. There are three catalogs now and nothing stops one of them
+  // one day holding an id another already has; a face resolved by lookup order
+  // would then quietly draw the wrong card, which is the worst kind of wrong.
+  const gambler =
+    card.kind === "gambler" ? findGambler(catalog, card.defId) : undefined;
+  const action = gambler ? undefined : findAction(catalog, card.defId);
+  const passive = gambler || action ? undefined : findPassive(catalog, card.defId);
   // Each passive prints in its own ink so the row in front of a player reads as
   // several things rather than one green block. A server that does not send one
   // falls back to the house green every passive used to share.
-  const accent = passive
-    ? passive.accent ?? theme.passiveAccent
-    : theme.actionAccent;
+  const accent = gambler
+    ? gambler.accent ?? theme.passiveAccent
+    : passive
+      ? passive.accent ?? theme.passiveAccent
+      : theme.actionAccent;
 
   const phase = (cardHash(card.id) % 1000) / 1000;
   const swayDur = 2.2 + phase * 1.6;
@@ -149,6 +168,165 @@ export function PlayingCard({
           >
             Leck ei
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Gambler card. Drawn like a passive — tinted paper, framed, the sigil struck
+  // as a seal — because it is the same kind of object: a card you are holding
+  // rather than one that is happening. What is different is that it says how
+  // rare it is, and it says so in the frame and the strike rather than in the
+  // seal's shape.
+  //
+  // The shape is already spoken for: a shield guards, a token pays, a spike
+  // bites. Rarity riding on the same channel would make a spike mean "nasty" on
+  // one card and "valuable" on the next. So rarity is *pressure* — one more
+  // frame, one more strike of the stamp — which reads from across the table
+  // and leaves the shape saying what the card does.
+  if (gambler) {
+    const rare = gambler.rarity !== "common";
+    const jackpot = gambler.rarity === "jackpot";
+    const seal = Math.round(dims.sigil * (size === "small" ? 1.1 : 0.82));
+    const glyph = Math.round(seal * (gambler.sigil.length > 1 ? 0.44 : 0.56));
+    const frame = size === "small" ? 6 : 8;
+    return (
+      <div style={baseStyle}>
+        <div
+          style={{
+            position: "absolute",
+            inset: sw,
+            background: `color-mix(in srgb, ${accent} ${jackpot ? 14 : 9}%, ${theme.cardFace})`,
+            borderRadius: 3,
+            zIndex: 0,
+          }}
+        />
+        <RoughBox
+          width={dims.w}
+          height={dims.h}
+          stroke={accent}
+          strokeWidth={sw * (jackpot ? 1.25 : 1)}
+          roughness={1.9}
+        />
+        {rare && (
+          <RoughBox
+            width={dims.w - frame * 2}
+            height={dims.h - frame * 2}
+            stroke={accent}
+            strokeWidth={sw * (jackpot ? 0.7 : 0.5)}
+            roughness={2.4}
+            dashed={!jackpot}
+            style={{ top: frame, left: frame, opacity: jackpot ? 0.9 : 0.7 }}
+          />
+        )}
+        <div
+          style={{
+            position: "absolute",
+            inset: sw + frame - 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "stretch",
+            zIndex: 2,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: theme.fontDisplay,
+              fontSize: dims.fs * (size === "small" ? 0.54 : 0.62),
+              color: accent,
+              fontWeight: 700,
+              textAlign: "center",
+              padding: "1px 5px 0",
+              letterSpacing: "0.03em",
+              textTransform: "uppercase",
+              lineHeight: 1.05,
+            }}
+          >
+            {gambler.name}
+          </div>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+            }}
+          >
+            <div
+              style={{
+                position: "relative",
+                flexShrink: 0,
+                width: seal,
+                height: seal,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <RoughSeal
+                size={seal}
+                shape={gambler.seal ?? "hexagon"}
+                stroke={accent}
+                strokeWidth={sw * (jackpot ? 1.05 : rare ? 0.9 : 0.75)}
+                strikes={rare ? 3 : 2}
+                roughness={2}
+              />
+              <span
+                style={{
+                  fontFamily: theme.fontDisplay,
+                  fontSize: glyph,
+                  color: accent,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  position: "relative",
+                  zIndex: 1,
+                }}
+              >
+                {gambler.sigil}
+              </span>
+            </div>
+            {/* The word as well as the pressure. A stamp struck harder is a
+                thing you learn; the word is a thing you can be told.
+
+                And beside it, when the card may be played. Half of what a
+                gambler card costs you is that it is only good at one moment,
+                and a face that did not say which moment left you to find out
+                by clicking it and having nothing happen. */}
+            {size !== "small" && (
+              <div
+                style={{
+                  fontFamily: theme.fontBody,
+                  fontSize: dims.fs * 0.34,
+                  color: accent,
+                  opacity: 0.85,
+                  letterSpacing: "0.1em",
+                  textTransform: "lowercase",
+                  lineHeight: 1.1,
+                  textAlign: "center",
+                  padding: "0 3px",
+                }}
+              >
+                {gambler.rarity} · {GAMBLER_WINDOWS_SHORT[gambler.window] ?? gambler.window}
+              </div>
+            )}
+          </div>
+          {size !== "small" && (
+            <div
+              style={{
+                padding: "0 5px 6px",
+                fontFamily: theme.fontBody,
+                fontSize: dims.fs * 0.42,
+                color: `color-mix(in srgb, ${accent} 80%, ${theme.ink})`,
+                textAlign: "center",
+                lineHeight: 1.05,
+              }}
+            >
+              {gambler.description}
+            </div>
+          )}
         </div>
       </div>
     );

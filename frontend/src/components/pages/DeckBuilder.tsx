@@ -90,6 +90,13 @@ export function DeckBuilder({ deck, catalog, onChange }: {
   // config anyway, and a builder that let one be added would be lying.
   const actions = useMemo(() => catalog.actions.filter((card) => card.deckable !== false), [catalog.actions])
   const passives = useMemo(() => catalog.passives.filter((card) => card.deckable !== false), [catalog.passives])
+  // Same rule a third time: the IOU a loan leaves behind is minted into a tray,
+  // never dealt, and is not a thing anybody chooses to be carrying.
+  const gamblerCards = catalog.gamblers
+  const gamblers = useMemo(
+    () => (gamblerCards ?? []).filter((card) => card.obtainable !== false),
+    [gamblerCards],
+  )
 
   return (
     <div data-testid="deck-builder" data-size={deckSize(deck)} data-valid={!problem}>
@@ -141,6 +148,28 @@ export function DeckBuilder({ deck, catalog, onChange }: {
           />
         ))}
       </Section>
+
+      {/* Offered whatever mode the table is set to. The deck and the mode are
+          separate settings and either can be changed after the other, so a
+          builder that hid these until the mode was on would hide them from
+          somebody building a deck *for* the mode. A classic table simply leaves
+          them out — `sanitize` strips them, so they are never dealt into a hand
+          no screen draws. */}
+      {gamblers.length > 0 && (
+        <Section title="gambler cards — rolling rules only">
+          {gamblers.map((card) => (
+            <Row
+              key={card.id}
+              card={{ id: `build-g-${card.id}`, kind: 'gambler', label: card.name, value: 0, defId: card.id }}
+              count={countOfId(deck.gamblerCards ?? [], card.id)}
+              max={maxCopies}
+              onChange={(count) =>
+                onChange({ ...deck, gamblerCards: withCount(deck.gamblerCards ?? [], card.id, count) })
+              }
+            />
+          ))}
+        </Section>
+      )}
 
       {/* A deck is small enough to travel as text, so it can be passed around
           without anything having to store it for you. */}

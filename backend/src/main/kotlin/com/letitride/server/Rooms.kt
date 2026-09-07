@@ -6,20 +6,28 @@ import com.letitride.engine.Catalog
 import com.letitride.engine.DeckPresets
 import com.letitride.engine.sanitizeDeck
 import com.letitride.engine.Engine
+import com.letitride.engine.GamblerCardDef
 import com.letitride.engine.GameAction
 import com.letitride.engine.GameConfig
 import com.letitride.engine.GameEvent
+import com.letitride.engine.GameMode
 import com.letitride.engine.GamePhase
 import com.letitride.engine.GameState
 import com.letitride.engine.LobbyRules
+import com.letitride.engine.forcedRulesFor
+import com.letitride.engine.Card
 import com.letitride.engine.MAX_PLAYERS
+import com.letitride.engine.PassiveScoring
+import com.letitride.engine.PendingAction
 import com.letitride.engine.PickKind
 import com.letitride.engine.Player
 import com.letitride.engine.PlayerStatus
+import com.letitride.engine.Rarity
 import com.letitride.engine.Rng
 import com.letitride.engine.RuleSet
 import com.letitride.engine.SECOND_LIFE
 import com.letitride.engine.SLOTS_SOURCE
+import com.letitride.engine.WinCondition
 import com.letitride.engine.defaultGameConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -73,19 +81,91 @@ private val POST_INTRO_MS = paced(300L)
  * card lands on top of it — which is exactly what used to happen to the coin.
  */
 private val OUTRO_CARD_MS = paced(1700L)
+
+/**
+ * The round's payout: every seat is paid what it made, one at a time, on the
+ * table it made it on — before the closing card comes over and takes the table
+ * away. A round used to end with four scores changing at once behind a card
+ * nobody could see through.
+ *
+ * The window is reserved here and spent by the client, which lands one seat
+ * every [OUTRO_PAYOUT_STEP_MS] — keep the two in step, the same way the closing
+ * windows above are kept in step with the animations they are waiting for.
+ */
+private val OUTRO_PAYOUT_LEAD_MS = paced(400L)
+private val OUTRO_PAYOUT_STEP_MS = paced(560L)
+private val OUTRO_PAYOUT_TAIL_MS = paced(600L)
+
+/** How long the table needs to pay [players] seats, one after another. */
+internal fun payoutWindowFor(players: Int): Long =
+    if (players <= 0) 0L else OUTRO_PAYOUT_LEAD_MS + players * OUTRO_PAYOUT_STEP_MS + OUTRO_PAYOUT_TAIL_MS
 internal val OUTRO_AFTER_BUST_MS = paced(2200L)
 internal val OUTRO_AFTER_FLIP7_MS = paced(3300L)
 internal val OUTRO_AFTER_COIN_MS = paced(3300L)
 internal val OUTRO_AFTER_SPIN_MS = paced(3100L)
 internal val OUTRO_AFTER_TRANSFER_MS = paced(2400L)
 
+/**
+ * A gambler card ending a round has to be readable on the way out.
+ *
+ * The longest window here, and it has to be: a card played in the last moment of
+ * a round may be one nobody at the table has ever seen, and the closing card
+ * comes down on whatever this number allowed. Its client half is
+ * `ANIMATION_TTL_MS.gamblerPlayed` at its first-sight length, plus a beat —
+ * lengthen one and this has to follow.
+ */
+internal val OUTRO_AFTER_GAMBLER_MS = paced(4800L)
+
 private val FORCED_DRAW_STEP_MS = paced(800L)
+
+/**
+ * The floor under a card that has landed but not yet taken effect — see
+ * [com.letitride.engine.PendingOutcome]. Only a floor: what actually holds the
+ * table here is the animation gate, and this is what covers a table with nobody
+ * connected to open one.
+ */
+private val OUTCOME_STEP_MS = paced(1600L)
 
 /** How long the slot machine spins before the card it landed on is dealt. */
 private val SLOTS_SPIN_MS = paced(2400L)
 
 private val BOT_THINK_MS = paced(900L)
 private val BOT_PICK_MS = paced(950L)
+
+/**
+ * How long a response window stays open before silence is taken as a no.
+ *
+ * Its own clock, and much shorter than a turn's: holding a whole table for
+ * thirty seconds over a counter most of them cannot play is not a decision, it
+ * is a wait. Twelve rather than eight because somebody being asked may be
+ * reading two cards they have never seen — the one in flight and the one in
+ * their own hand — and only then deciding.
+ */
+private val RESPONSE_WINDOW_MS = paced(12_000L)
+
+/**
+ * The ceiling on the shop between rounds, from the host's setting.
+ *
+ * Paced like every other beat the room keeps, and a ceiling rather than a
+ * schedule: the window shuts the moment every seat says it is finished, which at
+ * a table with bots on it is about a second.
+ */
+private fun shopWindowFor(config: GameConfig): Long = paced(config.shopSeconds * 1000L)
+
+/** A bot's shopping is not an animation. It only has to not be instant. */
+private val BOT_SHOP_STEP_MS = paced(280L)
+
+/**
+ * How long the table reads the bids before the winner pays.
+ *
+ * The interlude has no animation gate — there is no table to hold — so unlike
+ * everything else in this file this really is the server deciding how long a
+ * moment takes. It is the client's `showdown` duration and a beat.
+ */
+private val AUCTION_REVEAL_MS = paced(2900L)
+
+/** ...and the beat after the money moves, before the next round is dealt. */
+private val AUCTION_SETTLE_MS = paced(900L)
 private const val EMPTY_ROOM_TTL_MS = 10 * 60 * 1000L
 
 /**
@@ -93,8 +173,16 @@ private const val EMPTY_ROOM_TTL_MS = 10 * 60 * 1000L
  * went quiet. This is a backstop, not a schedule: a client that acks normally
  * never comes near it. It has to clear the longest animation the client can
  * play by a comfortable margin, or a slow machine gets cut off mid-bust.
+ *
+ * It was five seconds while every card at the table was one you already knew.
+ * A gambler card nobody has seen has to be *read* — a name and a sentence, by
+ * three people at once — which the client spends a little over four seconds on,
+ * and a card played behind another one starts later still. The cost of the extra
+ * two seconds is only that a hung tab owns a table for that much longer;
+ * animating time is handed straight back to whoever is on the clock (see
+ * [closeGate]), so nobody's turn is shorter for it.
  */
-internal val ANIMATION_GATE_MAX_MS = paced(5000L)
+internal val ANIMATION_GATE_MAX_MS = paced(7000L)
 
 private val BOT_NAMES = listOf("Ace", "Bluff", "Chips", "Dice", "Echo", "Faro")
 
@@ -126,6 +214,7 @@ internal fun outroPreambleFor(events: List<GameEvent>): Long =
     events.maxOfOrNull { closingWindowFor(it) } ?: 0L
 
 private fun closingWindowFor(event: GameEvent): Long = when (event) {
+    is GameEvent.GamblerPlayed -> OUTRO_AFTER_GAMBLER_MS
     is GameEvent.Flip7 -> OUTRO_AFTER_FLIP7_MS
     is GameEvent.CoinFlip -> OUTRO_AFTER_COIN_MS
     is GameEvent.BottleSpin -> OUTRO_AFTER_SPIN_MS
@@ -148,6 +237,173 @@ internal fun autoNextRoundAt(state: GameState, scoreboardAt: Long): Long? {
     if (state.gameWinnerId != null) return null
     val seconds = state.config.autoNextRoundSeconds ?: return null
     return scoreboardAt + seconds * 1000L
+}
+
+/**
+ * What a card lying in front of a player is worth to a bot deciding what to
+ * trade. Numbers are worth what they say; a modifier that scores is worth
+ * having; and a card nobody wants is worth less than nothing, which is what
+ * makes a bot hand one over rather than shuffle its cards at random.
+ */
+/**
+ * What a gambler card is worth to a bot.
+ *
+ * Rarity first, and rarity only. A bot cannot read a card's text, and the rarity
+ * is the game's own statement of how good it is — while valuing one at its
+ * *price* would have a bot buy whatever was dearest, which is the shop selling
+ * itself.
+ */
+internal fun gamblerWorth(def: GamblerCardDef): Int = when (def.rarity) {
+    Rarity.COMMON -> 40
+    Rarity.RARE -> 95
+    Rarity.JACKPOT -> 220
+}
+
+/** What share of what it came in with a bot will put through the shop. */
+internal const val BOT_SHOP_SHARE = 0.4
+
+/**
+ * ...and how close to winning it has to be before it stops shopping altogether.
+ * The shop is a way to make points, and a bot spending past a win it already
+ * had would be spending to lose.
+ */
+internal const val BOT_SHOP_ENDGAME = 40
+
+/**
+ * What a bot will spend this window.
+ *
+ * Measured against what it came in holding rather than what it has left, or a
+ * share of a shrinking purse would let it keep buying for ever.
+ */
+internal fun botBudget(state: GameState, botId: String): Int {
+    val player = state.player(botId) ?: return 0
+    val opening = state.interlude?.openingScore?.get(botId) ?: player.score
+    if (state.config.winCondition == WinCondition.FIRST_TO_SCORE &&
+        player.score >= state.config.targetScore - BOT_SHOP_ENDGAME
+    ) {
+        return 0
+    }
+    val spent = (opening - player.score).coerceAtLeast(0)
+    return ((opening * BOT_SHOP_SHARE).toInt() - spent).coerceAtLeast(0)
+}
+
+/**
+ * The next card a bot takes off its shelf, or null when it is finished.
+ *
+ * The biggest bargain it can pay for out of what is left of its budget and what
+ * will still fit in its hand — bargain being what the card is worth to it less
+ * what it is being asked for, so a cheap rare beats a dear common and a shelf of
+ * overpriced commons is walked away from.
+ */
+internal fun botShop(state: GameState, botId: String): String? {
+    val shop = state.interlude ?: return null
+    val player = state.player(botId) ?: return null
+    if (player.gamblers.size >= Engine.gamblerLimitFor(state, botId)) return null
+    val budget = minOf(botBudget(state, botId), player.score)
+    val taken = shop.bought[botId].orEmpty()
+
+    return shop.stock[botId].orEmpty()
+        .filterNot { it.id in taken }
+        .filter { it.price <= budget }
+        .mapNotNull { offer ->
+            val def = Catalog.gambler(offer.card.defId) ?: return@mapNotNull null
+            offer.id to gamblerWorth(def) - offer.price
+        }
+        .filter { it.second > 0 }
+        .maxByOrNull { it.second }
+        ?.first
+}
+
+/** What share of its budget a bot will put into the auction rather than the shop. */
+internal const val BOT_AUCTION_SHARE = 0.5
+
+/**
+ * What a bot bids for the lot, or null for no bid.
+ *
+ * Under what the card is worth to it, by a margin off the room's own seeded
+ * stream. A bot bidding its whole valuation would win every auction it wanted
+ * and pay exactly what it gained, and two bots at one table would bid the same
+ * number every single time.
+ */
+internal fun botBid(state: GameState, botId: String, rng: Rng): Int? {
+    val lot = state.interlude?.lot ?: return null
+    val player = state.player(botId) ?: return null
+    if (player.gamblers.size >= Engine.gamblerLimitFor(state, botId)) return null
+    val def = Catalog.gambler(lot.card.defId) ?: return null
+
+    val ceiling = minOf(
+        (botBudget(state, botId) * BOT_AUCTION_SHARE).toInt(),
+        player.score,
+        gamblerWorth(def),
+    )
+    if (ceiling <= 0) return null
+    // Somewhere between half the ceiling and the ceiling, so two bots at one
+    // table do not bid the same number.
+    return (ceiling / 2 + rng.nextInt(ceiling / 2 + 1)).coerceAtLeast(1)
+}
+
+internal fun cardWorth(card: Card): Int {
+    if (card.kind == CardKind.NUMBER) return card.value
+    val def = Catalog.passive(card.defId) ?: return 5
+    if (def.isCurse) return -100
+    return when (def.scoring) {
+        PassiveScoring.DOUBLE_NUMBERS -> 25
+        PassiveScoring.FLAT -> def.bonusPoints
+        else -> 10
+    }
+}
+
+/** What aiming a card at this seat pays, before anything the card itself does. */
+internal fun tollFrom(player: Player): Int =
+    player.passives.mapNotNull { Catalog.passive(it.defId) }.sumOf { it.spite }
+
+/**
+ * Which cards a bot points a card-picking prompt at.
+ *
+ * A prompt that asks the whole table at once is asking each of them for one
+ * of their own — an "all in" bet — and it is the highest and the lowest bet
+ * that pay for it, so the bot bets from the middle of its hand.
+ *
+ * A prompt that asks one player for two is a trade, and the bot plays it as
+ * one: lead with the worst thing it is holding, which is how a discordia or
+ * an antimatter finds a new home, and take the best thing somebody else has
+ * that will not collide with a card it already holds. The engine keeps the
+ * pick legal either way; this only decides which legal pick it is.
+ */
+internal fun botCardPicks(
+    snapshot: GameState,
+    botId: String,
+    pending: PendingAction,
+    rng: Rng,
+): List<String> {
+    val offered = pending.validCards.toSet()
+    val bot = snapshot.player(botId) ?: return rng.shuffled(pending.validCards)
+    val mine = (bot.hand + bot.passives).filter { it.id in offered }
+
+    if (pending.respondents.size > 1) {
+        // Everybody is being asked at once: this is a bet, and the ends of
+        // the table are what it costs.
+        val ordered = mine.sortedBy { cardWorth(it) }
+        val middle = ordered.getOrNull(ordered.size / 2) ?: return rng.shuffled(pending.validCards)
+        return listOf(middle.id)
+    }
+
+    val heldLabels = bot.hand.map { it.label }.toSet()
+    val theirs = snapshot.players
+        .filter { it.id != botId }
+        .flatMap { it.hand + it.passives }
+        .filter { it.id in offered }
+    val give = mine.minByOrNull { cardWorth(it) }
+    val take = theirs
+        // A number card it already has a copy of would bust it on arrival.
+        .filterNot { it.kind == CardKind.NUMBER && it.label in heldLabels }
+        .maxByOrNull { cardWorth(it) }
+        ?: theirs.maxByOrNull { cardWorth(it) }
+    val wanted = listOfNotNull(give?.id, take?.id)
+    // Shuffled behind the pick it actually wants, so a pick that turns out
+    // to be illegal still falls back to something other than the top of the
+    // list every time.
+    return wanted + rng.shuffled(pending.validCards.filterNot { it in wanted })
 }
 
 /**
@@ -194,6 +450,14 @@ class Room(
     private var roundOutroFrom: Long? = null
     private var roundOutroUntil: Long? = null
     private var nextRoundAt: Long? = null
+
+    /**
+     * Epoch millis the shop shuts, or null when no window is open.
+     *
+     * The room's, not five browsers' — each running its own two minutes would
+     * drift, and the one that drifted long would be the one that got to shop.
+     */
+    private var interludeUntil: Long? = null
     private var gate: AnimationGate? = null
     private var gateCounter = 0L
 
@@ -242,6 +506,11 @@ class Room(
             if (hostId == null || state.player(hostId!!) == null) hostId = playerId
         }
         send(connection, ServerMessage.Welcome(playerId, code, hostId == playerId))
+        // The connection was registered before this, so the rejoiner's own copy
+        // of the state — the only one carrying their hidden hand — comes out of
+        // this broadcast like everybody else's. A second, private push would be
+        // an extra empty batch arriving while the table may be mid-animation,
+        // and the client's escape hatch for an empty batch is to ack the gate.
         broadcast(events)
         return true
     }
@@ -307,6 +576,25 @@ class Room(
                     if (gate != null) return
                     applyLocked(GameAction.Stay(playerId))
                 }
+
+                // Dropped while the table is animating, for the same reason a
+                // hit is: the client holds the click until the gate lifts and
+                // sends it then, so nothing a player actually meant is lost.
+                is ClientMessage.PlayGambler -> {
+                    if (gate != null) return
+                    applyLocked(GameAction.PlayGambler(playerId, message.cardId))
+                }
+
+                ClientMessage.Pass -> {
+                    if (gate != null) return
+                    applyLocked(GameAction.PassResponse(playerId))
+                }
+
+                // The shop is not gated — there is no animation between rounds
+                // — and both of these are dropped anywhere else by the engine.
+                is ClientMessage.Buy -> applyLocked(GameAction.Buy(playerId, message.offerId))
+
+                is ClientMessage.ShopDone -> applyLocked(GameAction.FinishShopping(playerId, message.bid))
 
                 is ClientMessage.PlayAction -> {
                     if (gate != null) return
@@ -411,14 +699,35 @@ class Room(
         // so a config naming "chaos" is always the chaos everybody agreed on.
         val built = if (config.deckPresetId == CUSTOM_DECK_ID) sanitizeDeck(config.deck) else null
         val preset = if (built != null) null else DeckPresets.byId(config.deckPresetId) ?: DeckPresets.default
+        val chosen = preset?.deck ?: built!!
+        // A gambler card outside the mode that gives you somewhere to put it
+        // would be dealt into a hidden hand no screen draws — visible to nobody,
+        // playable by nobody, and gone from the deck. The deck and the mode are
+        // separate settings and either can be changed after the other, so the
+        // combination is reachable however carefully the lobby is written; this
+        // is the one place both are known at once, so it is the place to say so.
+        val deck =
+            if (config.mode == GameMode.ROLLING_RULES || chosen.gamblerCards.isEmpty()) chosen
+            else chosen.copy(gamblerCards = emptyList())
         return config.copy(
             deckPresetId = preset?.id ?: CUSTOM_DECK_ID,
-            deck = preset?.deck ?: built!!,
+            deck = deck,
             totalRounds = config.totalRounds.coerceIn(1, 20),
             targetScore = config.targetScore.coerceIn(50, 1000),
             turnTimeSeconds = config.turnTimeSeconds.coerceIn(10, 300),
+            // The floor is what stops a crafted config setting nought and
+            // skipping everybody's shop; the ceiling is what stops one setting
+            // an hour.
+            shopSeconds = config.shopSeconds.coerceIn(15, 300),
             autoNextRoundSeconds = config.autoNextRoundSeconds?.coerceIn(5, 120),
-            ruleIds = config.ruleIds.filter { id -> LobbyRules.all.any { it.id == id } }.distinct(),
+            // Rolling rules always underlays "extreme", and it is put there
+            // rather than assumed: the lobby then *shows* it on, the rules book
+            // describes the game being played, and nothing has to remember the
+            // exception. This is also the only thing between a crafted
+            // `SET_CONFIG` and the engine, so it has to be the one that decides.
+            ruleIds = (config.ruleIds + forcedRulesFor(config.mode))
+                .filter { id -> LobbyRules.all.any { it.id == id } }
+                .distinct(),
         )
     }
 
@@ -438,6 +747,11 @@ class Room(
             val snapshot = state
 
             if (snapshot.phase != GamePhase.PLAYING) {
+                // Dispatched *above* the teardown below, and that ordering is
+                // the whole trick: the shop keeps a clock and an animation gate
+                // of its own, and the three lines after this drop both.
+                if (snapshot.interlude != null) return@withLock tickInterlude(snapshot, now)
+
                 val wasTimed = turnDeadline != null || gate != null
                 promptKey = null
                 turnDeadline = null
@@ -507,7 +821,20 @@ class Room(
             val stepped = when {
                 prompt.startsWith("deal:") -> applyLocked(GameAction.DealTo(prompt.removePrefix("deal:")))
 
+                prompt.startsWith("outcome:") -> applyLocked(GameAction.ResolveOutcome)
+
                 prompt.startsWith("forced:") -> applyLocked(GameAction.ForcedDraw)
+
+                prompt.startsWith("respond:") -> {
+                    // Bots let it stand, one per step. A bot that never counters
+                    // is a perfectly good first bot — what it must not do is
+                    // stay silent, because a window nobody answers holds the
+                    // table until the clock runs out, and at a table of bots
+                    // there is no clock at all.
+                    val bot = snapshot.openResponse?.awaiting
+                        ?.firstOrNull { snapshot.player(it)?.isBot == true }
+                    if (bot != null) applyLocked(GameAction.PassResponse(bot)) else null
+                }
 
                 prompt.startsWith("pick:") -> {
                     // One bot per step, so a table of them answers at the same
@@ -533,15 +860,76 @@ class Room(
         if (events != null) broadcast(events)
     }
 
+    /**
+     * The shop between rounds. Must be called with [mutex] held.
+     *
+     * Bots go first and all of them at once, because nobody watches a bot shop —
+     * the one-per-tick rule elsewhere exists because the table *watches* a bot
+     * play a card. Four of them are finished inside a second, so a window is
+     * never held open by machinery.
+     */
+    private fun tickInterlude(snapshot: GameState, now: Long): List<GameEvent>? {
+        val shop = snapshot.interlude ?: return null
+
+        // Shut, and whatever it settled being watched. The bids are read, then
+        // the money moves, then the round is dealt — three beats, because a
+        // score changing while the bids are still turning over hands the table
+        // the answer over the top of the question.
+        if (shop.closed) {
+            if (now < nextStepAt) return null
+            if (snapshot.pendingOutcomes.isNotEmpty()) {
+                val events = applyLocked(GameAction.ResolveOutcome)
+                nextStepAt = now + AUCTION_SETTLE_MS
+                return events
+            }
+            interludeUntil = null
+            return applyLocked(GameAction.OpenRound)
+        }
+
+        val deadline = interludeUntil
+        val everybodyDone = snapshot.waitingOnShop.isEmpty()
+        if (everybodyDone || (deadline != null && now >= deadline)) {
+            val events = applyLocked(GameAction.CloseInterlude)
+            nextStepAt = now + if (snapshot.interlude?.lot != null) AUCTION_REVEAL_MS else 0L
+            return events
+        }
+
+        if (now < nextStepAt) return null
+        val events = mutableListOf<GameEvent>()
+        for (botId in snapshot.waitingOnShop.filter { snapshot.player(it)?.isBot == true }) {
+            val offerId = botShop(state, botId)
+            events += if (offerId != null) {
+                applyLocked(GameAction.Buy(botId, offerId))
+            } else {
+                applyLocked(GameAction.FinishShopping(botId, botBid(state, botId, rng)))
+            }
+        }
+        nextStepAt = now + BOT_SHOP_STEP_MS
+        return events.ifEmpty { null }
+    }
+
     private fun timeoutNow(snapshot: GameState): List<GameEvent> {
-        val actor = snapshot.pendingAction?.playerId ?: snapshot.currentPlayer?.id ?: return emptyList()
+        val actor = snapshot.openResponse?.awaiting?.firstOrNull()
+            ?: snapshot.pendingAction?.playerId
+            ?: snapshot.currentPlayer?.id
+            ?: return emptyList()
         return applyLocked(GameAction.Timeout(actor))
     }
 
     /** A stable description of who the table is waiting on and why. */
     private fun promptOf(snapshot: GameState): String {
+        // Ahead of everything, including a card that has already landed: a
+        // counter can still stop the one that has not, and asking about it after
+        // the fact would be asking about something that already happened.
+        val window = snapshot.openResponse
+        if (window != null) return "respond:${window.id}:${window.awaiting.size}"
+
         val pending = snapshot.pendingAction
         if (pending != null) return "pick:${pending.playerId}"
+        // Ahead of the forced draws: a card that has landed goes off before
+        // anything it might have queued behind it.
+        val landed = snapshot.pendingOutcomes.firstOrNull()
+        if (landed != null) return "outcome:${snapshot.pendingOutcomes.size}:${landed.cardDefId}:${landed.targetId}"
         val forced = snapshot.forcedDraws
         if (forced != null) return "forced:${forced.playerId}:${forced.remaining}"
         val dealing = snapshot.dealQueue.firstOrNull()
@@ -551,15 +939,29 @@ class Room(
 
     private fun stepDelayFor(prompt: String, snapshot: GameState): Long = when {
         prompt.startsWith("deal:") -> DEAL_STEP_MS
+        prompt.startsWith("outcome:") -> OUTCOME_STEP_MS
         // A slots draw waits for the reels; every other forced draw is a flick.
         prompt.startsWith("forced:") && snapshot.forcedDraws?.source == SLOTS_SOURCE -> SLOTS_SPIN_MS
         prompt.startsWith("forced:") -> FORCED_DRAW_STEP_MS
         prompt.startsWith("pick:") -> BOT_PICK_MS
+        prompt.startsWith("respond:") -> BOT_PICK_MS
         else -> BOT_THINK_MS
     }
 
     /** Only humans are on the clock; bots always act well inside it. */
     private fun deadlineFor(prompt: String, snapshot: GameState, now: Long): Long? {
+        // A response window runs on a clock of its own, and a much shorter one.
+        // A turn's thirty seconds is far too long to hold a whole table for a
+        // counter most of them cannot play — and eight would be too few, because
+        // somebody being asked may be reading two cards they have never seen
+        // before deciding. The reveal's own time is handed back by [closeGate],
+        // so these twelve seconds start after the card has been read.
+        if (prompt.startsWith("respond:")) {
+            val waiting = snapshot.openResponse?.awaiting.orEmpty()
+            if (waiting.none { snapshot.player(it)?.isBot == false }) return null
+            return now + RESPONSE_WINDOW_MS
+        }
+
         val waiting: List<String> = when {
             // One clock covers a prompt however many people it asked, and it
             // runs for as long as any of them is a person. Reading the drawer
@@ -594,6 +996,9 @@ class Room(
      * them noticeably braver.
      */
     private fun shouldHit(snapshot: GameState, bot: Player): Boolean {
+        // Not a judgement — a table that will not let this seat stop would
+        // otherwise be offered a stay it refuses, once every think, for ever.
+        if (!Engine.canStay(snapshot, bot)) return true
         if (bot.hand.isEmpty()) return true
         val unseen = snapshot.deck + snapshot.discard
         if (unseen.none { it.kind == CardKind.NUMBER }) return false
@@ -619,10 +1024,12 @@ class Room(
     private fun botPick(snapshot: GameState, botId: String): List<GameEvent> {
         val pending = snapshot.pendingAction ?: return emptyList()
         Catalog.action(pending.cardDefId) ?: return emptyList()
-        // Whatever the card does, the legal target with the most on the table is
-        // the one worth pointing it at — and anyone else is preferred to itself.
+        // Whatever the card does, the seat with the most on the table is the one
+        // worth pointing it at — plus whatever that seat pays for being pointed
+        // at, which is the whole of why anybody attacks a discordia. Anyone else
+        // is preferred to itself.
         val candidates = pending.validTargets.mapNotNull { snapshot.player(it) }
-        val target = candidates.filter { it.id != botId }.maxByOrNull { it.handValue }
+        val target = candidates.filter { it.id != botId }.maxByOrNull { it.handValue + tollFrom(it) }
             ?: candidates.firstOrNull()
             ?: return emptyList()
         // A coin has no smart call, so a bot simply calls one. It has to call
@@ -630,13 +1037,11 @@ class Room(
         // prompt rather than the card — the same card can ask a question the
         // first time it stops the table and nothing the second.
         val choice = rng.pick(pending.options)
-        // A card that wants cards gets a shuffle: a bot picking off the top of
-        // the list would trade the same two seats' first cards every time, and
-        // the engine keeps the pick legal either way. A shop is the same — every
-        // offer on it is already one this bot can afford, so any of them will
-        // do, and taking the first would have every bot buy the same card.
+        // A shop needs no thought — every offer on it is already one this bot
+        // can afford, and taking the first would have every bot buy the same
+        // card. Cards off the table do need some: see [botCardPicks].
         val cards = when (pending.kind) {
-            PickKind.CARD -> rng.shuffled(pending.validCards)
+            PickKind.CARD -> botCardPicks(snapshot, botId, pending, rng)
             PickKind.CATALOG -> listOfNotNull(rng.pick(pending.offers)?.id)
             PickKind.PLAYER -> emptyList()
         }
@@ -677,9 +1082,42 @@ class Room(
         // The deck is built and shuffled by StartGame, so this is the one
         // moment a stacked deck can be arranged.
         if (action is GameAction.StartGame && before.phase != state.phase) state = stackDeck(state)
-        markRoundBoundaries(before, result.state, result.events)
-        openGate(action, before, result.events)
-        return result.events
+        val events = markFirstSight(result.events)
+        markRoundBoundaries(before, result.state, events)
+        openGate(action, before, events)
+        return events
+    }
+
+    /**
+     * Which gambler cards this table has seen before.
+     *
+     * Bookkeeping about presentation rather than about the game, so it lives
+     * here and not in the engine — nothing about who wins depends on it, and a
+     * room that forgot it would only be slower to watch.
+     */
+    private val seenGamblers = mutableSetOf<String>()
+
+    /**
+     * Stamps a gambler card's reveal with whether the table has seen it before.
+     *
+     * The server states the fact and the client owns the duration, which is the
+     * division of labour everywhere else here — durations live in `useGame.ts`
+     * and nowhere else. What the room is uniquely able to say is *this table has
+     * not seen this card*, and that is the whole difference between a reveal
+     * long enough to read and one long enough to recognise.
+     *
+     * Per table rather than per browser on purpose. The player of a card owns
+     * its animation gate, and they are the one person who certainly knows what
+     * it does — a client that only lengthened cards *it* had not seen would let
+     * them wave it past before anybody else had finished reading.
+     */
+    private fun markFirstSight(events: List<GameEvent>): List<GameEvent> {
+        if (events.none { it is GameEvent.GamblerPlayed }) return events
+        return events.map { event ->
+            if (event !is GameEvent.GamblerPlayed) return@map event
+            val defId = event.card.defId ?: return@map event
+            event.copy(firstSeen = seenGamblers.add(defId))
+        }
     }
 
     /**
@@ -719,6 +1157,7 @@ class Room(
             is GameAction.Timeout -> action.playerId
             is GameAction.DealTo -> action.playerId
             GameAction.ForcedDraw -> before.forcedDraws?.playerId
+            GameAction.ResolveOutcome -> before.pendingOutcomes.firstOrNull()?.playerId
             else -> null
         }
         val human = actor != null &&
@@ -759,14 +1198,30 @@ class Room(
         if (after.phase != GamePhase.ROUND_END) nextRoundAt = null
 
         if (before.phase == GamePhase.PLAYING && after.phase == GamePhase.ROUND_END) {
-            val preamble = outroPreambleFor(events)
+            // Whatever ended the round, then the payout, and only then the card.
+            val preamble = outroPreambleFor(events) + payoutWindowFor(after.players.size)
             roundOutroFrom = now + preamble
             roundOutroUntil = now + preamble + OUTRO_CARD_MS
             nextRoundAt = autoNextRoundAt(after, roundOutroUntil!!)
         }
+
+        // The shop opening. Its clock starts here rather than when the round
+        // ended: it opens *after* the scoreboard, so the two minutes are not
+        // spent while people are still reading what the round paid.
+        if (before.interlude == null && after.interlude != null) {
+            interludeUntil = now + shopWindowFor(after.config)
+            nextStepAt = now + BOT_SHOP_STEP_MS
+            // The round's closing beats are over. Left set, the outro card would
+            // hang over the shop the moment anything re-mounted the table.
+            roundOutroFrom = null
+            roundOutroUntil = null
+            nextRoundAt = null
+        }
+        if (after.interlude == null) interludeUntil = null
     }
 
-    private fun view(): GameStateView = state.toView(
+    private fun view(viewerId: String?): GameStateView = state.toView(
+        viewerId,
         code,
         hostId,
         turnDeadline,
@@ -775,21 +1230,53 @@ class Room(
         roundOutroUntil,
         gate?.let { AnimationGateView(it.id, it.ackPlayerId, it.deadline) },
         nextRoundAt,
+        interludeUntil,
         if (dev) DevMode.peek(state) else null,
+        if (dev) state.players.associate { it.id to it.gamblers } else null,
     )
 
+    /**
+     * Sends a batch of events and the state they produced to every seat.
+     *
+     * One encode per connection rather than one for the room. That is a real
+     * cost — five seats is five passes over the same few kilobytes — and it is
+     * what a hidden hand costs: which faces you may see is a fact about you, and
+     * there is no honest way to answer it once for everybody. The alternative,
+     * a shared payload with a private patch bolted on afterwards, needs the
+     * redaction written anyway and then adds a merge on top of it.
+     */
     private suspend fun broadcast(events: List<GameEvent>) {
-        val message = ServerMessage.State(view(), events)
-        val payload = json.encodeToString(ServerMessage.serializer(), message)
-        for (connection in connections.values) {
-            connection.outbound.trySend(payload)
+        for ((playerId, connection) in connections) {
+            val message = ServerMessage.State(view(playerId), redactFor(events, playerId))
+            connection.outbound.trySend(json.encodeToString(ServerMessage.serializer(), message))
         }
     }
 
     suspend fun sendStateTo(playerId: String) {
         val connection = connections[playerId] ?: return
-        val message = mutex.withLock { ServerMessage.State(view(), emptyList()) }
+        val message = mutex.withLock { ServerMessage.State(view(playerId), emptyList()) }
         connection.outbound.trySend(json.encodeToString(ServerMessage.serializer(), message))
+    }
+
+    /**
+     * Trims a batch of events for one viewer.
+     *
+     * The single place an event is cut down for who is reading it, and it should
+     * stay that way — a second one would be a second place to forget. Everything
+     * else in the game is public by design: the table watches what happens and
+     * replays it as animation, and an event nobody may see is an event nobody
+     * can animate.
+     *
+     * `EventRedactionTest` walks the sealed hierarchy and fails when an event
+     * carrying a card is neither listed as public nor handled here, which is
+     * what stops the next hidden thing being added without a line in this
+     * function.
+     */
+    private fun redactFor(events: List<GameEvent>, viewerId: String): List<GameEvent> {
+        if (events.none { it is GameEvent.GamblerDrawn }) return events
+        return events.map {
+            if (it is GameEvent.GamblerDrawn && it.playerId != viewerId) it.copy(card = null) else it
+        }
     }
 
     private suspend fun send(connection: Connection, message: ServerMessage) {

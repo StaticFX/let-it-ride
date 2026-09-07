@@ -16,6 +16,13 @@ enum class PassiveScoring {
 
     /** Halves whatever the round came to, last of all. */
     HALVE,
+
+    /**
+     * Every number card counts against its holder instead of for them — a 13 is
+     * worth minus thirteen. Applied to the hand total before anything else, so
+     * a x2 doubles the hole and a +10 fills a little of it back in.
+     */
+    NEGATE,
 }
 
 /** Who a card is allowed to be pointed at. */
@@ -28,6 +35,14 @@ enum class TargetRule {
 
     /** Someone else, still in the round, who actually has cards. */
     OTHER_ACTIVE_WITH_CARDS,
+
+    /**
+     * Someone else who is holding anything at all — a hand, a modifier row, or
+     * both. What a card that moves everything in front of you has to ask for:
+     * a player sitting behind nothing but a ×2 has plenty worth swapping for,
+     * and [OTHER_ACTIVE_WITH_CARDS] would not offer them.
+     */
+    OTHER_WITH_ANYTHING,
 
     /**
      * Anyone at the table at all — busted, gone out, or still playing. The only
@@ -67,6 +82,17 @@ data class Play(
      * is what nearly every card wants.
      */
     val answers: Map<String, Answer> = emptyMap(),
+    /**
+     * What the card settled on while it was being announced, handed back to it
+     * when the table has finished watching — the face the coin came down on.
+     * Only ever set in [PHASE_OUTCOME]; see [PendingOutcome].
+     */
+    val result: String? = null,
+    /**
+     * Every seat the outcome landed on, for a card that settles with more than
+     * one at a time. Empty everywhere else, where [target] is the whole of it.
+     */
+    val targets: List<Player> = emptyList(),
 ) {
     /** What [from] sent back, unresolved — an offer id, rather than a card. */
     val picked: List<String> get() = answers[from.id]?.cards ?: emptyList()
@@ -136,28 +162,49 @@ data class ActionCardDef(
      * list means the card cannot do anything and should not be sitting there
      * waiting for a pick it will never get.
      */
-    fun validTargets(state: GameState, fromId: String): List<String> {
-        // "Extreme": a card that takes something away reaches a seat that is
-        // already out, because what it takes is points and those are still on
-        // the board. The rules are read off the state rather than passed in —
-        // a game knows what it is being played under, and threading a rule set
-        // through every call site would only carry the same answer by hand.
-        val active =
-            if (RuleSet.of(state.config).reachesFinished) state.players
-            else state.players.filter { it.status == PlayerStatus.ACTIVE }
-        val byRule = when (targetRule) {
-            TargetRule.SELF -> listOf(fromId)
-            TargetRule.ANY_ACTIVE -> active.map { it.id }
-            TargetRule.ACTIVE_WITH_CARDS -> active.filter { it.hand.isNotEmpty() }.map { it.id }
-            TargetRule.OTHER_ACTIVE_WITH_CARDS ->
-                active.filter { it.id != fromId && it.hand.isNotEmpty() }.map { it.id }
+    fun validTargets(state: GameState, fromId: String): List<String> =
+        targetsFor(targetRule, state, fromId, skipHolding)
+}
 
-            TargetRule.ANY_PLAYER -> state.players.map { it.id }
-        }
-        val held = skipHolding ?: return byRule
-        return byRule.filterNot { id ->
-            state.player(id)?.passives?.any { it.defId == held } == true
-        }
+/**
+ * Everyone a card played by [fromId] under [rule] could meaningfully be pointed
+ * at right now, minus anybody already holding [skipHolding].
+ *
+ * A free function rather than a method because two kinds of card ask the same
+ * question — an action card off the deck and a gambler card out of a hidden
+ * hand — and two copies of a rule this fiddly would come apart the first time
+ * one of them was corrected.
+ */
+internal fun targetsFor(
+    rule: TargetRule,
+    state: GameState,
+    fromId: String,
+    skipHolding: String? = null,
+): List<String> {
+    // "Extreme": a card that takes something away reaches a seat that is
+    // already out, because what it takes is points and those are still on
+    // the board. The rules are read off the state rather than passed in —
+    // a game knows what it is being played under, and threading a rule set
+    // through every call site would only carry the same answer by hand.
+    val active =
+        if (RuleSet.of(state.config).reachesFinished) state.players
+        else state.players.filter { it.status == PlayerStatus.ACTIVE }
+    val byRule = when (rule) {
+        TargetRule.SELF -> listOf(fromId)
+        TargetRule.ANY_ACTIVE -> active.map { it.id }
+        TargetRule.ACTIVE_WITH_CARDS -> active.filter { it.hand.isNotEmpty() }.map { it.id }
+        TargetRule.OTHER_ACTIVE_WITH_CARDS ->
+            active.filter { it.id != fromId && it.hand.isNotEmpty() }.map { it.id }
+
+        TargetRule.OTHER_WITH_ANYTHING ->
+            active.filter { it.id != fromId && (it.hand.isNotEmpty() || it.passives.isNotEmpty()) }
+                .map { it.id }
+
+        TargetRule.ANY_PLAYER -> state.players.map { it.id }
+    }
+    val held = skipHolding ?: return byRule
+    return byRule.filterNot { id ->
+        state.player(id)?.passives?.any { it.defId == held } == true
     }
 }
 
@@ -200,7 +247,25 @@ data class PassiveCardDef(
      * outlive the round it was meant to last.
      */
     val deckable: Boolean = true,
-)
+    /**
+     * Whether its holder may choose to go out. False for [ANTIMATTER]: the only
+     * ways off a card that counts your hand against you are to flip, to give it
+     * to somebody else, or to be sent out by somebody — a freeze still works,
+     * and is worth playing on a friend for once. Busting is not one of them,
+     * which is the whole reason an antimatter bust still costs its holder the
+     * hand: otherwise the deck would be handing the stop back.
+     */
+    val allowsStaying: Boolean = true,
+) {
+    /**
+     * A card that keeps taking from you for as long as you are holding it, as
+     * opposed to one that writes off the round it arrived in. The difference
+     * matters to a deck: a curse has to be passable, or it is a penalty on
+     * whoever drew it rather than a card — see `DeckTest`.
+     */
+    val isCurse: Boolean
+        get() = spite > 0 || scoring == PassiveScoring.NEGATE || !allowsStaying
+}
 
 /** The ink every card you would rather not be holding is printed in. */
 private const val SOUR = "#8f3b2e"
@@ -250,6 +315,114 @@ val MUST_FLIP = PassiveCardDef(
 )
 
 /** Went furthest either way on an "all in", and pays for it at the end. */
+// ─── Armed by a gambler card, spent by the next draw ───
+//
+// Rolling rules has a family of cards whose whole promise is about the *next*
+// card you turn over, and every one of them is the same shape: play it now, and
+// it sits in your modifier row until a draw uses it up. They are cards rather
+// than flags on the player for the reason everything else here is — you can see
+// one across the table, and a swap can hand it to somebody else.
+
+val REDIRECT_ARMED = PassiveCardDef(
+    id = "redirectArmed",
+    name = "redirect",
+    description = "the next card you draw is yours to keep or to hand on",
+    sigil = "⤳",
+    accent = GAMBLER_INK,
+    seal = SealShape.SHIELD,
+    price = 0,
+    deckable = false,
+)
+
+val DRAW_TWO_ARMED = PassiveCardDef(
+    id = "drawTwoArmed",
+    name = "draw 2",
+    description = "you take an extra card on your next turn",
+    sigil = "❊",
+    accent = GAMBLER_INK,
+    seal = SealShape.SCALLOP,
+    price = 0,
+    deckable = false,
+)
+
+val SECOND_OPINION_ARMED = PassiveCardDef(
+    id = "secondOpinionArmed",
+    name = "second opinion",
+    description = "you may throw the next card you draw back and take another",
+    sigil = "⚖",
+    accent = GAMBLER_INK,
+    seal = SealShape.SCALLOP,
+    price = 0,
+    deckable = false,
+)
+
+// ─── Armed by a gambler card, read when the round is paid ───
+//
+// These three are about what a round *pays* rather than what a hand is worth,
+// so `Engine.settleGamblerEffects` reads them off the modifier row after the
+// hands have been totalled. They are cards for rule one's reason and for a
+// second one: a swap can take a "double down" off you before it pays out, which
+// is a far better card than a flag on a player would have been.
+
+val DOUBLE_DOWN_ARMED = PassiveCardDef(
+    id = "doubleDownArmed",
+    name = "double down",
+    description = "everything this round pays you, or costs you, counted twice",
+    sigil = "⧉",
+    accent = GAMBLER_INK,
+    seal = SealShape.HEXAGON,
+    price = 0,
+    deckable = false,
+)
+
+val TAXES_ARMED = PassiveCardDef(
+    id = "taxesArmed",
+    name = "taxes",
+    description = "a tenth of everybody else's round, into yours",
+    sigil = "§",
+    accent = GAMBLER_INK,
+    seal = SealShape.HEXAGON,
+    price = 0,
+    deckable = false,
+)
+
+val ALREADY_DOWN_ARMED = PassiveCardDef(
+    id = "alreadyDownArmed",
+    name = "already down",
+    description = "the further behind the leader you are, the more this round is worth",
+    sigil = "↗",
+    accent = GAMBLER_INK,
+    seal = SealShape.SCALLOP,
+    price = 0,
+    deckable = false,
+)
+
+/**
+ * The one card that cannot bust and cannot be swapped away: a hand of cards you
+ * are not allowed to lose, for the round after a "cooler revive".
+ */
+val FORESIGHT = PassiveCardDef(
+    id = "foresight",
+    name = "foreseer",
+    description = "you can see the next few cards in the deck",
+    sigil = "◉",
+    accent = GAMBLER_INK,
+    seal = SealShape.SCALLOP,
+    price = 0,
+    deckable = false,
+)
+
+val COOLER = PassiveCardDef(
+    id = "cooler",
+    name = "the cooler",
+    description = "duplicates do not bust you for the rest of this round",
+    sigil = "❄",
+    accent = GAMBLER_INK,
+    seal = SealShape.SHIELD,
+    price = 0,
+    deckable = false,
+)
+
 val HALVED = PassiveCardDef(
     id = "halved",
     name = "all in",
@@ -327,14 +500,15 @@ val STRIKE = ActionCardDef(
 val STEAL = ActionCardDef(
     id = "steal",
     name = "steal",
-    description = "take a random card from target",
+    description = "take a random card from target — a modifier as easily as a number",
     sigil = "◈",
-    targetRule = TargetRule.OTHER_ACTIVE_WITH_CARDS,
+    targetRule = TargetRule.OTHER_WITH_ANYTHING,
     price = 20,
 ) { ctx, play ->
     if (play.from.id == play.target.id) return@ActionCardDef
     val card = ctx.stealRandom(play.target.id, play.from.id)
-    // The stolen card can duplicate something the thief already holds.
+    // The stolen card can duplicate something the thief already holds — and it
+    // can be something they would much rather have left where it was.
     if (card != null) ctx.resolveBustAfterGain(play.from.id)
 }
 
@@ -360,7 +534,7 @@ val SWAP = ActionCardDef(
     name = "swap hands",
     description = "trade everything you are holding with another player — modifiers too",
     sigil = "⇄",
-    targetRule = TargetRule.OTHER_ACTIVE_WITH_CARDS,
+    targetRule = TargetRule.OTHER_WITH_ANYTHING,
     price = 20,
 ) { ctx, play ->
     if (play.from.id == play.target.id) return@ActionCardDef
@@ -372,17 +546,18 @@ val SWAP = ActionCardDef(
 }
 
 /**
- * Every card lying face up in front of somebody still in the round — hands and
- * modifiers alike. What [SWAP_CARDS] is allowed to reach for.
+ * Every card lying face up anywhere on the table — hands and modifiers alike,
+ * whatever became of the player in front of them. What [SWAP_CARDS] is allowed
+ * to reach for.
+ *
+ * A seat that has busted or gone out is still holding its cards, and they are
+ * still worth something: a banked hand is points, and a modifier row is a bomb
+ * or a discordia somebody would dearly like to be rid of. Leaving those out
+ * meant a card whose whole purpose is to be passed on could not be passed to
+ * two thirds of the table by the end of a round.
  */
-private fun cardsOnTable(state: GameState): List<Card> {
-    // Under "extreme" a hand that has already been banked is still on the table
-    // as far as this card is concerned — see [ActionCardDef.validTargets].
-    val holders =
-        if (RuleSet.of(state.config).reachesFinished) state.players
-        else state.players.filter { it.status == PlayerStatus.ACTIVE }
-    return holders.flatMap { it.hand + it.passives }
-}
+private fun cardsOnTable(state: GameState): List<Card> =
+    state.players.flatMap { it.hand + it.passives }
 
 /**
  * Pick any two cards on the table and trade their places. Unlike [SWAP], which
@@ -413,19 +588,26 @@ val SWAP_CARDS = ActionCardDef(
 ) { ctx, play ->
     val (first, second) = play.cards.take(2).let { it.getOrNull(0) to it.getOrNull(1) }
     if (first == null || second == null) return@ActionCardDef
-    for (id in ctx.swapCards(first.id, second.id)) ctx.resolveBustAfterGain(id)
+    // Either seat can be one that already finished its round — see
+    // [cardsOnTable] — and a banked hand handed a duplicate is a bust like any
+    // other.
+    for (id in ctx.swapCards(first.id, second.id)) ctx.resolveBustAfterGain(id, finishedToo = true)
 }
 
 /** The two faces of the coin, as offered to the drawer and sent back. */
 const val COIN_HEADS = "heads"
 const val COIN_TAILS = "tails"
 
+/** Their own ids, so the outcome each of them defers can name the card. */
+const val COIN_FLIP_ID = "coinFlip"
+const val ASSASSINATION_ID = "assassination"
+
 /**
  * Call it in the air: a correct call is worth a ×2, a wrong one busts you.
  * Replaces double-or-nothing, which flipped the same coin without asking.
  */
 val COIN_FLIP = ActionCardDef(
-    id = "coinFlip",
+    id = COIN_FLIP_ID,
     name = "coin flip",
     description = "call heads or tails: right doubles your cards, wrong busts you",
     sigil = "⌾",
@@ -433,20 +615,30 @@ val COIN_FLIP = ActionCardDef(
     options = listOf(COIN_HEADS, COIN_TAILS),
     price = 15,
 ) { ctx, play ->
-    // Under "double it!" the second flip is for a player who may already be
-    // out; a coin is not thrown for someone who is no longer in the round.
     val target = play.target
-    if (target.status == PlayerStatus.ACTIVE) {
-        val call = play.choice ?: COIN_HEADS
-        val landed = if (ctx.rng.nextBoolean()) COIN_HEADS else COIN_TAILS
-        // Announced before the consequence so the coin can land on the called
-        // face first and the payout or the bust follows it.
-        ctx.emit(GameEvent.CoinFlip(target.id, call, landed))
-        if (call == landed) {
+    if (play.phase == PHASE_OUTCOME) {
+        // The coin has come down. Whether it is still worth anything is asked
+        // again here: the table moved on while it was in the air.
+        if (target.status != PlayerStatus.ACTIVE) return@ActionCardDef
+        if (play.choice == play.result) {
             ctx.grantEphemeralPassive(target.id, DOUBLE_POINTS.id)
         } else {
             ctx.bust(target.id, "coin flip")
         }
+        return@ActionCardDef
+    }
+
+    // Under "double it!" the second flip is for a player who may already be
+    // out; a coin is not thrown for someone who is no longer in the round.
+    if (target.status == PlayerStatus.ACTIVE) {
+        val call = play.choice ?: COIN_HEADS
+        val landed = if (ctx.rng.nextBoolean()) COIN_HEADS else COIN_TAILS
+        // Thrown now and settled in a moment. Both faces travel on the event so
+        // the coin can land on the right one, and the payout or the bust waits
+        // until it has — see [PendingOutcome]. Resolving here instead meant the
+        // seat read "bust!" while the coin was still turning over.
+        ctx.emit(GameEvent.CoinFlip(target.id, call, landed))
+        ctx.land(COIN_FLIP_ID, play.from.id, target.id, result = landed, choice = call)
     }
 }
 
@@ -480,18 +672,29 @@ val SPIN_TABLE = ActionCardDef(
  * clients rolling their own would show four different bottles.
  */
 val ASSASSINATION = ActionCardDef(
-    id = "assassination",
+    id = ASSASSINATION_ID,
     name = "assassination",
     description = "a spinning bottle picks a player at random — they bust",
     sigil = "⚱",
     targetRule = TargetRule.SELF,
     price = 40,
-) { ctx, _ ->
+) { ctx, play ->
+    if (play.phase == PHASE_OUTCOME) {
+        // The bottle has stopped. Whoever it stopped on may have gone out while
+        // it was still turning, and [Ctx.bust] is a no-op on a seat already out.
+        ctx.bust(play.target.id, "assassination")
+        return@ActionCardDef
+    }
+
     // The drawer is in the running too, and under "double it!" the bottle is
-    // spun twice: two spins, two victims.
-    val victim = ctx.rng.pick(ctx.activePlayers()) ?: return@ActionCardDef
+    // spun twice: two spins, two victims. Nobody who already has a bottle
+    // coming is in the running for the second one — the first has not busted
+    // them yet, because neither bust happens until both bottles have been
+    // watched, and two bottles stopping on the same seat is one wasted spin.
+    val alreadyGoing = ctx.state.pendingOutcomes.map { it.targetId }.toSet()
+    val victim = ctx.rng.pick(ctx.activePlayers().filterNot { it.id in alreadyGoing }) ?: return@ActionCardDef
     ctx.emit(GameEvent.BottleSpin(victim.id))
-    ctx.bust(victim.id, "assassination")
+    ctx.land(ASSASSINATION_ID, play.from.id, victim.id)
 }
 
 /** The one card that reaches a player who is already finished with the round. */
@@ -701,6 +904,10 @@ val MUTATE = ActionCardDef(
 const val COMEBACK_ID = "comeback"
 const val ALL_IN_ID = "allIn"
 
+/** How a comeback came out, carried from the throw to the settling. */
+const val COMEBACK_WON = "won"
+const val COMEBACK_LOST = "lost"
+
 const val THROW_ROCK = "rock"
 const val THROW_PAPER = "paper"
 const val THROW_SCISSORS = "scissors"
@@ -769,6 +976,14 @@ val COMEBACK = ActionCardDef(
         return@ActionCardDef
     }
 
+    if (play.phase == PHASE_OUTCOME) {
+        // Both throws have been turned over and read. Only now do the scores
+        // move: watching your own total change while the hands are still being
+        // shown is being told the answer over the top of the question.
+        if (play.result == COMEBACK_WON) ctx.swapScores(play.from.id, play.target.id)
+        return@ActionCardDef
+    }
+
     val challenger = play.from.id
     val leader = play.answers.keys.firstOrNull { it != challenger } ?: return@ActionCardDef
     val mine = play.answers[challenger]?.choice ?: THROW_ROCK
@@ -777,7 +992,7 @@ val COMEBACK = ActionCardDef(
     ctx.emit(GameEvent.Throws(challenger, mine, leader, theirs, won))
     // A draw is a draw. Throwing again would need the table to remember how
     // many times it already had, and "you both threw rock" is a fine ending.
-    if (won) ctx.swapScores(challenger, leader)
+    ctx.land(COMEBACK_ID, challenger, leader, result = if (won) COMEBACK_WON else COMEBACK_LOST)
 }
 
 /** How much of the round the two ends of an "all in" keep. */
@@ -820,6 +1035,15 @@ val ALL_IN = ActionCardDef(
         return@ActionCardDef
     }
 
+    if (play.phase == PHASE_OUTCOME) {
+        // The bets have been turned over and read; now they are paid for. The
+        // card lands on the two ends of the table after the reveal rather than
+        // underneath it — a modifier arriving while everybody is still reading
+        // the cards is a modifier nobody saw arrive.
+        for (loser in play.targets) ctx.grantEffect(loser.id, HALVED.id)
+        return@ActionCardDef
+    }
+
     // Every bet, resolved back to the card it names. A pick that is not the
     // player's own to bet — a clock that ran out, a hand that changed under
     // them — falls back to a card that is, so nobody is left out of the
@@ -837,7 +1061,7 @@ val ALL_IN = ActionCardDef(
     // Everyone tied at either end pays: nobody is spared for having company.
     val paying = bets.filterValues { it.value == high || it.value == low }.keys
     ctx.emit(GameEvent.AllIn(bets.mapValues { it.value }, paying.toList()))
-    for (id in paying) ctx.grantEffect(id, HALVED.id)
+    ctx.land(ALL_IN_ID, play.from.id, play.from.id, targets = paying.toList())
 }
 
 // ═══════════════════════════════════════════════
@@ -902,6 +1126,39 @@ val DISCORDIA = PassiveCardDef(
 )
 
 /**
+ * Every number card in front of you counts the wrong way, you may not stop, and
+ * busting is not a way out either.
+ *
+ * The three halves are one card. A hand that is worth minus something is a hand
+ * you would put down at once, so the card does not let you — and a bust that
+ * wiped the debt would hand the stop back under another name: draw until the
+ * duplicate comes and walk away owing nothing, which is a *better* round than
+ * the one the card was pushing you into. So the hole stays, and it deepens with
+ * every card you are made to take.
+ *
+ * What is left is to run all the way to the flip and hope the bonus covers it,
+ * or to find somebody to trade it to — which is the move the card is really
+ * asking for, and why it is dealt into decks that can move a modifier. Being
+ * *sent* out is the other way: a freeze still works, and is worth playing on a
+ * friend for once.
+ *
+ * It lifts the floor under its own holder, "extreme" or not — see
+ * `Engine.enterRoundEnd`. A card that says a 13 is worth minus thirteen has to
+ * mean it, and every other table rounds a bad round up to nothing.
+ */
+val ANTIMATTER = PassiveCardDef(
+    id = "antimatter",
+    name = "antimatter",
+    description = "your number cards count against you. you cannot go out, and busting will not save you",
+    sigil = "∓",
+    scoring = PassiveScoring.NEGATE,
+    accent = SOUR,
+    seal = SealShape.SPIKE,
+    price = 0,
+    allowsStaying = false,
+)
+
+/**
  * The bonus cards stay one family: the house green and the plain round stamp,
  * every one of them. What separates a +2 from a +10 is how hard it was struck,
  * which the client reads off [PassiveCardDef.bonusPoints] — five colours here
@@ -929,22 +1186,68 @@ val PLUS_TEN = plus(10)
 // Catalog
 // ═══════════════════════════════════════════════
 
+const val AUCTION_ID = "auction"
+
+/**
+ * Not a card, but the table stops for it exactly the way it stops for one.
+ *
+ * Written the way [ANTI_FLIP] is — `deckable = false`, so no deck may hold it —
+ * and registered among the actions so that `Engine.resolveOutcome` finds it when
+ * the auction's reveal has been watched and the money has to move. It only ever
+ * runs in [PHASE_OUTCOME]; there is no "playing" it.
+ *
+ * The price is read back off `Interlude.sale` rather than stuffed into
+ * `PendingOutcome.result`, which is a field for tokens — a coin's face, a
+ * winner's name — and a number in it would be the one stringly-typed thing in
+ * the engine.
+ */
+val AUCTION = ActionCardDef(
+    id = AUCTION_ID,
+    name = "sold!",
+    description = "the highest sealed bid takes the lot",
+    sigil = "⚑",
+    targetRule = TargetRule.SELF,
+    deckable = false,
+    price = 0,
+) { ctx, play ->
+    if (play.phase != PHASE_OUTCOME) return@ActionCardDef
+    val sale = ctx.state.interlude?.sale ?: return@ActionCardDef
+    val winner = sale.winnerId ?: return@ActionCardDef
+    ctx.bank(winner, -sale.price)
+    ctx.update(winner) { it.copy(gamblers = it.gamblers + sale.card) }
+    ctx.emit(GameEvent.Bought(winner, sale.card, sale.price, hidden = true))
+}
+
 object Catalog {
     val actions: Map<String, ActionCardDef> = listOf(
         FREEZE, DRAW_THREE, STRIKE, STEAL, HEX, SWAP, SWAP_CARDS, SLOTS,
         COIN_FLIP, SPIN_TABLE, ASSASSINATION, DONT_CARE,
         JUST_ONE_MORE, UNLUCKY_SEVEN, SUICIDE_BOMBER, ANTI_FLIP,
-        COMEBACK, ALL_IN, MUTATE,
+        COMEBACK, ALL_IN, MUTATE, AUCTION,
     ).associateBy { it.id }
 
     val passives: Map<String, PassiveCardDef> = listOf(
-        SECOND_LIFE, ARMOR, DOUBLE_POINTS, DISCORDIA,
+        SECOND_LIFE, ARMOR, DOUBLE_POINTS, DISCORDIA, ANTIMATTER,
         PLUS_TWO, PLUS_FOUR, PLUS_SIX, PLUS_EIGHT, PLUS_TEN,
         // The effect cards. Never dealt — minted by whatever causes them — but
         // they are cards on the table like any other, so the client has to be
         // able to draw a face for them.
         NO_FLIP, MUST_FLIP, HALVED, BOMBER,
+        REDIRECT_ARMED, DRAW_TWO_ARMED, SECOND_OPINION_ARMED,
+        DOUBLE_DOWN_ARMED, TAXES_ARMED, ALREADY_DOWN_ARMED, COOLER, FORESIGHT,
     ).associateBy { it.id }
+
+    /**
+     * The gambler cards, for rolling rules — see [GamblerCatalog].
+     *
+     * Held here as well so that everything which resolves a `Card.defId` has one
+     * place to look. Their ids must not collide with an action's or a passive's:
+     * the testing panel, the stacked deck and every card on the table are named
+     * by a bare id across all three catalogs, so two cards sharing one would
+     * silently be the same card in some places and not others. `CatalogTest`
+     * holds that line.
+     */
+    val gamblers: Map<String, GamblerCardDef> = GamblerCatalog.byId
 
     /** Only the cards a deck may actually contain — see [ActionCardDef.deckable]. */
     val deckableActions: List<ActionCardDef> = actions.values.filter { it.deckable }
@@ -952,4 +1255,6 @@ object Catalog {
     fun action(id: String?): ActionCardDef? = id?.let { actions[it] }
 
     fun passive(id: String?): PassiveCardDef? = id?.let { passives[it] }
+
+    fun gambler(id: String?): GamblerCardDef? = id?.let { gamblers[it] }
 }

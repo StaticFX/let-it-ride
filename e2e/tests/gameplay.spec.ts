@@ -86,6 +86,10 @@ test.describe('playing a round', () => {
 
   test('the draw pile is a second way to take a card', async ({ app }) => {
     await app.hostVersusBots('devin')
+    // No attacks in this deck. What is being checked is a way of taking a card,
+    // which needs a turn to take one on — and any deck that can end a player's
+    // round can end it before they have had one.
+    await app.configure({ deck: 'friendly' })
     await app.start()
 
     const before = await app.table.playUntil((s) => s.myTurn && s.buttonsVisible, {

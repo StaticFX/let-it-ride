@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGameStore, findRule } from '../../state/gameStore'
 import { connect, createRoom, leaveGame, lookupRoom, send } from '../../net/client'
 import type { GameConfig } from '../../game/types'
+import { modeOf } from '../../game/types'
 import { CardBack } from '../cards/CardBack'
 import { PlayingCard } from '../cards/PlayingCard'
 import { SketchButton } from '../ui/Button'
@@ -315,6 +316,13 @@ export function Lobby() {
         {/* Rules of this table */}
         <div className="sketch-box mb-4 rounded p-5 relative">
           <h2 className="mb-4 -rotate-1">~ rules for this game ~</h2>
+
+          <p className="mb-2">
+            <span className="text-muted">mode: </span>
+            <span className="display text-xl" data-testid="table-mode">
+              {modeOf(config) === 'rollingRules' ? 'rolling rules' : 'let it ride'}
+            </span>
+          </p>
 
           <div className="flex items-center justify-between mb-3">
             <p>

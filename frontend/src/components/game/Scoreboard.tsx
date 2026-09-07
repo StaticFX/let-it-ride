@@ -8,10 +8,44 @@ interface ScoreboardProps {
   players: Player[]
   currentPlayerId: string
   localPlayerId: string | null
+  /**
+   * What a player's cards are worth to them, which is not always what they add
+   * up to — see the "antimatter" card. Handed in rather than read off the
+   * player, because the answer is the server's.
+   */
+  worth: (player: Player) => number
+  /**
+   * Whether a seat's round is over *and* worth nothing, which is what the strike
+   * through a number means here. Not the same question as "did they bust" — an
+   * antimatter holder busts and pays for it anyway, and a struck-through minus
+   * eighteen would be the felt telling them they got away with it. Handed in
+   * because the answer is the server's; without one, every bust is written off
+   * the way it always was.
+   */
+  writtenOff?: (player: Player) => boolean
+  /**
+   * What their total reads. Handed in for the same reason: while the table is
+   * being paid it is not yet what the server has already banked — see the
+   * payout in `useGame`.
+   */
+  total?: (player: Player) => number
+  /**
+   * The score this game is a race to, when it is one. A game played to a number
+   * of rounds has no line to run at, so it gets no bar.
+   */
+  target?: number
+  /** Handed each row as it mounts, so the payout knows where to fly to. */
+  rowRef?: (playerId: string, element: HTMLDivElement | null) => void
   onReset?: () => void
 }
 
-export function Scoreboard({ players, currentPlayerId, localPlayerId, onReset }: ScoreboardProps) {
+/** How much of the way to the target is worth making something of. */
+const CLOSE = 0.7
+const BRINK = 0.9
+
+export function Scoreboard({
+  players, currentPlayerId, localPlayerId, worth, writtenOff, total, target, rowRef, onReset,
+}: ScoreboardProps) {
   const ink = theme.ink
   const sw = theme.strokeWidth
   const { ref: wrapRef, size } = useElementSize<HTMLDivElement>()
@@ -171,19 +205,38 @@ export function Scoreboard({ players, currentPlayerId, localPlayerId, onReset }:
           {players.map((p) => {
             const isCurrent = p.id === currentPlayerId
             const isBusted = p.status === 'bust'
+            // Out is out — the name is struck either way. What the strike
+            // through the *number* says is "and it came to nothing", which is
+            // not true of every bust.
+            const isDead = isBusted && (writtenOff?.(p) ?? true)
             const isStayed = p.status === 'stayed'
             const isMe = p.id === localPlayerId
             const isOut = isBusted || isStayed
 
+            const score = total ? total(p) : p.score
+            // How far along the run at the target this player is. No target, no
+            // run: a game played to a number of rounds is not a race to a line.
+            const run = target && target > 0 ? Math.max(0, Math.min(1, score / target)) : null
+            const close = run !== null && run >= CLOSE
+            const brink = run !== null && run >= BRINK
+
             return (
-              <div key={p.id} style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 52px 48px',
-                alignItems: 'baseline',
-                gap: 4,
-                padding: '3px 2px',
-                opacity: isBusted ? 0.4 : isStayed ? 0.55 : 1,
-              }}>
+              <div
+                key={p.id}
+                ref={(element) => rowRef?.(p.id, element)}
+                data-testid="score-row"
+                data-player-id={p.id}
+                data-close={close}
+                data-brink={brink}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 52px 48px',
+                  alignItems: 'baseline',
+                  gap: 4,
+                  padding: '3px 2px',
+                  opacity: isBusted ? 0.4 : isStayed ? 0.55 : 1,
+                }}
+              >
                 {/* Name */}
                 <div style={{ position: 'relative' }}>
                   <div style={{
@@ -199,6 +252,11 @@ export function Scoreboard({ players, currentPlayerId, localPlayerId, onReset }:
                         color: theme.inkSoft, fontWeight: 400,
                         marginLeft: 3, fontSize: 11,
                       }}>you</span>
+                    )}
+                    {/* Said out loud, because a bar that is nearly full is
+                        something you want to be told rather than measure. */}
+                    {brink && (
+                      <span className="score-brink-tag" data-testid="match-point">match point</span>
                     )}
                   </div>
                   {/* Hand-drawn underline for current turn */}
@@ -222,13 +280,34 @@ export function Scoreboard({ players, currentPlayerId, localPlayerId, onReset }:
                   fontFamily: theme.fontNumber, fontSize: 21, fontWeight: 700,
                   color: isBusted ? theme.actionAccent : theme.inkSoft,
                   textAlign: 'right', lineHeight: 1,
-                  textDecoration: isBusted ? 'line-through' : 'none',
-                }}>{isOut ? (isBusted ? p.handValue : p.handValue || '–') : (p.handValue || '–')}</div>
+                  textDecoration: isDead ? 'line-through' : 'none',
+                }}>{worth(p) || '–'}</div>
                 {/* Total score */}
-                <div style={{
-                  fontFamily: theme.fontNumber, fontSize: 21, fontWeight: 700,
-                  color: ink, textAlign: 'right', lineHeight: 1,
-                }}>{p.score}</div>
+                {/* Keyed on the number, so a total that changes is remounted
+                    and lands rather than simply reading differently — which is
+                    the whole of what a payout looks like from this end. */}
+                <div
+                  key={score}
+                  className="score-total"
+                  data-testid="score-total"
+                  data-total={score}
+                  style={{
+                    fontFamily: theme.fontNumber, fontSize: 21, fontWeight: 700,
+                    color: ink, textAlign: 'right', lineHeight: 1,
+                  }}
+                >{score}</div>
+
+                {/* The run at the target, drawn under the whole row. */}
+                {run !== null && (
+                  <div
+                    className="score-bar"
+                    data-close={close}
+                    data-brink={brink}
+                    style={{ ['--run' as string]: `${Math.round(run * 100)}%`, gridColumn: '1 / -1' }}
+                  >
+                    <div className="score-bar-fill" />
+                  </div>
+                )}
               </div>
             )
           })}

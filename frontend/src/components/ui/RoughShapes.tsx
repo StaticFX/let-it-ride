@@ -133,6 +133,13 @@ interface RoughSealProps {
   stroke?: string
   strokeWidth?: number
   roughness?: number
+  /**
+   * How many times the stamp came down. Two is a stamp; three is a stamp
+   * somebody leaned on, and reads as heavier across a table without changing
+   * the shape — which is what a gambler card's rarity needs, since the shape is
+   * already busy saying what the card does.
+   */
+  strikes?: 2 | 3
   boil?: boolean
   style?: CSSProperties
 }
@@ -148,7 +155,7 @@ interface RoughSealProps {
  */
 export function RoughSeal({
   size, shape = 'circle', stroke = '#15140f', strokeWidth = 2.2,
-  roughness = 2, boil = true, style = {},
+  roughness = 2, strikes = 2, boil = true, style = {},
 }: RoughSealProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const seedOffset = useSeedOffset()
@@ -231,9 +238,13 @@ export function RoughSeal({
       g.appendChild(strike(r, strokeWidth, seed))
       // The second, lighter strike a hair off the first.
       g.appendChild(strike(r * 0.96, strokeWidth * 0.55, (seed + 7) & 0xffff))
+      // ...and a third, wider than either, for a stamp that came down hard.
+      if (strikes > 2) {
+        g.appendChild(strike(r * 1.04, strokeWidth * 0.75, (seed + 13) & 0xffff))
+      }
       return g
     })
-  }, [size, shape, stroke, strokeWidth, roughness, seed])
+  }, [size, shape, stroke, strokeWidth, roughness, strikes, seed])
 
   return (
     <svg ref={svgRef} width={size} height={size}

@@ -9,6 +9,7 @@ import com.letitride.engine.defaultGameConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class OutroTest {
 
@@ -81,5 +82,22 @@ class OutroTest {
     @Test
     fun `the round that settled the game does not deal another`() {
         assertNull(autoNextRoundAt(ended(autoSeconds = 20, winner = "a"), scoreboardAt = 1_000L))
+    }
+
+    // ─── Paying the table ───
+
+    @Test
+    fun `the table is given time to be paid a seat at a time`() {
+        // Every seat's points land on the scoreboard before the closing card
+        // comes over, so the window has to grow with the table.
+        val two = payoutWindowFor(2)
+        val five = payoutWindowFor(5)
+        assertTrue(two > 0)
+        assertTrue(five > two, "five seats take longer to pay than two")
+    }
+
+    @Test
+    fun `a table with nobody at it is paid nothing`() {
+        assertEquals(0L, payoutWindowFor(0))
     }
 }

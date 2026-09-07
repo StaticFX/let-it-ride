@@ -159,18 +159,24 @@ test.describe('table settings', () => {
 test.describe('the rules book', () => {
   test('opens from the title card and pages through', async ({ app, page }) => {
     await app.openRules()
-    await expect(page.getByTestId('rules-page')).toHaveAttribute('data-page', '1')
+    const book = page.getByTestId('rules-page')
+    await expect(book).toHaveAttribute('data-page', '1')
 
-    for (const expected of ['2', '3', '4']) {
+    // The book grows every time the game does, so it says how long it is and the
+    // spec pages to the end rather than counting to a number that will be wrong.
+    const pages = Number(await book.getAttribute('data-pages'))
+    expect(pages).toBeGreaterThan(1)
+
+    for (let expected = 2; expected <= pages; expected++) {
       await page.getByTestId('rules-next').click()
-      await expect(page.getByTestId('rules-page')).toHaveAttribute('data-page', expected)
+      await expect(book).toHaveAttribute('data-page', String(expected))
     }
 
     // The last page is the last page — there is nothing to page on to.
     await expect(page.getByTestId('rules-next')).toBeDisabled()
 
     await page.getByTestId('rules-prev').click()
-    await expect(page.getByTestId('rules-page')).toHaveAttribute('data-page', '3')
+    await expect(book).toHaveAttribute('data-page', String(pages - 1))
 
     await app.closeRules()
     await expect(page.getByTestId('title-screen')).toBeVisible()

@@ -340,14 +340,30 @@ class ScoringTest {
 
     // ─── Coin flip ───
 
-    /** Draws a coin flip for `a`, calls [call], and hands back the whole transition. */
+    /**
+     * Draws a coin flip for `a`, calls [call], watches it land, and hands back
+     * the whole thing — the throw and the settling both, because the coin is
+     * announced in one transition and paid out in the next.
+     */
     private fun callCoin(call: String, seed: Long): TransitionResult {
         val pending = t(
             startedAndDealt(rest = listOf(action(COIN_FLIP.id))),
             GameAction.Hit("a"),
             Rng(seed),
         )
-        return tr(pending, GameAction.PlayAction("a", "a", COIN_FLIP.id, call), Rng(seed))
+        return settled(tr(pending, GameAction.PlayAction("a", "a", COIN_FLIP.id, call), Rng(seed)), Rng(seed))
+    }
+
+    @Test
+    fun `the coin is thrown before it is worth anything`() {
+        val pending = t(startedAndDealt(rest = listOf(action(COIN_FLIP.id))), GameAction.Hit("a"))
+        val thrown = tr(pending, GameAction.PlayAction("a", "a", COIN_FLIP.id, COIN_HEADS))
+
+        assertEquals(1, thrown.events.filterIsInstance<GameEvent.CoinFlip>().size)
+        assertTrue(thrown.events.none { it is GameEvent.Bust }, "the table is still watching it turn over")
+        assertTrue(thrown.state.player("a")!!.passives.isEmpty())
+        assertEquals(PlayerStatus.ACTIVE, thrown.state.status("a"))
+        assertEquals(1, thrown.state.pendingOutcomes.size, "and what it is worth is waiting on the animation")
     }
 
     @Test

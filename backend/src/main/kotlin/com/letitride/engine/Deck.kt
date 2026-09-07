@@ -45,11 +45,17 @@ object Deck {
             cards += Card(id = "p-${uid++}", kind = CardKind.PASSIVE, label = def.name, value = 0, defId = def.id)
         }
 
+        for (defId in config.gamblerCards) {
+            val def = Catalog.gambler(defId) ?: continue
+            cards += Card(id = "g-${uid++}", kind = CardKind.GAMBLER, label = def.name, value = 0, defId = def.id)
+        }
+
         return cards
     }
 
     fun size(config: DeckConfig): Int =
         config.numberCards.sumOf { it.count } +
             config.actionCards.count { Catalog.action(it) != null } +
-            config.passiveCards.count { Catalog.passive(it) != null }
+            config.passiveCards.count { Catalog.passive(it) != null } +
+            config.gamblerCards.count { Catalog.gambler(it) != null }
 }

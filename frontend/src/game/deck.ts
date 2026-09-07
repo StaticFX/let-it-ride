@@ -12,7 +12,11 @@ export function numberCount(deck: DeckConfig): number {
 }
 
 export function deckSize(deck: DeckConfig): number {
-  return numberCount(deck) + deck.actionCards.length + deck.passiveCards.length
+  // Gambler cards count, and the server counts them for a sharper reason than
+  // it counts the rest: a fizzling action card deals a replacement sometimes, a
+  // gambler card deals one every single time. A builder that left them out of
+  // the total would quietly disagree with what the table would accept.
+  return numberCount(deck) + deck.actionCards.length + deck.passiveCards.length + (deck.gamblerCards?.length ?? 0)
 }
 
 export function countOfNumber(deck: DeckConfig, value: number): number {
@@ -55,6 +59,13 @@ export function deckProblem(deck: DeckConfig, catalog: Catalog): string | null {
   if (numbers < total * limits.minNumberShare) {
     return 'too many action cards for the numbers to keep up with'
   }
+  const gamblers = deck.gamblerCards?.length ?? 0
+  const maxGamblers = limits.maxGamblers ?? 0
+  // Trimmed rather than refused by the server, so this is a warning that says
+  // what will happen rather than a problem that stops you.
+  if (maxGamblers > 0 && gamblers > maxGamblers) {
+    return `only ${maxGamblers} gambler cards will be dealt — the rest are left out`
+  }
   return null
 }
 
@@ -86,6 +97,11 @@ export function describeDeck(deck: DeckConfig, catalog: Catalog): { card: Card; 
     if (!def) continue
     rows.push({ card: { id: `built-p-${id}`, kind: 'passive', label: def.name, value: 0, defId: id }, count })
   }
+  for (const [id, count] of Object.entries(tally(deck.gamblerCards ?? []))) {
+    const def = catalog.gamblers?.find((g) => g.id === id)
+    if (!def) continue
+    rows.push({ card: { id: `built-g-${id}`, kind: 'gambler', label: def.name, value: 0, defId: id }, count })
+  }
 
   return rows
 }
@@ -104,6 +120,8 @@ export function decodeDeck(text: string): DeckConfig | null {
       numberCards: parsed.numberCards,
       actionCards: parsed.actionCards ?? [],
       passiveCards: parsed.passiveCards ?? [],
+      // Older shared decks have none, and say so by omission.
+      gamblerCards: parsed.gamblerCards ?? [],
     }
   } catch {
     return null

@@ -6,10 +6,17 @@ const SIZES = {
 }
 
 /** The turn clock. Runs out → the backend sends the player out automatically. */
-export function TurnClock({ timer, label, size = 'sm' }: {
+export function TurnClock({ timer, label, size = 'sm', testId = 'turn-clock' }: {
   timer: TurnTimer
   label?: string
   size?: keyof typeof SIZES
+  /**
+   * Stable handle for the end-to-end suite. It has an id because the turn clock
+   * is the only clock on the table today; a second one — a window between rounds,
+   * say — has to be tellable from it, and a spec that found two of the same id
+   * would silently read whichever came first in the document.
+   */
+  testId?: string
 }) {
   const seconds = Math.ceil(timer.remainingMs / 1000)
   const urgent = timer.remainingMs <= 5000
@@ -17,7 +24,7 @@ export function TurnClock({ timer, label, size = 'sm' }: {
   const circumference = 2 * Math.PI * radius
 
   return (
-    <div className="flex items-center gap-2" data-testid="turn-clock" data-seconds={seconds} data-urgent={urgent}>
+    <div className="flex items-center gap-2" data-testid={testId} data-seconds={seconds} data-urgent={urgent}>
       <div className="relative" style={{ width: box, height: box }}>
         <svg width={box} height={box} className="-rotate-90">
           <circle

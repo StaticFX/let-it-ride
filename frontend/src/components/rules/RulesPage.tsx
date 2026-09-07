@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useCatalog } from '../../state/gameStore'
-import type { Catalog, GameConfig } from '../../game/types'
+import type { Catalog, GamblerRarity, GameConfig } from '../../game/types'
+import { GAMBLER_WINDOWS, modeOf } from '../../game/types'
 import { PaperSheet } from './PaperSheet'
 
 interface RulesPageProps {
@@ -77,6 +78,10 @@ function PageScoring({ catalog, flipTarget }: { catalog: Catalog; flipTarget: nu
 
         <Subheading>busting</Subheading>
         <p>a bust scores <b>nothing</b> for the round. modifiers you were holding are wasted.</p>
+        <p>
+          one card breaks that: a hand whose numbers count <b>against</b> you is counted whether
+          you bust or not. read what is in front of you.
+        </p>
         <p>the game runs until someone reaches the target score, or until the round limit is up.</p>
       </div>
     </>
@@ -161,6 +166,96 @@ function PageCards({ catalog, config }: { catalog: Catalog; config?: GameConfig 
   )
 }
 
+const RARITIES: { key: GamblerRarity; label: string }[] = [
+  { key: 'common', label: 'common' },
+  { key: 'rare', label: 'rare' },
+  { key: 'jackpot', label: 'jackpot' },
+]
+
+function PageGamblerCards({ catalog, config }: { catalog: Catalog; config?: GameConfig }) {
+  const gamblers = catalog.gamblers ?? []
+  // Always shown, even from the title card — you want to be able to read about
+  // the mode you are deciding whether to pick. Held back when this particular
+  // table is not playing it, the same way a card no deck holds is.
+  const off = !!config && modeOf(config) !== 'rollingRules'
+
+  return (
+    <>
+      <Heading>rolling rules</Heading>
+      {off && (
+        <p className="text-muted mb-4 italic">
+          this table is playing the classic game — here is the other way.
+        </p>
+      )}
+      <div className={`transition-opacity ${off ? 'opacity-30' : ''}`}>
+        <div className="text-lg leading-[1.8] space-y-3.5 mb-5">
+          <p>
+            you keep a <b>second hand nobody can see</b>. it holds five cards, it survives the
+            round, and no ordinary card can steal, swap or spin it away from you.
+          </p>
+          <p>
+            you find them in the deck. draw one and it goes straight into that hand — and you draw
+            again, so it never costs you a turn.
+          </p>
+          <p>
+            <b>your points are your money.</b> what you spend is the same score you are trying to
+            win with, which is the whole of the decision.
+          </p>
+          <p>playing one turns it face up for the whole table. that is the price of using it.</p>
+          <p>
+            <b>cards answer cards.</b> some of them can only be played at another one — and if
+            anybody at the table is holding something that could stop what you just played, the
+            table stops and asks. a counter can itself be countered, so the pile in the middle
+            gets taller, and it settles from the top down.
+          </p>
+          <p>
+            you are asked whether or not you can do anything about it, so being asked tells nobody
+            anything. saying nothing is the same as letting it stand.
+          </p>
+          <p>
+            <b>between rounds the table opens.</b> you get a shelf of four cards of your own —
+            nobody else can see it, and nobody can beat you to one — and you buy as many as your
+            points and your slots allow.
+          </p>
+          <p>
+            and there is <b>one jackpot under the hammer</b>. everybody writes down one bid in
+            secret, and when the window shuts they are all turned over at once. highest takes it and
+            pays what they bid; a tie goes to whoever is poorer.
+          </p>
+        </div>
+
+        <div className="h-px bg-[var(--ink)]/10 my-5" />
+
+        <Subheading>when you can play one</Subheading>
+        <p className="text-muted mb-3.5">
+          every card says its own moment. the table knows which of yours are live — they are the
+          ones you can pick up.
+        </p>
+
+        {RARITIES.map(({ key, label }) => {
+          const cards = gamblers.filter((card) => card.rarity === key)
+          if (cards.length === 0) return null
+          return (
+            <div key={key}>
+              <div className="h-px bg-[var(--ink)]/10 my-5" />
+              <Subheading>{label}</Subheading>
+              {cards.map((card) => (
+                <CardRow
+                  key={card.id}
+                  sigil={card.sigil}
+                  name={card.name}
+                  description={`${card.description} — ${GAMBLER_WINDOWS[card.window]}, ${card.price} points`}
+                  dimmed={false}
+                />
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
 function PageHouseRules({ catalog, config }: { catalog: Catalog; config?: GameConfig }) {
   const active = new Set(config?.ruleIds ?? [])
 
@@ -223,6 +318,11 @@ export function RulesPage({ onClose, config, flip7Target }: RulesPageProps) {
     { label: 'scoring', node: <PageScoring catalog={catalog} flipTarget={flipTarget} /> },
     { label: 'cards', node: <PageCards catalog={catalog} config={config} /> },
     { label: 'house rules', node: <PageHouseRules catalog={catalog} config={config} /> },
+    // Only on a server that has the mode at all, so an older one's book is
+    // exactly the book it was.
+    ...((catalog.gamblers?.length ?? 0) > 0
+      ? [{ label: 'rolling rules', node: <PageGamblerCards catalog={catalog} config={config} /> }]
+      : []),
   ]
 
   const flipClass = {
@@ -237,6 +337,10 @@ export function RulesPage({ onClose, config, flip7Target }: RulesPageProps) {
       className="fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-auto"
       data-testid="rules-page"
       data-page={page + 1}
+      // How many pages there are, so a spec can page to the end without knowing
+      // the number — the book grows every time the game does, and a spec that
+      // hardcodes four is a spec that breaks on the fifth.
+      data-pages={pages.length}
       data-flip-target={flipTarget}
     >
       <div className="flex items-center justify-between w-full max-w-[640px] px-6 pt-6 z-20">

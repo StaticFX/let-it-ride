@@ -111,6 +111,30 @@ export interface GameStateView {
   animationGate?: AnimationGate
   /** Epoch millis the next round deals itself, under the host's autostart setting. */
   nextRoundAt?: number
+
+  // ─── Rolling rules ───
+  /**
+   * How many gambler cards each seat is carrying. Public on every seat; the
+   * faces are not, and the absence of anybody else's is the point.
+   */
+  gamblerCounts?: Record<string, number>
+  gamblerLimits?: Record<string, number>
+  /** The viewer's own, face up. Every other seat's copy of this state has theirs. */
+  myGamblers?: Card[]
+  /** Which of them the server says are legal right now. The client decides nothing. */
+  playableGamblers?: string[]
+  gamblerReserveCount?: number
+  /** Cards in flight, oldest first. */
+  responseStack?: {
+    id: number
+    cardDefId: string
+    card: Card
+    playerId: string
+    targetId: string
+    cancelled?: boolean
+  }[]
+  /** Names only — never what anybody said, and never who is holding what. */
+  responseWindow?: { frameId: number; responders?: string[]; awaiting?: string[] }
 }
 
 export type ServerMessage =
@@ -136,9 +160,21 @@ export type ClientMessage =
   | { type: 'ADD_BOT' }
   | { type: 'PING' }
   | { type: 'ANIM_DONE'; gateId: number }
+  // ─── Rolling rules. Restated here, like everything else, so that a change to
+  // both sides at once cannot pass unnoticed. ───
+  | { type: 'PLAY_GAMBLER'; cardId: string }
+  | { type: 'PASS' }
 
 export interface CatalogResponse {
-  actions: { id: string; name: string; description: string; sigil: string; selfTarget: boolean }[]
+  actions: {
+    id: string
+    name: string
+    description: string
+    sigil: string
+    selfTarget: boolean
+    /** False for a card no deck may hold. Older servers omit it, and all were deckable. */
+    deckable?: boolean
+  }[]
   passives: {
     id: string
     name: string
@@ -146,6 +182,13 @@ export interface CatalogResponse {
     sigil: string
     bonusPoints: number
     scoring: string
+    /**
+     * False for an effect minted by whatever causes it rather than dealt — the
+     * flip you cannot take, the bomb you are carrying. It still comes down with
+     * a face to draw, because everything in this game is a card. Older servers
+     * omit it, and everything was deckable.
+     */
+    deckable?: boolean
   }[]
   rules: { id: string; name: string; description: string }[]
   /** Round-long effects a player can be put under. Older servers omit it. */

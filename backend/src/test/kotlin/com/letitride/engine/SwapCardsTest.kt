@@ -49,6 +49,47 @@ class SwapCardsTest {
     }
 
     @Test
+    fun `a seat that has gone out is still holding cards worth trading`() {
+        // No house rules on. A card that is only about moving cards around
+        // reaches every card on the table, whatever became of the player in
+        // front of it — a banked hand is points, and a modifier row is where a
+        // card nobody wants ends up if it is not passed on.
+        var state = withSwap(
+            players = listOf("a", "b"),
+            hands = mapOf("a" to listOf(num(3, id = "a-3")), "b" to listOf(num(9, id = "b-9"))),
+            passives = mapOf("b" to listOf(passive(DISCORDIA.id, id = "b-discordia"))),
+        )
+        state = state.copy(
+            players = state.players.map { if (it.id == "b") it.copy(status = PlayerStatus.STAYED) else it },
+        )
+
+        val offered = SWAP_CARDS.cardTargets(state, "a").toSet()
+        assertEquals(setOf("a-3", "b-9", "b-discordia"), offered)
+    }
+
+    @Test
+    fun `a card can be pushed onto a seat that has already busted`() {
+        var state = withSwap(
+            players = listOf("a", "b"),
+            hands = mapOf("a" to listOf(num(3, id = "a-3")), "b" to listOf(num(9, id = "b-9"))),
+            passives = mapOf("a" to listOf(passive(DISCORDIA.id, id = "a-discordia"))),
+        )
+        state = state.copy(
+            players = state.players.map {
+                if (it.id == "b") it.copy(status = PlayerStatus.BUST, bustReason = "duplicate") else it
+            },
+        )
+
+        state = play(state, "a-discordia", "b-9")
+
+        assertEquals(listOf("b-9"), state.hand("a").map { it.id }.filter { it != "a-3" })
+        assertTrue(
+            state.player("b")!!.passives.any { it.id == "a-discordia" },
+            "the seat that is out is holding it now",
+        )
+    }
+
+    @Test
     fun `every card on the table is on offer, modifiers included`() {
         val state = withSwap(passives = mapOf("b" to listOf(passive(PLUS_FOUR.id))))
         assertTrue("p-${PLUS_FOUR.id}" in state.pendingAction!!.validCards)

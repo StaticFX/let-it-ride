@@ -124,11 +124,10 @@ class SuicideBomberTest {
     }
 
     @Test
-    fun `a bomb with no table left to stop picks for itself`() {
-        // "Double it!" spins the bottle twice inside one play, so the second
-        // victim busts while the first one's prompt is already open. Their bomb
-        // cannot stop the table again, so it takes somebody without asking —
-        // and the whole armed table goes down rather than the bomb being lost.
+    fun `a bottle sets off a chain of bombs, one prompt at a time`() {
+        // "Double it!" spins the bottle twice, and every seat is armed: each
+        // bust asks its own question, and the table goes down one answer at a
+        // time rather than resolving itself behind everybody's back.
         val dealt = startedAndDealt(
             config = config(rules = listOf(LobbyRules.DOUBLE_IT.id)),
             players = listOf("a", "b", "c", "d"),
@@ -138,8 +137,47 @@ class SuicideBomberTest {
         for (id in listOf("a", "b", "c", "d")) state = armed(state, id)
 
         state = t(state, GameAction.Hit("a"))
+        assertEquals(2, state.pendingOutcomes.size, "two bottles, and nobody told yet")
+
+        var guard = 0
+        while (guard++ < 16 && (state.pendingOutcomes.isNotEmpty() || state.pendingAction != null)) {
+            val prompt = state.pendingAction
+            state = if (prompt != null) {
+                t(state, GameAction.PlayAction(prompt.playerId, prompt.validTargets.first(), prompt.cardDefId))
+            } else {
+                t(state, GameAction.ResolveOutcome)
+            }
+        }
 
         assertTrue(state.players.all { it.status == PlayerStatus.BUST }, "a bomb went missing")
+        assertTrue(
+            state.players.none { p -> p.passives.any { it.defId == BOMBER.id } },
+            "every bomb should have been spent",
+        )
+    }
+
+    @Test
+    fun `a bomb with no table left to stop picks for itself`() {
+        // Several seats can bust inside one transition — a spin under
+        // "blackjacking" hands every one of them a hand that is already over.
+        // The first bomb stops the table to ask; the ones behind it cannot stop
+        // it again, so they take somebody without asking rather than be lost.
+        val over = listOf(num(11), num(12))
+        var state = startedAndDealt(
+            config = config(rules = listOf(LobbyRules.BLACKJACKING.id)),
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+            rest = listOf(action(SPIN_TABLE.id)),
+        )
+        state = state.copy(
+            players = state.players.map { it.copy(hand = over, handValue = 23) },
+        )
+        for (id in listOf("a", "b", "c")) state = armed(state, id)
+
+        state = t(state, GameAction.Hit("a"))
+        state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+
+        assertTrue(state.players.all { it.status == PlayerStatus.BUST })
         assertTrue(
             state.players.none { p -> p.passives.any { it.defId == BOMBER.id } },
             "every bomb should have been spent",

@@ -7,16 +7,30 @@ const DIMS = {
   deck: { w: 100, h: 142, fs: 22, num: 68, corner: 20, sigil: 48 },
 };
 
+/** The house ink a gambler card's back is tinted with, mirrored from the catalog's default. */
+const GAMBLER_INK = "#6a4a82";
+
 export function CardBack({
   size = "deck",
+  variant = "deck",
   style = {},
 }: {
   size?: "small" | "normal" | "deck";
+  /**
+   * Which back this is. `gambler` is somebody's hidden hand rather than the draw
+   * pile — tinted, and marked differently — because a rack of house backs
+   * beside a player would read as cards they were about to draw.
+   */
+  variant?: "deck" | "gambler";
   style?: React.CSSProperties;
 }) {
   const dims = DIMS[size];
   const sw = theme.strokeWidth;
-  const ink = theme.ink;
+  const gambler = variant === "gambler";
+  const ink = gambler ? GAMBLER_INK : theme.ink;
+  const paper = gambler
+    ? `color-mix(in srgb, ${GAMBLER_INK} 16%, ${theme.cardBack})`
+    : theme.cardBack;
   return (
     <div
       style={{
@@ -33,7 +47,7 @@ export function CardBack({
         style={{
           position: "absolute",
           inset: sw,
-          background: theme.cardBack,
+          background: paper,
           borderRadius: 3,
           zIndex: 0,
         }}
@@ -69,10 +83,20 @@ export function CardBack({
             fill="none"
             opacity="0.8"
           >
-            <line x1="22" y1="22" x2="78" y2="78" />
-            <line x1="78" y1="22" x2="22" y2="78" />
-            <line x1="50" y1="16" x2="50" y2="84" />
-            <line x1="16" y1="50" x2="84" y2="50" />
+            {gambler ? (
+              // A ring rather than a star: a card kept, not a card waiting.
+              <>
+                <circle cx="50" cy="50" r="30" />
+                <circle cx="50" cy="50" r="20" opacity="0.6" />
+              </>
+            ) : (
+              <>
+                <line x1="22" y1="22" x2="78" y2="78" />
+                <line x1="78" y1="22" x2="22" y2="78" />
+                <line x1="50" y1="16" x2="50" y2="84" />
+                <line x1="16" y1="50" x2="84" y2="50" />
+              </>
+            )}
           </g>
         </svg>
         <div
@@ -81,7 +105,7 @@ export function CardBack({
             fontSize: dims.fs * 0.95,
             color: ink,
             fontWeight: 700,
-            background: theme.cardBack,
+            background: paper,
             padding: "2px 6px",
             position: "relative",
             zIndex: 2,
@@ -89,7 +113,7 @@ export function CardBack({
             filter: "url(#wiggle-soft)",
           }}
         >
-          LIR
+          {gambler ? "?" : "LIR"}
         </div>
       </div>
     </div>

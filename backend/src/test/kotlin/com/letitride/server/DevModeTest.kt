@@ -123,6 +123,58 @@ class DevModeTest {
     }
 
     @Test
+    fun `a gambler card written onto a seat comes out of the deck like any other`() {
+        val before = started(config(deck = DeckPresets.ROLLING_RULES.deck), listOf("a", "b"))
+        val after = DevMode.apply(
+            before,
+            DevSetup(players = listOf(DevPlayerPatch(playerId = "a", gamblers = listOf("nullify", "taxes")))),
+        )
+
+        assertEquals(listOf("nullify", "taxes"), after.player("a")!!.gamblers.map { it.defId })
+        assertTrue(after.player("a")!!.gamblers.none { it.isEphemeral }, "the deck had them; nothing needed minting")
+        assertEquals(before.deck.size - 2, after.deck.size, "and the deck is two shorter for it")
+        assertEquals(
+            before.allCardIds().sorted(),
+            after.allCardIds().sorted(),
+            "the tray is a pile like the rest; cards move into it, they do not appear in it",
+        )
+    }
+
+    @Test
+    fun `a tray written twice puts the first lot back rather than losing it`() {
+        val before = started(config(deck = DeckPresets.ROLLING_RULES.deck), listOf("a", "b"))
+        val dealt = DevMode.apply(
+            before,
+            DevSetup(players = listOf(DevPlayerPatch(playerId = "a", gamblers = listOf("nullify")))),
+        )
+        val held = dealt.player("a")!!.gamblers.single()
+
+        val after = DevMode.apply(
+            dealt,
+            DevSetup(players = listOf(DevPlayerPatch(playerId = "a", gamblers = listOf("deflect")))),
+        )
+
+        assertEquals(listOf("deflect"), after.player("a")!!.gamblers.map { it.defId })
+        assertTrue(after.discard.any { it.id == held.id }, "the card it was carrying is on the pile, not gone")
+        assertEquals(before.allCardIds().sorted(), after.allCardIds().sorted())
+    }
+
+    @Test
+    fun `a gambler card the table is not playing with is minted, and stays out of the deck`() {
+        // Pure is numbers only: there is no nullify anywhere on this table to lift.
+        val after = DevMode.apply(
+            table(),
+            DevSetup(players = listOf(DevPlayerPatch(playerId = "a", gamblers = listOf("nullify")))),
+        )
+        val held = after.player("a")!!.gamblers.single()
+
+        assertEquals(CardKind.GAMBLER, held.kind)
+        assertEquals("nullify", held.defId)
+        assertTrue(held.isEphemeral, "a card that was never in the deck must not be able to join it")
+        assertEquals(1, after.mintedGamblers, "and the table counts it, so nobody counting the deck is misled")
+    }
+
+    @Test
     fun `clearing the prompt puts the card that was being held back on the pile`() {
         val freeze = action("freeze")
         val stopped = table().copy(
@@ -195,6 +247,14 @@ class DevModeTest {
 
         assertTrue(states.isNotEmpty(), "the room said nothing at all")
         assertTrue(states.all { it.state.devDeck == null }, "the deck is the one thing a player cannot be shown")
+        assertTrue(
+            states.all { it.state.devGamblers == null },
+            "nor is anybody's tray — the field exists to defeat the projection, so it must not exist here",
+        )
+        assertTrue(
+            states.none { "devGamblers" in appJson.encodeToString(ServerMessage.serializer(), it) },
+            "and it is absent from the wire, not merely null on it",
+        )
         room.close()
     }
 

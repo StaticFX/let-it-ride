@@ -48,6 +48,20 @@ data class DevPlayerPatch(
      * a "plus4".
      */
     val passives: List<String>? = null,
+    /**
+     * The hidden tray, same naming again — "nullify", "the cooler revive".
+     *
+     * The one thing in the game there is no way at all to reach by playing: a
+     * gambler card arrives by a draw you do not control or a shelf you did not
+     * roll, so "hold a nullify and see what happens when somebody plays a
+     * taxes" is otherwise a matter of waiting for the deck to agree with you.
+     *
+     * Written over the cap rather than clamped to it. The cap is a rule about
+     * *gaining* a card, and the panel is for writing down situations the engine
+     * would not deal itself — including a tray one card too full, which is a
+     * thing worth being able to look at.
+     */
+    val gamblers: List<String>? = null,
     val skipNextTurn: Boolean? = null,
 )
 
@@ -98,7 +112,14 @@ object DevMode {
         // the card somewhere — otherwise the deck quietly loses it.
         if (setup.clearPrompt || setup.endRound) {
             next.pendingAction?.let { pile.putBack(it.card) }
-            next = next.copy(pendingAction = null, forcedDraws = null, forcedDrawStack = emptyList())
+            // A card that has landed and not yet gone off is dropped with the
+            // rest of it; nothing is holding it, so there is nothing to put back.
+            next = next.copy(
+                pendingAction = null,
+                pendingOutcomes = emptyList(),
+                forcedDraws = null,
+                forcedDrawStack = emptyList(),
+            )
         }
 
         for ((index, patch) in setup.players.withIndex()) {
@@ -160,6 +181,14 @@ object DevMode {
             next = next.copy(passives = names.mapNotNull { take(it, pile) })
         }
 
+        patch.gamblers?.let { names ->
+            // A tray card that is taken away goes to the discard pile, which is
+            // where a played one goes: the deck is short one either way and the
+            // count still adds up.
+            next.gamblers.forEach { pile.putBack(it) }
+            next = next.copy(gamblers = names.mapNotNull { take(it, pile) })
+        }
+
         // Last, so a hand written onto a busted seat does not silently revive it
         // and a status written alongside one still wins.
         patch.status?.let {
@@ -194,6 +223,9 @@ object DevMode {
         }
         Catalog.passive(name)?.let {
             return Card(id = id, kind = CardKind.PASSIVE, label = it.name, value = 0, defId = it.id)
+        }
+        Catalog.gambler(name)?.let {
+            return Card(id = id, kind = CardKind.GAMBLER, label = it.name, value = 0, defId = it.id)
         }
 
         // A number the deck prints keeps the deck's own face — the value behind

@@ -113,6 +113,18 @@ object LobbyRules {
     fun resolve(ids: List<String>): List<LobbyRule> = ids.mapNotNull { byId[it] }
 }
 
+/**
+ * House rules a mode brings with it whatever the host ticked.
+ *
+ * Data, like everything else about a rule, so the lobby can show them on and the
+ * rules book can describe the game actually being played rather than the one
+ * that was chosen.
+ */
+fun forcedRulesFor(mode: GameMode): List<String> = when (mode) {
+    GameMode.CLASSIC -> emptyList()
+    GameMode.ROLLING_RULES -> listOf(LobbyRules.EXTREME.id)
+}
+
 /** The active rule set collapsed into the handful of values the engine reads. */
 class RuleSet(val rules: List<LobbyRule>) {
     val bustThreshold: Int? = rules.mapNotNull { it.bustThreshold }.minOrNull()
@@ -133,6 +145,15 @@ class RuleSet(val rules: List<LobbyRule>) {
     val allowsNegative: Boolean = rules.any { it.extreme }
 
     companion object {
-        fun of(config: GameConfig) = RuleSet(LobbyRules.resolve(config.ruleIds))
+        /**
+         * The rules named in the config, plus whatever the mode brings with it.
+         *
+         * The mode's rules are added here as well as in `Room.sanitize` on
+         * purpose. Sanitize is what makes the lobby honest; this is what makes
+         * the engine right, including for a state built in a test or restored
+         * from somewhere that never went through a room.
+         */
+        fun of(config: GameConfig) =
+            RuleSet(LobbyRules.resolve(config.ruleIds + forcedRulesFor(config.mode)))
     }
 }

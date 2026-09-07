@@ -3,7 +3,16 @@ import { useGameStore, findAction } from '../state/gameStore'
 import { send } from '../net/client'
 import { play } from '../audio/sfx'
 import type { SoundName } from '../audio/sfx'
-import type { ActionCardInfo, AnimationGate, Card, GameEvent, Offer, Player } from '../game/types'
+import type {
+  ActionCardInfo,
+  AnimationGate,
+  Card,
+  GameEvent,
+  Offer,
+  Player,
+  ResponseFrame,
+} from '../game/types'
+import { modeOf } from '../game/types'
 
 // ─── Animations ───
 
@@ -38,6 +47,16 @@ export type GameAnimation =
   /** Points crossing the table from one seat to another — see [PointsFlight]. */
   | { type: 'pointsTransferred'; id: string; ms: number; fromPlayerId: string; toPlayerId: string; points: number }
   /**
+   * A gambler card coming out of a hidden hand and turning face up — see
+   * [GamblerReveal]. `firstSeen` is the table's, not this player's: it decides
+   * whether the card is held long enough to be *read* or only recognised.
+   */
+  | { type: 'gamblerPlayed'; id: string; ms: number; playerId: string; card: Card; firstSeen: boolean }
+  /** A drawn card handed straight on to somebody else — see the "redirect" card. */
+  | { type: 'redirected'; id: string; ms: number; fromPlayerId: string; toPlayerId: string; card: Card }
+  /** A gambler card struck out by another one — see [CounteredCard]. */
+  | { type: 'countered'; id: string; ms: number; playerId: string; card: Card; returned: boolean }
+  /**
    * Everything answered in secret, turned over at once — the comeback's two
    * throws or the all in's whole table of bets. See [Showdown].
    */
@@ -67,11 +86,11 @@ export const SMASH_LAND_MS = 560
  * every one of these registers a [hold], how long the table is held on it. Two
  * ceilings apply to anything added here:
  *
- * - the server gives up on a gate after ANIMATION_GATE_MAX_MS (5000ms), and
+ * - the server gives up on a gate after ANIMATION_GATE_MAX_MS (7000ms), and
  *   gated time is handed back to whoever is on the clock, so a long animation
- *   quietly inflates their turn. An animation held back behind a played card
- *   costs SMASH_LAND_MS on top of its own length, so the real ceiling for one
- *   of those is nearer 4400ms;
+ *   never costs anybody their turn but does hold the table. An animation held
+ *   back behind a played card costs SMASH_LAND_MS on top of its own length, so
+ *   the real ceiling for one of those is nearer 6400ms;
  * - a card that can end the round is not gated at all — the round is over — and
  *   the closing card comes down on whatever the server's `outroPreambleFor`
  *   allowed for it. The coin, the bottle and a toll can all end a round, and
@@ -103,7 +122,39 @@ const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
   // Long enough to read four names and their cards, and no longer — it holds
   // the table while it is up.
   showdown: 2600,
+  // A card the table has already seen. See GAMBLER_REVEAL_FIRST_MS for the
+  // other length, which is the one that matters.
+  gamblerPlayed: 1600,
+  // The card is already on screen and the whole animation is it changing hands.
+  redirected: 1400,
+  // The second beat of a counter, in a gate of its own: the counter turns over
+  // and is read first, and only then does the card underneath get struck out.
+  // You see the answer, and then you see what it did to the question.
+  countered: 1600,
 }
+
+/**
+ * How long a gambler card is held up the first time this table has seen it.
+ *
+ * Every other number above was written for a card you already know: a freeze is
+ * 1800ms because you know what a freeze is and the animation only has to tell
+ * you *who*. A card out of a hidden hand has to say who, what, and what that
+ * even means, to three people who have never seen the word before — which is a
+ * name and a sentence, and about four seconds of somebody's attention.
+ *
+ * It is the longest thing the client can ask the table to wait for, and the two
+ * server-side numbers that have to clear it are ANIMATION_GATE_MAX_MS and
+ * `OUTRO_AFTER_GAMBLER_MS` in `Rooms.kt`. Lengthen this and both have to follow.
+ *
+ * Whether it applies is the *server's* answer, not this client's: whoever
+ * played the card owns the animation gate, and they are the one person who
+ * certainly knows what it does. A client that only slowed down for cards *it*
+ * had not seen would let them wave it past everybody else.
+ */
+export const GAMBLER_REVEAL_FIRST_MS = 4200
+
+/** How far into either of those the card has landed and settled. */
+export const GAMBLER_LAND_MS = 900
 
 /**
  * One shared empty list for "no cards picked yet". A fresh `[]` every render
@@ -111,6 +162,12 @@ const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
  * memoised on it.
  */
 const EMPTY_PICKS: string[] = []
+
+/** ...and the same for "no cards", where a fresh `[]` would re-render the tray. */
+const EMPTY_CARDS: Card[] = []
+
+/** ...and for "nothing is in flight", which is nearly always. */
+const EMPTY_FRAMES: ResponseFrame[] = []
 
 /** ...and the same for "no game yet", for the same reason. */
 const EMPTY_PLAYERS: Player[] = []
@@ -168,6 +225,19 @@ export interface SlotsAnimation {
 const SLOTS_MAX_MS = 3200
 
 /**
+ * The round's payout, seat by seat, on the table that made it — see
+ * [startPayout]. The server reserves the window before the closing card comes
+ * over and hands it back as `roundOutroFrom`; these are what it reserved it
+ * with, and `payoutWindowFor` in `Rooms.kt` is the other half of them.
+ */
+const PAYOUT_LEAD_MS = 400
+const PAYOUT_STEP_MS = 560
+const PAYOUT_TAIL_MS = 600
+
+/** How long a seat's points take to reach the scoreboard once they are up. */
+export const PAYOUT_FLIGHT_MS = 420
+
+/**
  * How much clock is left before the countdown stops being a detail in the
  * corner: it moves to the middle of the table, the felt starts breathing, and —
  * if the clock is yours — you hear it.
@@ -203,6 +273,18 @@ interface OpenGate {
   /** Animations still running for this batch. */
   holds: number
   acked: boolean
+}
+
+/**
+ * A seat being paid what its round made: the points are up and on their way to
+ * the scoreboard. One at a time, so every player's round is watched rather than
+ * four totals changing at once.
+ */
+export interface PointsAward {
+  /** Fresh per award, so two seats in a row are two flights and not one. */
+  id: string
+  playerId: string
+  points: number
 }
 
 export interface TurnTimer {
@@ -254,6 +336,16 @@ export function useGame() {
   const [bust, setBust] = useState<BustAnimation | null>(null)
   const [flights, setFlights] = useState<CardFlight[]>([])
   const [slots, setSlots] = useState<SlotsAnimation | null>(null)
+  /** The seat being paid right now, and everyone already paid. */
+  const [award, setAward] = useState<PointsAward | null>(null)
+  const [paidIds, setPaidIds] = useState<string[]>([])
+  /**
+   * Whether a payout is actually running. A client that arrives in the middle
+   * of one — a reconnect during the closing window — never saw the round being
+   * scored, so it has nothing to pay out and must not hold back totals that
+   * are, as far as it is concerned, simply the totals.
+   */
+  const [payingOut, setPayingOut] = useState(false)
   const animationId = useRef(0)
   const gateRef = useRef<OpenGate | null>(null)
   const slotsRelease = useRef<(() => void) | null>(null)
@@ -307,9 +399,13 @@ export function useGame() {
    * of somebody's clock is the cheaper thing to spend.
    */
   const pushAnimation = useCallback(
-    (spec: AnimationSpec, delayMs = 0) => {
+    (spec: AnimationSpec, delayMs = 0, ttlOverride?: number) => {
       const id = `anim-${++animationId.current}`
-      const ttl = ANIMATION_TTL_MS[spec.type]
+      // An override, not a second table: one animation in the game is longer or
+      // shorter depending on something the server told us — a gambler card
+      // nobody has seen has to be read rather than recognised — and the table
+      // below is still where its two lengths are written down.
+      const ttl = ttlOverride ?? ANIMATION_TTL_MS[spec.type]
       hold(delayMs + ttl)
       const show = () => {
         setAnimations((prev) => [...prev, { ...spec, id, ms: paced(ttl) } as GameAnimation])
@@ -376,6 +472,59 @@ export function useGame() {
   }, [])
 
   /**
+   * When the closing card is due, read off the state that came with the events
+   * rather than out of the last render — the payout is scheduled backwards from
+   * it, and by a render's worth of staleness it would be scheduled into a
+   * window that has already begun.
+   */
+  const outroFromRef = useRef<number | null>(null)
+
+  /**
+   * Pays the table, one seat at a time.
+   *
+   * The round is scored in a single stroke on the server — every total changes
+   * at once — and it used to arrive that way too, behind a closing card that
+   * covers the felt. So the client spends the window the server reserved before
+   * that card: each seat's points lift off the hand that made them, fly to that
+   * player's line on the scoreboard, and the total moves only when they land.
+   *
+   * Smallest first, so the round's best hand is the last thing paid.
+   */
+  const startPayout = useCallback(
+    (deltas: Record<string, number>, order: Player[]) => {
+      if (order.length === 0) return
+      const step = paced(PAYOUT_STEP_MS)
+      // Backwards from the closing card: the server sized the window, and this
+      // has to end inside it however long whatever ended the round took.
+      const outroFrom = outroFromRef.current
+      const reserved = paced(PAYOUT_LEAD_MS) + order.length * step + paced(PAYOUT_TAIL_MS)
+      const start = outroFrom
+        ? outroFrom - reserved + paced(PAYOUT_LEAD_MS)
+        : Date.now() + paced(PAYOUT_LEAD_MS)
+
+      setPaidIds([])
+      setPayingOut(true)
+      order.forEach((player, index) => {
+        const at = Math.max(0, start + index * step - Date.now())
+        window.setTimeout(() => {
+          setAward({ id: `award-${player.id}-${index}`, playerId: player.id, points: deltas[player.id] ?? 0 })
+          play('draw')
+        }, at)
+        // The total moves when the points get there, not when they set off.
+        window.setTimeout(() => setPaidIds((paid) => [...paid, player.id]), at + paced(PAYOUT_FLIGHT_MS))
+      })
+      window.setTimeout(
+        () => {
+          setAward(null)
+          setPayingOut(false)
+        },
+        Math.max(0, start + (order.length - 1) * step - Date.now()) + paced(PAYOUT_TAIL_MS),
+      )
+    },
+    [paced],
+  )
+
+  /**
    * How long the rest of this batch waits for a played action card to come down
    * on its target. Set for the whole batch, because the card and everything it
    * sets off — the shake, the particles, the frost — arrive together.
@@ -386,6 +535,29 @@ export function useGame() {
    * A player's name for an overlay to print. Kept as a callback over the
    * server's own list so a reveal names people rather than ids.
    */
+  /**
+   * What to print on a seat: what that player's cards are worth to them, which
+   * is not always what they add up to — see the "antimatter" card. The server
+   * works it out; an older one does not send it, and the plain total stands in.
+   */
+  const worthOf = useCallback(
+    (player: Player) => state?.handWorth?.[player.id] ?? player.handValue,
+    [state],
+  )
+
+  /**
+   * Whether a seat's round is over *and* worth nothing, which is what the strike
+   * through a busted number means. Not the same question as "did they bust" —
+   * see the "antimatter" card, whose holder busts and pays for it anyway. The
+   * server names those seats; an older one does not, and every bust reads as
+   * written off the way it always did.
+   */
+  const writtenOff = useCallback(
+    (player: Player) =>
+      player.status === 'bust' && !(state?.bustStillCountsIds ?? []).includes(player.id),
+    [state],
+  )
+
   const nameOf = useCallback(
     (playerId: string) => players.find((p) => p.id === playerId)?.name ?? playerId,
     [players],
@@ -525,9 +697,71 @@ export function useGame() {
         case 'stay':
           play('goOut')
           break
-        case 'roundScored':
-          play('roundEnded')
+        case 'gamblerPlayed':
+          // Not delayed behind anything: this *is* the card being played, and
+          // everything it sets off queues up behind it instead — see
+          // GAMBLER_LAND_MS where the batch is read.
+          pushAnimation(
+            {
+              type: 'gamblerPlayed',
+              playerId: event.playerId,
+              card: event.card,
+              firstSeen: !!event.firstSeen,
+            },
+            0,
+            event.firstSeen ? GAMBLER_REVEAL_FIRST_MS : undefined,
+          )
+          play('actionCard')
           break
+        case 'gamblerDrawn':
+          // Somebody picked one up. The card itself is only in the drawer's own
+          // copy of this event, so there is nothing to show either way — the
+          // count on the seat is what changed, and the state carries that.
+          play('draw')
+          break
+        case 'redirected':
+          pushAnimation(
+            {
+              type: 'redirected',
+              fromPlayerId: event.fromPlayerId,
+              toPlayerId: event.toPlayerId,
+              card: event.card,
+            },
+            delay,
+          )
+          break
+        case 'gamblerCountered':
+          // Behind the counter's own reveal: the card that did this is still
+          // being read, and striking out its victim in the same breath would
+          // hand the table the answer and the question at once.
+          pushAnimation(
+            {
+              type: 'countered',
+              playerId: event.playerId,
+              card: event.card,
+              returned: !!event.returned,
+            },
+            delay,
+          )
+          break
+        case 'gamblerReturned':
+          // The count on the seat says it; there is nothing to watch.
+          break
+        case 'gamblerDeflected':
+          pushAnimation({ type: 'impact', targetId: event.toPlayerId }, delay)
+          break
+        case 'deckShuffled':
+          play('draw')
+          break
+        case 'roundScored': {
+          play('roundEnded')
+          // Smallest first: the round's best hand is the last thing paid, and a
+          // seat that made nothing is still a seat that gets its moment.
+          const deltas = event.deltas
+          const order = [...players].sort((a, b) => (deltas[a.id] ?? 0) - (deltas[b.id] ?? 0))
+          startPayout(deltas, order)
+          break
+        }
         case 'slots':
           // The server announces the card up front so the reels can land on it
           // and the machine can be gone before it is dealt.
@@ -567,7 +801,7 @@ export function useGame() {
           break
       }
     },
-    [pushAnimation, startBust, startFlights, hold, nameOf],
+    [pushAnimation, startBust, startFlights, hold, nameOf, players, startPayout],
   )
 
   /**
@@ -593,8 +827,14 @@ export function useGame() {
       useGameStore.subscribe((next, previous) => {
         if (next.eventSeq === previous.eventSeq) return
         openGate(next.state?.animationGate, next.localPlayerId)
+        outroFromRef.current = next.state?.roundOutroFrom ?? null
         const smashing = next.events.some((e) => e.type === 'actionPlayed' && e.cardDefId !== 'slots')
-        smashDelay.current = smashing ? SMASH_LAND_MS : 0
+        // A gambler card turning over holds the middle of the table for longer
+        // than a played card does, and whatever it sets off has to arrive after
+        // it — the card is the announcement, and answering it before it has
+        // been read is exactly what `PendingOutcome` exists to prevent.
+        const revealing = next.events.some((e) => e.type === 'gamblerPlayed')
+        smashDelay.current = revealing ? GAMBLER_LAND_MS : smashing ? SMASH_LAND_MS : 0
         for (const event of next.events) applyEvent(event)
         smashDelay.current = 0
         // Nothing registered a hold, so there is nothing to watch: a batch this
@@ -829,26 +1069,43 @@ export function useGame() {
   )
 
   /**
-   * Adds one card to a card-picking answer. Unlike a seat, which is answered in
-   * a single click, this builds up over several — so it is the only pick that
-   * may replace an answer already latched for this card, and it goes out below
-   * once the card has as many as it asked for.
+   * Whether clicking this card would take it back out of the answer.
+   *
+   * Only while the answer is still short of what the card asked for: the last
+   * click completes it and sends it, and a pick that has gone to the server is
+   * not this client's to change. Everything up to that point is, though — a
+   * two-card pick is two decisions, and being unable to undo the first one
+   * meant a misclick spent the card.
+   */
+  const canUnpickCard = useCallback(
+    (cardId: string) =>
+      picksCards && pendingIsLocal && cardsChosen.includes(cardId) && cardsChosen.length < picksNeeded,
+    [picksCards, pendingIsLocal, cardsChosen, picksNeeded],
+  )
+
+  /**
+   * Adds one card to a card-picking answer, or takes it back out — see
+   * [canUnpickCard]. Unlike a seat, which is answered in a single click, this
+   * builds up over several, so it is the only pick that may replace an answer
+   * already latched for this card. It goes out below once the card has as many
+   * as it asked for.
    */
   const pickCard = useCallback(
     (cardId: string) => {
       if (!pendingAction || !pendingKey || !pendingIsLocal) return
-      if (!canPickCard(cardId)) return
       const current = answer?.key === pendingKey ? answer : null
       const already = current?.cards ?? EMPTY_PICKS
+      const unpicking = canUnpickCard(cardId)
+      if (!unpicking && !canPickCard(cardId)) return
       setAnswer({
         key: pendingKey,
         // The card resolves on its drawer; the seat is a formality.
         targetId: current?.targetId ?? validTargets[0] ?? localPlayerId,
         option: current?.option ?? null,
-        cards: [...already, cardId],
+        cards: unpicking ? already.filter((id) => id !== cardId) : [...already, cardId],
       })
     },
-    [pendingAction, pendingKey, pendingIsLocal, canPickCard, answer, validTargets, localPlayerId],
+    [pendingAction, pendingKey, pendingIsLocal, canPickCard, canUnpickCard, answer, validTargets, localPlayerId],
   )
 
   /**
@@ -915,17 +1172,135 @@ export function useGame() {
   }, [animating, answer, pendingAction, pendingKey, pendingIsLocal, needsChoice, picksCards, picksNeeded, picksFromCatalog])
 
   // ═══════════════════════════════════════════
+  // The hidden hand — rolling rules
+  // ═══════════════════════════════════════════
+
+  const gamblerHand = state?.myGamblers ?? EMPTY_CARDS
+  const playableIds = state?.playableGamblers
+  const playableGamblers = useMemo(
+    () => playableIds ?? EMPTY_PICKS,
+    [playableIds],
+  )
+  const gamblerSlots = state?.gamblerLimits?.[localPlayerId ?? ''] ?? gamblerHand.length
+  const isRollingRules = modeOf(state?.config) === 'rollingRules'
+
+  /**
+   * A gambler card offered but not yet sent.
+   *
+   * The same latch the pickers use, and for the same reason: the server drops a
+   * move made while the table is animating, and the batch that made you want to
+   * play a card arrives *with* the animation of it. Sending on the click would
+   * throw away exactly the clicks people mean most.
+   */
+  const [offered, setOffered] = useState<{ cardId: string } | null>(null)
+  /** Held by identity, not by id — a card comes round again after a reshuffle. */
+  const sentOffer = useRef<object | null>(null)
+  /**
+   * The latch, but only while the card is still in hand.
+   *
+   * Derived rather than cleared. A card that has left the hand was played, and
+   * an effect that reached back to tidy the latch up would be exactly the
+   * cascading `setState` the lint forbids — the same reason `answered` above is
+   * `answer` filtered by the prompt it belongs to rather than a second state.
+   */
+  const offeredCard = offered && gamblerHand.some((c) => c.id === offered.cardId) ? offered : null
+
+  const canPlayGambler = useCallback(
+    (cardId: string) => playableGamblers.includes(cardId),
+    [playableGamblers],
+  )
+
+  const playGambler = useCallback(
+    (cardId: string) => {
+      if (!playableGamblers.includes(cardId)) return
+      // Clicking the same card twice is not two plays. A *different* card does
+      // replace the latch, so an offer that never became legal — the turn moved
+      // on while the table was animating — cannot sit there blocking the rest
+      // of the hand.
+      if (offeredCard?.cardId === cardId) return
+      setOffered({ cardId })
+    },
+    [playableGamblers, offeredCard],
+  )
+
+  useEffect(() => {
+    if (!offeredCard || animating || sentOffer.current === offeredCard) return
+    // It stopped being legal while we waited. A moment that passed is not an
+    // error; the card is simply still in hand.
+    if (!playableGamblers.includes(offeredCard.cardId)) return
+    sentOffer.current = offeredCard
+    send({ type: 'PLAY_GAMBLER', cardId: offeredCard.cardId })
+  }, [animating, offeredCard, playableGamblers])
+
+  // ─── Answering a card with a card, or with nothing ───
+
+  const responseStack = state?.responseStack ?? EMPTY_FRAMES
+  const responseWindow = state?.responseWindow
+  const responseAwaiting = responseWindow?.awaiting ?? EMPTY_PICKS
+  /**
+   * Whether the table is asking *this* player whether to answer the card in
+   * flight. Everybody still in is asked whenever a window opens at all, so this
+   * being true says nothing about what anybody is holding — including you.
+   */
+  const canPass = !!responseWindow && !!localPlayerId && responseAwaiting.includes(localPlayerId)
+  /** How many people the table is still waiting on, for the copy. */
+  const responseWaiting = responseAwaiting.length
+
+  /**
+   * "Let it stand", latched like every other answer.
+   *
+   * Keyed on the frame rather than held as a bare flag: a window that shuts and
+   * another that opens in the same breath — a counter answering a counter — are
+   * two different questions, and a pass meant for the first must not be spent
+   * on the second.
+   */
+  const [passed, setPassed] = useState<number | null>(null)
+  const sentPass = useRef<number | null>(null)
+  const passedThis = passed !== null && passed === responseWindow?.frameId
+
+  const pass = useCallback(() => {
+    if (!canPass || !responseWindow) return
+    setPassed(responseWindow.frameId)
+  }, [canPass, responseWindow])
+
+  useEffect(() => {
+    if (!canPass || animating) return
+    const frameId = responseWindow?.frameId
+    if (frameId === undefined || passed !== frameId || sentPass.current === frameId) return
+    sentPass.current = frameId
+    send({ type: 'PASS' })
+  }, [animating, canPass, passed, responseWindow])
+
+  // ═══════════════════════════════════════════
   // Player actions
   // ═══════════════════════════════════════════
 
   // An animation the table is held on counts as an interruption: the server
   // will refuse the move anyway, and a button that looks live but does nothing
-  // is worse than one that is plainly out.
-  const isInterrupted = isPickingTarget || !!state?.forcedDraws || isDealing || animating
+  // is worse than one that is plainly out. So does a card that has landed and
+  // not yet gone off — the gate covers nearly all of that wait, but not the
+  // beat between this client saying the animation is done and the server
+  // stepping, and a button that flickers back for one frame is a button
+  // somebody will click.
+  const isSettling = (state?.pendingOutcomes?.length ?? 0) > 0
+  // A card in flight stops the table for everybody, including whoever is on
+  // turn — the engine refuses their move while it is up. Leaving it out of here
+  // left the hit and stay buttons lit through a whole response window, which is
+  // precisely the button that looks live and does nothing.
+  const isAnswering = (state?.responseStack?.length ?? 0) > 0
+  const isInterrupted =
+    isPickingTarget || isSettling || isAnswering || !!state?.forcedDraws || isDealing || animating
   const isMyTurn =
     phase === 'PLAYING' && !isInterrupted && currentPlayer?.id === localPlayerId && me?.status === 'active'
   const isEliminated = me?.status === 'bust' || me?.status === 'stayed'
-  const mustDraw = (me?.hand.length ?? 0) === 0 && (me?.passives.length ?? 0) === 0
+  /**
+   * Whether the "go out" button is out. Two reasons for it: an empty hand,
+   * which is the opening rule, and a card that says its holder may not stop —
+   * and the second of those is the server's answer rather than this client's,
+   * because it is a rule and rules do not live here.
+   */
+  const cannotStay = !!localPlayerId && (state?.cannotStayIds?.includes(localPlayerId) ?? false)
+  const mustDraw = ((me?.hand.length ?? 0) === 0 && (me?.passives.length ?? 0) === 0) || cannotStay
 
   const hit = useCallback(() => send({ type: 'HIT' }), [])
   const stay = useCallback(() => send({ type: 'STAY' }), [])
@@ -963,9 +1338,39 @@ export function useGame() {
     discardCount: state?.discardCount ?? 0,
     localPlayerId,
 
+    worthOf,
+    writtenOff,
+
+    // ─── The hidden hand ───
+    isRollingRules,
+    /** Your own gambler cards, face up. Nobody else's ever arrive. */
+    gamblerHand,
+    /** How many you may hold — five, plus room a "pouch" made. */
+    gamblerSlots,
+    /** How many each seat is carrying. Public; the faces are not. */
+    gamblerCounts: state?.gamblerCounts,
+    /** Whether the server says this card may be played right now. */
+    canPlayGambler,
+    playGambler,
+    /** The card whose click is latched, waiting for the table to settle. */
+    offeredGambler: offeredCard?.cardId ?? null,
+
+    // ─── Cards answering cards ───
+    /** Everything in flight, oldest first. The pile the table is reading. */
+    responseStack,
+    /** Whether the table is asking this player whether to answer it. */
+    canPass,
+    /** ...and whether they have said so and are waiting for it to go over. */
+    passedThis,
+    /** How many people the window is still waiting on. */
+    responseWaiting,
+    pass,
+
     isMyTurn,
     isEliminated,
     mustDraw,
+    /** ...and whether it is a card saying so rather than an empty hand. */
+    cannotStay,
     isDealing,
     animating,
     dealingPlayerId: state?.dealQueue[0] ?? null,
@@ -991,6 +1396,7 @@ export function useGame() {
     picksNeeded,
     cardsChosen,
     canPickCard,
+    canUnpickCard,
     pickCard,
     targetChosen,
     pickTarget,
@@ -1003,6 +1409,22 @@ export function useGame() {
 
     hit,
     stay,
+
+    /** The seat being paid right now, and what its round made. */
+    award,
+    /**
+     * What a player's line on the scoreboard should read while the table is
+     * being paid: the total they came into the round with until their own
+     * points have landed on it. The server banks every score the moment the
+     * round is scored, so this is the only place that difference lives.
+     */
+    totalOf: useCallback(
+      (player: Player) => {
+        if (!payingOut || paidIds.includes(player.id)) return player.score
+        return player.score - (state?.roundDeltas[player.id] ?? 0)
+      },
+      [payingOut, paidIds, state],
+    ),
 
     animations,
     dismissAnimation,

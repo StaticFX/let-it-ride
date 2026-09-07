@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
 import { signedPoints } from '../../game/types'
 import { useGameStore } from '../../state/gameStore'
 import { send } from '../../net/client'
 import { PlayingCard } from '../cards/PlayingCard'
 import { Scoreboard } from '../game/Scoreboard'
 import { SketchButton } from '../ui/Button'
+import { useCountdown } from '../../hooks/useCountdown'
 
 /**
  * How a bust reads on the scoreboard. The server sends the reason as a bare
@@ -20,27 +20,6 @@ const BUST_REASONS: Record<string, string> = {
   'taken down': 'taken down by the bomber!',
 }
 
-/**
- * Seconds left on the server's autostart deadline, or null when there is none.
- *
- * The deadline is absolute and the server's alone; this only counts it down for
- * display, so a slow tab shows a stale number rather than dealing at the wrong
- * time. Ticking every 250ms keeps the visible second honest without waiting up
- * to a full second to notice the first change.
- */
-function useCountdown(deadline?: number): number | null {
-  const [clock, setClock] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!deadline) return
-    const interval = window.setInterval(() => setClock(Date.now()), 250)
-    return () => window.clearInterval(interval)
-  }, [deadline])
-
-  if (!deadline) return null
-  return Math.max(0, Math.ceil((deadline - clock) / 1000))
-}
-
 export function RoundSummary() {
   const state = useGameStore((s) => s.state)
   const isHost = useGameStore((s) => s.isHost)
@@ -51,6 +30,10 @@ export function RoundSummary() {
 
   const { players, round, roundDeltas, roundWinnerId, flip7PlayerId } = state
   const adjustments = state.roundAdjustments ?? {}
+  // Whose bust came to nothing, which is every bust but the one the antimatter
+  // makes: its holder is out and pays for the round anyway. The server names
+  // them; an older one does not, and every bust reads as written off as before.
+  const stillCounts = state.bustStillCountsIds ?? []
   // This room's target, not the catalog's default — "flip 9" moves it.
   const flipTarget = state.flip7Target
   const winner = players.find((p) => p.id === roundWinnerId) ?? null
@@ -87,6 +70,7 @@ export function RoundSummary() {
           {players.map((player) => {
             const isWinner = winner?.id === player.id
             const busted = player.status === 'bust'
+            const writtenOff = busted && !stillCounts.includes(player.id)
             const points = roundDeltas[player.id] ?? 0
             // Points that came off for a reason other than the hand. Without
             // this a player docked fifteen just sees a zero and no reason.
@@ -122,11 +106,15 @@ export function RoundSummary() {
                   {player.passives.map((card) => (
                     <PlayingCard key={card.id} card={card} size="small" dimmed={busted} />
                   ))}
-                  <span className={`number text-[22px] ml-2 ${busted ? 'text-[var(--accent)] line-through' : 'text-muted'}`}>
-                    = {busted ? player.handValue : points}
+                  {/* A bust normally shows what the hand added up to, struck
+                      through: this is what it would have been worth. A bust
+                      that still counts has no "would have been" — the number
+                      beside the cards is the number they are taking. */}
+                  <span className={`number text-[22px] ml-2 ${busted ? 'text-[var(--accent)]' : 'text-muted'} ${writtenOff ? 'line-through' : ''}`}>
+                    = {writtenOff ? player.handValue : points}
                   </span>
                 </div>
-                {!busted && adjustment !== 0 && (
+                {!writtenOff && adjustment !== 0 && (
                   <p
                     className="mt-1.5 display text-sm text-[var(--accent)]"
                     data-testid="summary-adjustment"
@@ -146,7 +134,13 @@ export function RoundSummary() {
         </div>
 
         <div className="mb-6">
-          <Scoreboard players={players} currentPlayerId="" localPlayerId={localPlayerId} />
+          <Scoreboard
+            players={players}
+            currentPlayerId=""
+            localPlayerId={localPlayerId}
+            worth={(player) => state.handWorth?.[player.id] ?? player.handValue}
+            target={state.config.winCondition === 'first_to_score' ? state.config.targetScore : undefined}
+          />
         </div>
 
         {isHost ? (
