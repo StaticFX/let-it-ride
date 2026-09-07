@@ -31,6 +31,50 @@ class OutroTest {
     }
 
     @Test
+    fun `a bust off the deck is given the whole slam and not just the scatter`() {
+        // The card is carried up over the seat and held there before it comes
+        // down, which is most of the animation and none of the old window.
+        val events = listOf(
+            GameEvent.Draw("a", card),
+            GameEvent.Bust("a", "duplicate", card, card),
+            GameEvent.RoundScored(emptyMap(), "b"),
+        )
+        assertEquals(OUTRO_AFTER_DRAWN_BUST_MS, outroPreambleFor(events))
+        assertTrue(OUTRO_AFTER_DRAWN_BUST_MS > OUTRO_AFTER_BUST_MS)
+    }
+
+    @Test
+    fun `a card that busts somebody else with your draw is not their slam`() {
+        // "Redirect" hands a drawn card straight on. The card was drawn, but not
+        // by the seat it landed on, and it has already been watched crossing the
+        // table — so that seat gets the plain bust it would have got anyway.
+        val events = listOf(
+            GameEvent.Draw("a", card),
+            GameEvent.Bust("b", "duplicate", card, card),
+        )
+        assertEquals(OUTRO_AFTER_BUST_MS, outroPreambleFor(events))
+    }
+
+    @Test
+    fun `a bust nobody drew is still only a bust`() {
+        val events = listOf(GameEvent.Bust("a", "duplicate", card, card), GameEvent.RoundScored(emptyMap(), "b"))
+        assertEquals(OUTRO_AFTER_BUST_MS, outroPreambleFor(events))
+    }
+
+    @Test
+    fun `a second life spent in the last moment of a round is watched out`() {
+        // A banked seat can burn one in the same transition that ends the round
+        // under somebody else, and the save is the longer of the two things the
+        // table is being shown.
+        val events = listOf(
+            GameEvent.SecondChance("a", card, card, card),
+            GameEvent.Bust("b", "duplicate", card, card),
+            GameEvent.RoundScored(emptyMap(), "b"),
+        )
+        assertEquals(OUTRO_AFTER_SECOND_LIFE_MS, outroPreambleFor(events))
+    }
+
+    @Test
     fun `a round ended by a flip 7 waits for the fanfare`() {
         val events = listOf(GameEvent.Flip7("a"), GameEvent.RoundScored(emptyMap(), "a"))
         assertEquals(OUTRO_AFTER_FLIP7_MS, outroPreambleFor(events))

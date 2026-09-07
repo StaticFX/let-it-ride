@@ -45,10 +45,10 @@ test.describe('the front door', () => {
 
   test('the host can add bots up to the table limit', async ({ app, page }) => {
     await app.host('devin')
-    await app.addBotsUntil(5)
+    await app.addBotsUntil(10)
 
-    await expect(app.players).toHaveCount(5)
-    // Five seats is the whole table; there is nowhere left to add one.
+    await expect(app.players).toHaveCount(10)
+    // Ten seats is the whole table; there is nowhere left to add one.
     await expect(page.getByTestId('add-bot')).toBeHidden()
   })
 

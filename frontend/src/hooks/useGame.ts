@@ -37,7 +37,21 @@ export type GameAnimation =
   | { type: 'flip7'; id: string; ms: number; playerId: string }
   | { type: 'timeout'; id: string; ms: number; playerId: string }
   | { type: 'fizzled'; id: string; ms: number; playerId: string; cardDefId: string }
-  | { type: 'secondChance'; id: string; ms: number; playerId: string }
+  /**
+   * A second life being spent — see [SecondLife]. All three cards travel with
+   * it because none of them can be found in the state: the duplicate was
+   * discarded and the card that saved them left the modifier row, both inside
+   * the transition that announced this.
+   */
+  | {
+      type: 'secondLife'
+      id: string
+      ms: number
+      playerId: string
+      card: Card
+      matched?: Card
+      saver?: Card
+    }
   /** The coin lands on `result`; `call` is what the player said before it flew. */
   | { type: 'coinFlip'; id: string; ms: number; playerId: string; call: string; result: string }
   /** The bottle stops pointing at `victimId` — the server picked, never the client. */
@@ -82,20 +96,45 @@ export const SMASH_MS = 900
 export const SMASH_LAND_MS = 560
 
 /**
+ * How long a second life takes to be spent — see [SecondLife].
+ *
+ * The longest animation the client plays, and the only one that is a scene
+ * rather than a beat: the card that would have ended the round is carried up
+ * into the middle of the screen and torn in half by the one being spent to stop
+ * it, which then goes up and out of the top. It was a green caption above a seat
+ * for most of this game's life, and the caption never once said what had been
+ * given up — the duplicate is discarded and the second life leaves the modifier
+ * row inside the same transition, so a player watching saw a card arrive that
+ * was not there and a card leave that they had not chosen to spend.
+ *
+ * Its window on the other side is `OUTRO_AFTER_SECOND_LIFE_MS` in `Rooms.kt`,
+ * and the gate has to clear it: lengthen this and both have to follow.
+ */
+export const SECOND_LIFE_MS = 5000
+
+/**
+ * How far into that the tear actually happens. The 58% frame of the
+ * `secondLife*` keyframes in `index.css`; move one and the sound comes off the
+ * card before it has reached it.
+ */
+export const SECOND_LIFE_RIP_MS = 2900
+
+/**
  * How long each animation stays on screen before it clears itself — and, since
  * every one of these registers a [hold], how long the table is held on it. Two
  * ceilings apply to anything added here:
  *
- * - the server gives up on a gate after ANIMATION_GATE_MAX_MS (7000ms), and
+ * - the server gives up on a gate after ANIMATION_GATE_MAX_MS (8000ms), and
  *   gated time is handed back to whoever is on the clock, so a long animation
  *   never costs anybody their turn but does hold the table. An animation held
- *   back behind a played card costs SMASH_LAND_MS on top of its own length, so
- *   the real ceiling for one of those is nearer 6400ms;
+ *   back behind a played card costs SMASH_LAND_MS on top of its own length —
+ *   behind a gambler card, GAMBLER_LAND_MS — so the real ceiling for one of
+ *   those is nearer 7100ms;
  * - a card that can end the round is not gated at all — the round is over — and
  *   the closing card comes down on whatever the server's `outroPreambleFor`
- *   allowed for it. The coin, the bottle and a toll can all end a round, and
- *   each has its own window there; lengthen one here and the number in
- *   `Rooms.kt` has to follow it.
+ *   allowed for it. The coin, the bottle, a toll, a bust and a save can all end
+ *   a round, and each has its own window there; lengthen one here and the
+ *   number in `Rooms.kt` has to follow it.
  */
 const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
   screenShake: 600,
@@ -108,7 +147,10 @@ const ANIMATION_TTL_MS: Record<GameAnimation['type'], number> = {
   // Long enough to read what the card was and why it did nothing. This is the
   // one animation nothing else explains: the card is simply gone.
   fizzled: 2400,
-  secondChance: 1800,
+  // The longest animation in the game, and the one with the most to say: see
+  // SECOND_LIFE_MS, which is written down there rather than here because
+  // `outroPreambleFor` in `Rooms.kt` has to be kept in step with it.
+  secondLife: SECOND_LIFE_MS,
   // The throw and the landing, and then a beat to read the face it landed on.
   // Cutting this to fit the round-ending window is what used to snatch the coin
   // away in the middle of its last turn.
@@ -182,16 +224,50 @@ function playAfter(delayMs: number, sound: SoundName): void {
 }
 
 /**
- * A bust plays in two beats: first the pair that clashed is called out, then the
- * hand scatters. `card` and `matched` come straight from the server, so the
- * table can point at the exact two cards rather than just flashing red.
+ * A bust plays in three beats: the card that did it is held over the hand and
+ * then brought down on it, the pair that clashed is called out, and the hand
+ * scatters. `card` and `matched` come straight from the server, so the table can
+ * point at the exact two cards rather than just flashing red.
+ *
+ * The first beat only happens when the card came off the deck — see `card`. A
+ * bust inflicted by another card has already been announced by that card, and a
+ * second thing flying at the same seat in the same moment reads as two events
+ * rather than one.
  */
 export interface BustAnimation {
   playerId: string
   cardId?: string
   matchedId?: string
-  phase: 'reveal' | 'scatter'
+  /**
+   * The card to carry up over the seat, or null when there is nothing to carry
+   * — a coin called wrong, a bottle, a hand that busted on a card it was given.
+   */
+  card: Card | null
+  /** The flight's own budget, paced, so the CSS and the hold say one number. */
+  ms: number
+  phase: 'hover' | 'reveal' | 'scatter'
 }
+
+/**
+ * The busting card's whole flight: off the deck, up over the seat, held there,
+ * and down.
+ *
+ * Most of it is the hold. A bust is the one thing at this table that happens
+ * *to* somebody rather than being done by anybody, and it used to arrive with no
+ * warning at all — the card slid into the fan and the strike was already through
+ * the name before it landed. So the card is carried up instead and left hanging
+ * where everyone can read it, which is the only beat in the game between finding
+ * out and knowing. The hand dims underneath it and the card it is about to clash
+ * with lights up, so what is coming is legible before it arrives.
+ */
+export const BUST_CARD_MS = 3000
+
+/**
+ * How far into that flight the card actually lands, which is where the shake and
+ * the noise go. Keep in step with the 75% frame of `bustCard` in `index.css` —
+ * move one and the table stops flinching when it is hit.
+ */
+export const BUST_LAND_MS = 2250
 
 export const BUST_REVEAL_MS = 1100
 export const BUST_SCATTER_MS = 1000
@@ -419,23 +495,67 @@ export function useGame() {
     [hold, paced],
   )
 
+  /**
+   * [drawn] is the card the seat took off the deck in this batch, or null. It is
+   * what decides whether the bust gets its slam: a card that arrived any other
+   * way has already been watched arriving, and carrying it up a second time
+   * would say it happened twice.
+   *
+   * [delayMs] holds the whole thing back behind a played card, the same as
+   * [pushAnimation] does — a bust set off by a card starts once that card has
+   * landed, not while it is still in the air. It is only ever passed for a bust
+   * that had no card of its own: a bust the seat *drew* is announced by the card
+   * coming off the deck, and that card is dealt on the same beat every other
+   * draw in the batch is, whatever else is in flight. Holding it back would also
+   * mean the card sat in the fan for half a second before being taken back out
+   * of it to be carried up, which reads as it arriving twice.
+   */
   const startBust = useCallback(
-    (event: Extract<GameEvent, { type: 'bust' }>) => {
-      hold(BUST_REVEAL_MS + BUST_SCATTER_MS)
-      setBust(() => ({
-        playerId: event.playerId,
-        cardId: event.card?.id,
-        matchedId: event.matched?.id,
-        phase: 'reveal' as const,
-      }))
-      window.setTimeout(() => {
-        setBust((prev) => (prev?.playerId === event.playerId ? { ...prev, phase: 'scatter' } : prev))
-      }, BUST_REVEAL_MS)
-      window.setTimeout(() => {
-        setBust((prev) => (prev?.playerId === event.playerId ? null : prev))
-      }, BUST_REVEAL_MS + BUST_SCATTER_MS)
+    (event: Extract<GameEvent, { type: 'bust' }>, drawn: Card | null, delayMs = 0) => {
+      // The two beats after the landing are the same length either way; what a
+      // drawn card buys is everything before it.
+      const lift = drawn ? BUST_LAND_MS : 0
+      hold(delayMs + lift + BUST_REVEAL_MS + BUST_SCATTER_MS)
+
+      const step = (at: number, next: () => void) => window.setTimeout(next, paced(delayMs + at))
+      const open = () =>
+        setBust(() => ({
+          playerId: event.playerId,
+          cardId: event.card?.id,
+          matchedId: event.matched?.id,
+          card: drawn,
+          ms: paced(BUST_CARD_MS),
+          phase: drawn ? ('hover' as const) : ('reveal' as const),
+        }))
+      if (delayMs > 0) window.setTimeout(open, paced(delayMs))
+      else open()
+
+      // The card comes down, and the hand it came down on is what everybody is
+      // looking at from here.
+      if (drawn) {
+        step(lift, () =>
+          setBust((prev) => (prev?.playerId === event.playerId ? { ...prev, phase: 'reveal' } : prev)),
+        )
+      }
+      // The noise and the throw go with the landing rather than with the news.
+      // A bust sounded over a card still in the air tells the whole table the
+      // answer while it is watching the question — which is the thing
+      // `PendingOutcome` exists on the other side of the wire to prevent.
+      pushAnimation({ type: 'screenShake', strength: 'bust' }, delayMs + lift)
+      playAfter(paced(delayMs + lift), 'bust')
+
+      step(lift + BUST_REVEAL_MS, () =>
+        setBust((prev) => (prev?.playerId === event.playerId ? { ...prev, phase: 'scatter' } : prev)),
+      )
+      // Paced, like the hold it has to agree with. Left in real milliseconds it
+      // ran four times longer than the gate it was measured against whenever the
+      // e2e suite turned the table down, so the server was told the hand had
+      // settled while it was still in the air.
+      step(lift + BUST_REVEAL_MS + BUST_SCATTER_MS, () =>
+        setBust((prev) => (prev?.playerId === event.playerId ? null : prev)),
+      )
     },
-    [hold],
+    [hold, paced, pushAnimation],
   )
 
   /**
@@ -532,6 +652,18 @@ export function useGame() {
   const smashDelay = useRef(0)
 
   /**
+   * What each seat took off the deck in this batch, keyed `playerId:cardId`.
+   *
+   * Read by the bust, which is shown one of two ways depending on where the card
+   * that did it came from. Keyed on the seat as well as the card so a drawn card
+   * handed straight on — see "redirect" — is not treated as one the seat it
+   * busted drew for itself; that card has already been watched crossing the
+   * table and carrying it up again would be showing the same trip twice. The
+   * server asks the same question the same way in `closingWindowFor`.
+   */
+  const drawnThisBatch = useRef(new Map<string, Card>())
+
+  /**
    * A player's name for an overlay to print. Kept as a callback over the
    * server's own list so a reveal names people rather than ids.
    */
@@ -568,13 +700,31 @@ export function useGame() {
     (event: GameEvent) => {
       const delay = smashDelay.current
       switch (event.type) {
-        case 'bust':
-          startBust(event)
-          pushAnimation({ type: 'screenShake', strength: 'bust' })
-          play('bust')
+        case 'bust': {
+          // The shake and the noise are the landing's, not the news's, so they
+          // are scheduled inside the bust rather than fired here.
+          const drew = event.card
+            ? drawnThisBatch.current.get(`${event.playerId}:${event.card.id}`) ?? null
+            : null
+          startBust(event, drew, drew ? 0 : delay)
           break
+        }
         case 'secondChance':
-          pushAnimation({ type: 'secondChance', playerId: event.playerId })
+          pushAnimation(
+            {
+              type: 'secondLife',
+              playerId: event.playerId,
+              card: event.card,
+              matched: event.matched,
+              saver: event.saver,
+            },
+            delay,
+          )
+          // No sample of its own: the card is heard being played and then heard
+          // landing on the one it tore, which between them is the shape of what
+          // happened.
+          play('actionCard')
+          playAfter(paced(delay + SECOND_LIFE_RIP_MS), 'actionLanded')
           break
         case 'freeze':
           pushAnimation({ type: 'freeze', playerId: event.playerId }, delay)
@@ -801,7 +951,7 @@ export function useGame() {
           break
       }
     },
-    [pushAnimation, startBust, startFlights, hold, nameOf, players, startPayout],
+    [pushAnimation, startBust, startFlights, hold, nameOf, paced, players, startPayout],
   )
 
   /**
@@ -835,8 +985,17 @@ export function useGame() {
         // been read is exactly what `PendingOutcome` exists to prevent.
         const revealing = next.events.some((e) => e.type === 'gamblerPlayed')
         smashDelay.current = revealing ? GAMBLER_LAND_MS : smashing ? SMASH_LAND_MS : 0
+        // Read ahead of the loop rather than inside it: a bust arrives after the
+        // draw that caused it, but the bust has to know about a draw that has
+        // not been reached yet when a card is redirected and busts its receiver.
+        drawnThisBatch.current = new Map(
+          next.events.flatMap((e) =>
+            e.type === 'draw' ? [[`${e.playerId}:${e.card.id}`, e.card] as const] : [],
+          ),
+        )
         for (const event of next.events) applyEvent(event)
         smashDelay.current = 0
+        drawnThisBatch.current = new Map()
         // Nothing registered a hold, so there is nothing to watch: a batch this
         // client draws no animation for should not cost the table a pause.
         const gate = gateRef.current

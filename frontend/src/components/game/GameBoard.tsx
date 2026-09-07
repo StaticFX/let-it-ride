@@ -34,16 +34,101 @@ import { FizzleNote } from '../overlays/FizzleNote'
 import { GamblerReveal } from '../overlays/GamblerReveal'
 import { ResponseStack } from '../overlays/ResponseStack'
 import { CounteredCard } from '../overlays/CounteredCard'
+import { SecondLife } from '../overlays/SecondLife'
 import { PointsFlight } from '../overlays/PointsFlight'
 import { PointsAward } from '../overlays/PointsAward'
 import { Shop } from '../overlays/Shop'
 
-const SEAT_POSITIONS = [
-  { left: '9%', top: '46%' },
-  { left: '27%', top: '13%' },
-  { left: '73%', top: '13%' },
-  { left: '91%', top: '46%' },
-]
+/**
+ * The arc the other seats sit on, as fractions of the window: an ellipse
+ * centred on the felt, with you at the bottom of it.
+ *
+ * An arc rather than the four hand-placed seats it replaces, because the table
+ * takes ten now and ten places that also had to look right at three was never
+ * going to hold. Its ends are where the left and right seats always were, and
+ * its top is where the top ones were, so a table of five draws itself almost
+ * exactly where it used to; what changes below that is that three seats are
+ * now spread evenly rather than crowded into the left of the arc.
+ */
+const SEAT_ARC = { cx: 0.5, cy: 0.46, rx: 0.41, ry: 0.335 }
+
+/**
+ * How far down the arc the end seats sit, in degrees either side of the top.
+ *
+ * A full quarter-turn each way at the sizes that fit in one, which is exactly
+ * where the two hand-placed end seats used to be. A crowded table pulls its
+ * ends up instead: the scoreboard grows a row at a time out of the bottom-left
+ * corner, and past six other players it reaches the seat that would sit there.
+ */
+function seatSpan(others: number): number {
+  return others > 5 ? 82 : 90
+}
+
+/**
+ * Where the [index]th of [count] other players sits, in fractions of the window.
+ *
+ * Spread symmetrically about the top and running clockwise from the seat on
+ * your left, so one opponent sits across from you, two sit either side of the
+ * deck, and the ends of a full table draw about level with your own seat.
+ * Reading this against [others] — which is in play order starting from whoever
+ * follows me — is what makes the table go round the way the turn does.
+ */
+function seatFraction(index: number, count: number) {
+  const span = seatSpan(count)
+  const degrees = count > 1 ? -span + (index * 2 * span) / (count - 1) : 0
+  const t = (degrees * Math.PI) / 180
+  return {
+    left: SEAT_ARC.cx + SEAT_ARC.rx * Math.sin(t),
+    top: SEAT_ARC.cy - SEAT_ARC.ry * Math.cos(t),
+  }
+}
+
+/**
+ * How big a seat is drawn when there are [count] of them.
+ *
+ * The arc is the same length however many people are on it, so past about six
+ * the seats have to give something up or they print over each other. Only the
+ * seats shrink: the deck, the card being played and your own hand are all the
+ * same size at a table of ten as at a table of three.
+ */
+function seatScale(count: number): number {
+  if (count <= 4) return 1
+  if (count <= 6) return 0.84
+  return 0.7
+}
+
+/**
+ * ...and how big the scoreboard is drawn at a table of [players].
+ *
+ * It is pinned to the bottom-left corner and grows upward a row at a time, so
+ * a full table's worth of rows climbs straight into the seat at that end of the
+ * arc. Shrinking it is the cheaper of the two: every row still says what it
+ * said, and the felt is where the game is actually being read.
+ */
+function scoreboardScale(players: number): number {
+  if (players <= 6) return 1
+  if (players <= 8) return 0.88
+  return 0.78
+}
+
+/**
+ * How high above [anchorY] the card that busted somebody is held before it comes
+ * down — `--bust-lift`, which `bustCard` measures its whole climb off.
+ *
+ * It cannot be a constant. The card is held at about 1.6 times deck size, which
+ * is 227px tall, and a seat at the top of the arc sits barely a hundred pixels
+ * from the top of the window: held the same distance above that seat as above
+ * your own hand, the card that just ended somebody's round would hang mostly off
+ * the screen, which is the one thing this animation exists not to do. So the
+ * *place* it hangs is clamped rather than the distance, and the distance is
+ * whatever is left over — at the top of the arc that is small or negative, and
+ * the card hangs over the seat's hand instead of over its head.
+ */
+function bustLift(anchorY: number): number {
+  const HANG_SCALE = 1.6
+  const half = (142 * HANG_SCALE) / 2
+  return anchorY - Math.max(anchorY - 138, half + 16)
+}
 
 /**
  * What the table says when it stops for a question nothing was drawn for. A
@@ -138,17 +223,15 @@ export function GameBoard() {
   const responseStage = { x: w / 2, y: h * 0.55 }
 
   /**
-   * Where a seat sits on screen. [others] is already in play order starting
-   * from whoever follows me, and SEAT_POSITIONS runs clockwise from the seat
-   * next to mine — so reading one against the other is what makes the table go
-   * round the way the turn does. Anything that flies between seats measures
-   * from here, so this is the only place the mapping may live.
+   * Where a seat sits on screen — see [seatFraction]. Anything that flies
+   * between seats measures from here, so this is the only place the mapping
+   * may live.
    */
   function seatOfId(playerId: string) {
     if (playerId === me?.id) return { x: w / 2, y: h - 120 }
     const seat = others.findIndex((p) => p.id === playerId)
-    const pos = SEAT_POSITIONS[Math.min(Math.max(seat, 0), SEAT_POSITIONS.length - 1)]
-    return { x: (parseFloat(pos.left) / 100) * w, y: (parseFloat(pos.top) / 100) * h }
+    const pos = seatFraction(Math.max(seat, 0), others.length)
+    return { x: pos.left * w, y: pos.top * h }
   }
 
   /** Where a bottle lands, and what every bearing is measured from. */
@@ -177,7 +260,7 @@ export function GameBoard() {
   const freezes = animations.filter((a) => a.type === 'freeze')
   const drawThrees = animations.filter((a) => a.type === 'drawThree')
   const fizzles = animations.filter((a) => a.type === 'fizzled')
-  const secondChances = animations.filter((a) => a.type === 'secondChance')
+  const secondLives = animations.filter((a) => a.type === 'secondLife')
   const timedOutIds = animations.filter((a) => a.type === 'timeout').map((a) => a.playerId)
   const coinTosses = animations.filter((a) => a.type === 'coinFlip')
   const bottleSpins = animations.filter((a) => a.type === 'bottleSpin')
@@ -242,12 +325,32 @@ export function GameBoard() {
   const feltUrgency = isMyTurn ? clockUrgency : 0
 
 
-  /** How a card in `playerId`'s hand should be treated by the bust animation. */
+  /**
+   * How a card in `playerId`'s hand should be treated by the bust animation.
+   *
+   * Live through the hover as well as the reveal, which is the point of having a
+   * hover at all: while the card that did it is being held up over the seat, the
+   * card it is about to land on is already lit and the rest of the hand has
+   * stepped back. What is coming is legible before it arrives.
+   *
+   * Nothing is dimmed once the hand is in the air — `bustFlyUp` drives opacity
+   * itself and would override the dim anyway, so a dimmed card would brighten at
+   * the exact moment it left, which reads as two different cards.
+   */
   function bustRole(playerId: string, cardId: string): 'none' | 'match' | 'other' {
-    if (bust?.playerId !== playerId || bust.phase !== 'reveal') return 'none'
+    if (bust?.playerId !== playerId) return 'none'
     if (!bust.cardId && !bust.matchedId) return 'none'
-    return cardId === bust.cardId || cardId === bust.matchedId ? 'match' : 'other'
+    if (cardId === bust.cardId || cardId === bust.matchedId) return 'match'
+    return bust.phase === 'scatter' ? 'none' : 'other'
   }
+
+  /**
+   * Whether this card is the one currently being carried over the hand, and so
+   * is not in the hand yet as far as the table is concerned. The fan still
+   * reserves its place — it is the layout that holds still while the card comes
+   * down into it, not the card that shoulders its way in afterwards.
+   */
+  const inFlight = (cardId: string) => bust?.phase === 'hover' && bust.cardId === cardId
 
   const scattering = (playerId: string) => bust?.playerId === playerId && bust.phase === 'scatter'
   const isFrozen = (playerId: string) => freezes.some((f) => f.playerId === playerId)
@@ -330,14 +433,27 @@ export function GameBoard() {
         <div
           className={role === 'match' ? 'relative bust-match' : role === 'other' ? 'bust-dim' : undefined}
           style={scatter
-            ? { '--bust-spin': `${(idx % 2 === 0 ? -1 : 1) * (15 + idx * 5)}deg`, animation: `bustFlyUp 900ms ${idx * 60}ms cubic-bezier(.2,0,.6,1) forwards` } as React.CSSProperties
-            : undefined}
+            ? {
+                '--bust-spin': `${(idx % 2 === 0 ? -1 : 1) * (15 + idx * 5)}deg`,
+                // The stagger stops at the fifth card so the last one still
+                // clears the screen inside BUST_SCATTER_MS. Left uncapped, a
+                // big hand's back cards had their flight cut off and snapped
+                // back onto the table at full opacity.
+                animation: `bustFlyUp 780ms ${Math.min(idx, 4) * 52}ms cubic-bezier(.2,0,.6,1) forwards`,
+              } as React.CSSProperties
+            // Not `display: none` and not unmounted: the fan has to keep the gap
+            // the card is coming down into, and `DealtCard` has to be left alone
+            // to settle it there while nobody is looking.
+            : inFlight(card.id) ? { visibility: 'hidden' } : undefined}
         >
           <DealtCard card={card} from={deckCenter}>
             <PlayingCard card={card} size={size} />
           </DealtCard>
-          {/* Name the clash on the newer of the two cards only. */}
-          {role === 'match' && card.id === bust?.cardId && (
+          {/* Name the clash on the newer of the two cards only — and only when
+              there was one. A hand that went over the threshold has a card that
+              did it and nothing it collided with, and the tag was naming the
+              card against itself. */}
+          {role === 'match' && card.id === bust?.cardId && !!bust?.matchedId && (
             <div className="bust-match-tag">same {card.label}!</div>
           )}
         </div>
@@ -490,7 +606,8 @@ export function GameBoard() {
 
       {/* Other players */}
       {others.map((p, i) => {
-        const seatPos = SEAT_POSITIONS[Math.min(i, SEAT_POSITIONS.length - 1)]
+        const seatPos = seatFraction(i, others.length)
+        const crowded = seatScale(others.length)
         const pIndex = players.findIndex((pl) => pl.id === p.id)
         const isActive = !isDealing && !isPickingTarget && pIndex === turnIndex && p.status === 'active'
         const isBeingDealt = dealingPlayerId === p.id
@@ -523,8 +640,14 @@ export function GameBoard() {
             data-bot={p.isBot}
             style={{
               position: 'absolute',
-              ...seatPos,
-              transform: `translate(-50%, -50%) scale(${isBeingDealt ? 1.12 : targetHovered ? 1.15 : isActive ? 1.09 : 1})`,
+              left: `${seatPos.left * 100}%`,
+              top: `${seatPos.top * 100}%`,
+              // The crowd's scale multiplies the seat's own rather than
+              // replacing it: a seat being dealt to at a table of ten still
+              // steps forward, it simply steps forward from smaller.
+              transform: `translate(-50%, -50%) scale(${
+                crowded * (isBeingDealt ? 1.12 : targetHovered ? 1.15 : isActive ? 1.09 : 1)
+              })`,
               // A targetable seat has to sit above the local player's bar
               // (z-8), or on a short window the bar swallows the click.
               zIndex: targetable ? 30 : isActive || isBeingDealt ? 10 : 3,
@@ -857,7 +980,10 @@ export function GameBoard() {
       })()}
 
       {/* Scoreboard */}
-      <div className="absolute left-[38px] bottom-9 z-[90]">
+      <div
+        className="absolute left-[38px] bottom-9 z-[90] origin-bottom-left"
+        style={{ transform: `scale(${scoreboardScale(players.length)})` }}
+      >
         <Scoreboard
           players={players}
           currentPlayerId={currentPlayer?.id || ''}
@@ -1051,6 +1177,34 @@ export function GameBoard() {
         )
       })}
 
+      {/* The card that busted somebody, carried up over their hand and then
+          brought down on it. Anchored on the seat with the draw pile expressed
+          as a delta, exactly as the smash above is — the card is coming from the
+          deck rather than from the middle of the table, and that is the only
+          difference between the two. */}
+      {bust?.card && (() => {
+        const seat = seatOfId(bust.playerId)
+        const anchorY = seat.y - 40
+        return (
+          <div
+            className="fixed z-[212] pointer-events-none bust-card"
+            data-testid="bust-card"
+            data-player-id={bust.playerId}
+            data-card-id={bust.card.id}
+            style={{
+              left: seat.x,
+              top: anchorY,
+              '--bust-dur': `${bust.ms}ms`,
+              '--bust-lift': `${bustLift(anchorY)}px`,
+              '--bust-dx': `${deckCenter.x - seat.x}px`,
+              '--bust-dy': `${deckCenter.y - anchorY}px`,
+            } as React.CSSProperties}
+          >
+            <PlayingCard card={bust.card} size="deck" style={{ animation: 'none' }} />
+          </div>
+        )
+      })()}
+
       {/* Per-card animations */}
       {impact && (() => {
         const pos = seatOfId(impact.targetId)
@@ -1080,18 +1234,17 @@ export function GameBoard() {
         />
       ))}
 
-      {secondChances.map((s) => {
-        const pos = seatOfId(s.playerId)
-        return (
-          <div
-            key={s.id}
-            className="fixed z-[215] pointer-events-none display text-[26px] font-bold text-[var(--passive)] second-chance-pop whitespace-nowrap"
-            style={{ left: pos.x, top: pos.y - 70 }}
-          >
-            ♡ second life!
-          </div>
-        )
-      })}
+      {secondLives.map((s) => (
+        <SecondLife
+          key={s.id}
+          card={s.card}
+          matched={s.matched}
+          saver={s.saver}
+          from={seatOfId(s.playerId)}
+          center={{ x: w / 2, y: h / 2 }}
+          ms={s.ms}
+        />
+      ))}
 
       {fizzles.map((f) => (
         <FizzleNote

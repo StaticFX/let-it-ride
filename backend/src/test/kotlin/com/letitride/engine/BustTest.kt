@@ -47,6 +47,27 @@ class BustTest {
     }
 
     @Test
+    fun `a save names all three cards, including the one that was spent`() {
+        // The table is shown the save rather than told about it — the duplicate
+        // held up, the card it clashed with beside it, and the second life torn
+        // through the middle of it — and none of the three can be found in the
+        // state that travels with the event, which is the state after all three
+        // have moved.
+        val dealt = startedAndDealt(openingCards = listOf(num(5), num(2)), rest = listOf(num(5, id = "dup")))
+        val state = dealt.copy(
+            players = dealt.players.map {
+                if (it.id == "a") it.copy(passives = listOf(passive(SECOND_LIFE.id))) else it
+            },
+        )
+
+        val result = tr(state, GameAction.Hit("a"))
+        val save = result.events.filterIsInstance<GameEvent.SecondChance>().single()
+        assertEquals("dup", save.card.id)
+        assertEquals("5", save.matched?.label)
+        assertEquals(SECOND_LIFE.id, save.saver?.defId)
+    }
+
+    @Test
     fun `second chance does not cover a threshold bust`() {
         val dealt = startedAndDealt(
             config(rules = listOf(LobbyRules.BLACKJACKING.id)),

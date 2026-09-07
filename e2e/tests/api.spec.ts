@@ -63,7 +63,7 @@ test.describe('http api', () => {
     const catalog = await api.catalog()
 
     expect(catalog.minPlayers).toBe(2)
-    expect(catalog.maxPlayers).toBe(5)
+    expect(catalog.maxPlayers).toBe(10)
     expect(catalog.flip7Target).toBe(7)
     expect(catalog.flip7Bonus).toBe(15)
 

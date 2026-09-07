@@ -9,7 +9,7 @@ container on one port. Rooms live in memory; there is no database.
 ## Commands
 
 ```sh
-./gradlew :backend:test                # the engine — 253 tests, ~30s
+./gradlew :backend:test                # the engine — 447 tests, ~45s
 ./gradlew :backend:run                 # rules on :8080
 ./gradlew :backend:runDev              # ...with the testing mode on
 bun --cwd frontend run dev             # UI on :5173, proxying /api and /ws
@@ -81,6 +81,30 @@ worth pushing onto somebody else. They are minted with a `tmp-` id rather than
 dealt, and `deckable = false` keeps them out of every deck. Do not add a flag on
 `Player`; add a card.
 
+**...so what is in front of a seat moves as one thing.** The hand and the
+modifier row are two piles on screen and one possession in the rules: `swapHands`
+trades both, `stealRandom` reaches into both, `swapCards` can point at any card
+in either, and `rotateHands` — spin the table — slides both round the table
+together. A card that moves "somebody's cards" and leaves the ×2 behind is
+picking and choosing which cards count. It cuts both ways on purpose: the cooler
+that made a hand of duplicates legal travels with that hand, and the second life
+you were sitting behind has left with your own by the time the wreck arrives.
+The gambler zone is the one thing that never travels — `Player.gamblers` is
+reached by nothing that moves cards between seats, which is what makes a hidden
+hand a protected good and costs no code at all.
+
+**Who a card may be pointed at is a fact about what it takes.** It lives on
+`TargetRule.reachesFinished`, not in the house rules. A strike takes a card, a
+steal takes a card, a swap takes a whole row — and all of those are still lying
+face up in front of a seat that has banked or busted, still worth points to
+whoever ends up holding them, so those rules reach a seat that is out. A freeze
+takes the rest of your round and a seat that is out has no rest of its round to
+take, so `ANY_ACTIVE` does not reach one: a card offered against nothing is a
+card spent for nothing, which is what `fizzle` and `skipHolding` exist to
+prevent. "Extreme" is the blanket on top: under it *every* card may be pointed at
+a finished seat, including the ones that can do nothing to one. `targetsFor` is
+the single place both are read, and the client only renders the list it is sent.
+
 **A card that is its own animation announces itself and settles later.** A coin
 turning over and a bottle slowing down are not decoration on a result — they
 *are* the card, and resolving one in the same breath as announcing it hands the
@@ -93,15 +117,19 @@ worth watching should too.
 
 **The client times animations, the server waits.** When a batch of events goes out
 mid-round the room opens an animation gate and refuses to move until the owning
-client sends `ANIM_DONE` — or until `ANIMATION_GATE_MAX_MS` (7s) passes, so a hung
+client sends `ANIM_DONE` — or until `ANIMATION_GATE_MAX_MS` (8s) passes, so a hung
 tab cannot own a table. Durations live in `useGame.ts` (`ANIMATION_TTL_MS`) and
 nowhere else; the server never guesses how long a bust takes. Two ceilings apply
 to anything you add there, and both are documented next to the table: the gate's
-7s — an animation held back behind a played card spends `SMASH_LAND_MS` of it
-before it starts — and the closing window a round-ending animation gets before
-the card covers the table, which is `outroPreambleFor` in `Rooms.kt` and is the
-one place the server has to be told roughly how long something takes. Lengthen
-an animation and the number there has to follow it.
+8s — an animation held back behind a played card spends `SMASH_LAND_MS` of it
+before it starts, and one behind a gambler card `GAMBLER_LAND_MS` — and the
+closing window a round-ending animation gets before the card covers the table,
+which is `outroPreambleFor` in `Rooms.kt` and is the one place the server has to
+be told roughly how long something takes. Lengthen an animation and the number
+there has to follow it. That window is per *event*, but it is chosen with the
+whole batch in hand: a bust is twice as long when the card that did it came off
+the deck in the same batch, and the client decides which animation to play off
+exactly the same fact, so neither side can drift.
 
 **Animate for reading, not for recognising.** Every duration in that table was
 written for cards the table already knows: a freeze is 1800ms because you know
@@ -116,6 +144,38 @@ clock, so a long read never costs anybody their turn. Whether a card is new is
 the *table's* fact, not a browser's — the player of a card owns its gate and
 already knows what it does, so `Room.markFirstSight` decides and the client only
 picks a length.
+
+**...and the two moments a round actually turns on are played out, not
+announced.** A bust and a save are the only things at this table that happen
+*to* somebody, and both used to arrive already finished: the card slid into the
+fan on the ordinary entrance with the strike through the name before it landed,
+and a save was a green caption over a seat while three cards moved that it named
+none of. So the busting card is drawn clear and held over the hand — the hand
+dimming under it, the card it is about to clash with lit — and only then brought
+down, with the shake and the noise on the *landing* (`BUST_LAND_MS`) rather than
+on the news. And a second life is spent where everyone can see it: the duplicate
+carried up into the middle of the screen, torn in half by the card being burned
+to stop it, which then goes up and out. Both run four to five seconds, which is
+what moved the gate to 8s. Two things are worth taking from it. The first is
+that a beat between finding out and knowing is the whole of what makes either
+one land — a card the table can read before it does anything is dread, and the
+same card arriving with its consequence already applied is only a result. The
+second is that an animation cannot show a card the state no longer holds:
+`SecondChance` carries the card that was spent because the modifier row it came
+from is already empty in the state that travels with it. If your animation is
+about something ending, the event has to carry it.
+
+**The table's size is one number, and the felt lays itself out from it.**
+`MAX_PLAYERS` in `Engine.kt` is the only place it lives; the client is *told* it
+in the catalog (`minPlayers`/`maxPlayers`) rather than knowing it. Seats are not
+a list of places — `seatFraction` in `GameBoard.tsx` spreads however many other
+players there are along an arc, symmetrically about the top and clockwise from
+the seat on your left, which is the order `others` is already in and therefore
+the order the turn goes round. Two things scale with the crowd rather than being
+allowed to overlap: the seats themselves (`seatScale`) and the scoreboard
+(`scoreboardScale`), which grows a row at a time out of the bottom-left corner
+and otherwise climbs into the seat at that end of the arc. Anything that flies
+between seats measures from `seatOfId`, so that stays the only mapping.
 
 **Test hooks gate anything that reveals or chooses cards.** `LETITRIDE_TEST_HOOKS=1`
 turns on the pinnable seed, the stacked deck, the pacing knob and the testing
@@ -175,6 +235,19 @@ animation gate of its own and those three lines drop both. Its stock is
 card is the one exception to `tmp-` meaning "gone at round end", because
 `nextRound` sweeps the hand and the modifier row and never the gambler zone.
 
+**Anything after the last round** — `GameAction.PlayAgain` takes a `GAME_END`
+game back to `LOBBY` with the same people still in it, so "play again" keeps the
+table together instead of sending everybody to the front door. The lobby rather
+than a fresh deal on purpose: a table that has just played usually wants to
+change something first, and dealing straight into round one would make it the one
+button in the game you cannot take back. It is the host's, like every other
+message that decides something for the whole table, and it is built out of
+`Engine.newGame` rather than by copying the finished state and clearing what must
+not survive — a copy keeps whatever is added to `GameState` next, and "the field
+nobody remembered to clear" is the bug it exists not to have. Three things are
+carried across on purpose and are commented as such; a seat whose tab has gone is
+dropped, for the same reason `GameState.waitingOnShop` does not wait for one.
+
 **A card that answers a card** — give it `PlayWindow.IN_RESPONSE` and a
 `counters` predicate saying which frames it may answer. That predicate is what
 keeps the window *silent*: the server reads every hand, so a table where nobody
@@ -233,6 +306,12 @@ ignores the message entirely.
   `DevPanel.tsx`) or a keyed uncontrolled input. The React Compiler rejects a
   `useMemo` whose declared deps are narrower than what it infers — hoist
   `state?.config.deck` into a local and depend on that.
+- **Measure the layout box, not the painted one.** Everything with a hand-drawn
+  frame measures itself with `useElementSize` and then draws that frame *inside*
+  itself, in its own coordinates — so the hook reads `offsetWidth`/`offsetHeight`
+  and not `getBoundingClientRect`, which counts an ancestor's `scale()` and drew
+  the scoreboard's border at four fifths of its own height the first time a table
+  of ten shrank it.
 - The store is a mirror. Anything derived belongs in a hook or a selector, not in
   a second copy of the state.
 

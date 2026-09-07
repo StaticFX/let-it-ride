@@ -8,11 +8,16 @@ export function useElementSize<T extends HTMLElement>() {
     if (!ref.current) return
     const el = ref.current
 
+    // The layout box rather than the painted one. Every caller measures a box
+    // in order to draw a hand-drawn frame *inside* it, and that frame is drawn
+    // in the element's own coordinates — so a `scale()` on an ancestor must not
+    // be counted twice. `getBoundingClientRect` includes it and drew the
+    // scoreboard's border at four fifths of its own height the first time a
+    // table of ten shrank it.
     const update = () => {
-      const r = el.getBoundingClientRect()
       setSize(prev => {
-        const w = Math.round(r.width)
-        const h = Math.round(r.height)
+        const w = el.offsetWidth
+        const h = el.offsetHeight
         if (prev.w === w && prev.h === h) return prev
         return { w, h }
       })

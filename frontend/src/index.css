@@ -586,6 +586,78 @@ label {
   100% { transform: translateY(-280px) rotate(var(--bust-spin, -20deg)); opacity: 0; }
 }
 
+/* ─── The card that busted somebody, on its way to doing it ───
+   Anchored on the seat, with --bust-dx/dy pointing back at the draw pile, the
+   same way the smash below points back at the middle of the table.
+
+   Nearly all of it is the hang. A bust is the one thing at this table that
+   happens *to* somebody, and it used to arrive with no warning at all: the card
+   slid into the fan on the ordinary 520ms entrance and the strike was already
+   through the name before it got there, so the moment the round turned on was
+   over before it could be watched. Now the card is drawn clear and held up over
+   the seat while the hand dims under it and the card it is about to land on
+   lights up — and only then does it come down.
+
+   The landing at 75% is BUST_LAND_MS in useGame.ts, and it is where the screen
+   shake and the noise go. Move one and the table stops flinching when it is
+   hit. The eleven frames after it are the card bouncing off its own impact,
+   over the real one that has by then been laid in the fan underneath. */
+
+.bust-card {
+  transform-origin: center center;
+  will-change: transform;
+  /* Where the animation holds it. Somebody who has asked for less movement gets
+     the card held over the seat and nothing else — which is the beat this whole
+     animation exists to add, and the only part of it that is information. */
+  transform: translate(-50%, calc(-50% - var(--bust-lift, 138px))) rotate(-3deg) scale(1.5);
+  animation: bustCard var(--bust-dur, 3000ms) both;
+}
+
+@keyframes bustCard {
+  /* Off the draw pile, and already coming. */
+  0% {
+    transform: translate(calc(-50% + var(--bust-dx, 0px)), calc(-50% + var(--bust-dy, 0px))) rotate(-9deg) scale(1);
+    animation-timing-function: cubic-bezier(.2, .8, .3, 1);
+  }
+  /* Carried up over the seat it belongs to. --bust-lift is how far that is, and
+     is worked out per seat rather than fixed here — see `bustLift`, which keeps
+     a card held over a seat at the top of the arc from being held off the top of
+     the screen. Everything from here to the wind-up is measured off it. */
+  16% {
+    transform: translate(-50%, calc(-50% - var(--bust-lift, 138px) + 18px)) rotate(4deg) scale(1.5);
+    filter: drop-shadow(0 26px 22px rgba(0, 0, 0, 0.22));
+    animation-timing-function: ease-in-out;
+  }
+  /* ...and held there, turning over slowly, for as long as it takes to read
+     what it is and work out what it is about to do. */
+  40% {
+    transform: translate(-50%, calc(-50% - var(--bust-lift, 138px))) rotate(-3deg) scale(1.58);
+    filter: drop-shadow(0 32px 24px rgba(0, 0, 0, 0.26));
+    animation-timing-function: ease-in-out;
+  }
+  58% {
+    transform: translate(-50%, calc(-50% - var(--bust-lift, 138px) + 12px)) rotate(3deg) scale(1.54);
+    filter: drop-shadow(0 28px 22px rgba(0, 0, 0, 0.24));
+    animation-timing-function: cubic-bezier(.3, 0, .7, .25);
+  }
+  /* Wound up — the last thing before it lands is it going the other way. A flat
+     offset rather than a multiple of the lift, so the pull back is upward at
+     every seat, including the ones whose lift is small or negative. */
+  68% {
+    transform: translate(-50%, calc(-50% - var(--bust-lift, 138px) - 62px)) rotate(-10deg) scale(1.74);
+    filter: drop-shadow(0 48px 30px rgba(0, 0, 0, 0.3));
+    animation-timing-function: cubic-bezier(.78, 0, .95, .3);
+  }
+  /* ...and down. This frame is BUST_LAND_MS. */
+  75% {
+    transform: translate(-50%, calc(-50% + 14px)) rotate(6deg) scale(0.56);
+    filter: none;
+    animation-timing-function: cubic-bezier(.2, .9, .3, 1.4);
+  }
+  85% { transform: translate(-50%, calc(-50% - 22px)) rotate(-5deg) scale(0.78); }
+  100% { transform: translate(-50%, calc(-50% - 4px)) rotate(-9deg) scale(0.7); opacity: 0; }
+}
+
 /* ─── Action card: carried over the target, then brought down on it ───
    Anchored on the seat it was played at; --smash-dx/dy say where it set off
    from. The landing at 62% is what SMASH_LAND_MS in useGame is timed against —
@@ -820,17 +892,219 @@ label {
   100% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
 }
 
-/* ─── Second chance ─── */
+/* ─── Second life ───
+   A card dying so somebody else does not have to, which for most of this game's
+   life was a green caption above a seat. Everything here is timed as a fraction
+   of --life-dur, so a save and the hold the table is under can never say two
+   different numbers — see [SecondLife], where the fractions are explained in
+   order. The one worth knowing outside is the tear at 58%, which is
+   SECOND_LIFE_RIP_MS in useGame.ts and is where the sound goes.
 
-.second-chance-pop {
-  animation: secondChancePop 1600ms cubic-bezier(.2, .9, .3, 1.2) both;
+   Nothing here may be given a base transform that reads wrongly with the motion
+   taken away: reduced motion drops every one of these animations and leaves the
+   elements exactly where their `both` fill would have started them, so each of
+   them is laid out at rest where it belongs. */
+
+.second-life {
+  animation: secondLifeSheet var(--life-dur, 5000ms) both;
 }
 
-@keyframes secondChancePop {
-  0%   { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
-  20%  { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
-  70%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-  100% { transform: translate(-50%, -50%) translateY(-26px) scale(1); opacity: 0; }
+@keyframes secondLifeSheet {
+  0%   { opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* The felt goes quiet under it. This takes the whole screen, which nothing else
+   at the table does, so it has to earn it by making everything else recede. */
+.second-life-wash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 46%,
+    color-mix(in srgb, var(--felt) 86%, transparent) 0%,
+    color-mix(in srgb, var(--felt) 70%, transparent) 40%,
+    transparent 78%);
+  animation: secondLifeWash var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeWash {
+  0%   { opacity: 0; }
+  14%  { opacity: 1; }
+  76%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* The card they already had. Behind and to the side: the pair only has to read
+   as a pair, and the duplicate is the card this is about. */
+.second-life-echo {
+  opacity: 0.62;
+  transform: translate(-190px, 18px) rotate(-11deg) scale(1.35);
+  animation: secondLifeEcho var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeEcho {
+  0%   { transform: translate(var(--life-dx, 0px), var(--life-dy, 0px)) rotate(-4deg) scale(0.5); opacity: 0; }
+  10%  { opacity: 0; }
+  24%  { transform: translate(-190px, 18px) rotate(-11deg) scale(1.35); opacity: 0.62; animation-timing-function: ease-in-out; }
+  58%  { transform: translate(-190px, 18px) rotate(-11deg) scale(1.35); opacity: 0.62; }
+  /* Once the duplicate is torn there is no pair left to be half of. */
+  74%  { transform: translate(-206px, 34px) rotate(-14deg) scale(1.28); opacity: 0; }
+  100% { transform: translate(-206px, 34px) rotate(-14deg) scale(1.28); opacity: 0; }
+}
+
+/* The duplicate itself: one card, drawn twice and clipped down the middle. The
+   container carries it up and holds it; the two halves do nothing at all until
+   the tear, and then do it in opposite directions. */
+.second-life-doomed {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: scale(2.2);
+  animation: secondLifeDoomed var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeDoomed {
+  0%   { transform: translate(var(--life-dx, 0px), var(--life-dy, 0px)) rotate(-6deg) scale(0.5); opacity: 0; }
+  6%   { opacity: 1; }
+  22%  { transform: translate(0, 0) rotate(2deg) scale(2.2); animation-timing-function: ease-in-out; }
+  /* Held, breathing, while the table reads what nearly happened. */
+  44%  { transform: translate(0, -7px) rotate(-1.5deg) scale(2.26); }
+  58%  { transform: translate(0, 0) rotate(1deg) scale(2.2); }
+  100% { transform: translate(0, 30px) rotate(0deg) scale(2.12); }
+}
+
+.second-life-half {
+  transform-origin: center;
+}
+
+/* The same jagged line read from either side, so the two halves are the two
+   sides of one tear rather than two cards that happen to be adjacent. */
+.second-life-half-l {
+  clip-path: polygon(0 0, 53% 0, 46% 14%, 56% 30%, 44% 48%, 55% 66%, 45% 84%, 52% 100%, 0 100%);
+  animation: secondLifeTearL var(--life-dur, 5000ms) both;
+}
+
+.second-life-half-r {
+  clip-path: polygon(53% 0, 100% 0, 100% 100%, 52% 100%, 45% 84%, 55% 66%, 44% 48%, 56% 30%, 46% 14%);
+  animation: secondLifeTearR var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeTearL {
+  0%, 58% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  /* The jolt apart is fast and short; what follows is only the falling. */
+  63%  { transform: translate(-11px, -4px) rotate(-6deg); opacity: 1; animation-timing-function: cubic-bezier(.3, .5, .4, 1); }
+  100% { transform: translate(-86px, 96px) rotate(-52deg); opacity: 0; }
+}
+
+@keyframes secondLifeTearR {
+  0%, 58% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  63%  { transform: translate(11px, -3px) rotate(7deg); opacity: 1; animation-timing-function: cubic-bezier(.3, .5, .4, 1); }
+  100% { transform: translate(88px, 104px) rotate(58deg); opacity: 0; }
+}
+
+/* The table's own words for a clash — a save and a bust say the same thing
+   about the same thing. */
+.second-life-clash {
+  position: absolute;
+  left: 50%;
+  top: -216px;
+  font-size: 30px;
+  transform: translateX(-50%) rotate(-3deg);
+  animation: secondLifeClash var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeClash {
+  0%, 16% { opacity: 0; transform: translateX(-50%) rotate(-3deg) scale(0.7); }
+  26%  { opacity: 1; transform: translateX(-50%) rotate(-3deg) scale(1); }
+  58%  { opacity: 1; transform: translateX(-50%) rotate(-3deg) scale(1); }
+  /* Struck through by the tear, in the same beat. */
+  66%  { opacity: 0; transform: translateX(-50%) rotate(-3deg) scale(1.1); }
+  100% { opacity: 0; transform: translateX(-50%) rotate(-3deg) scale(1.1); }
+}
+
+/* The card being spent. Up out of its owner's row, through the middle of the
+   duplicate, and then up and out of the top of the screen — which is the whole
+   of what it costs to hold one. */
+.second-life-saver {
+  transform: translate(0, 118px) scale(1.4);
+  animation: secondLifeSaver var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeSaver {
+  0%, 18% {
+    transform: translate(var(--life-dx, 0px), var(--life-dy, 0px)) rotate(-5deg) scale(0.55);
+    opacity: 0;
+  }
+  /* Clear of the seat and climbing. */
+  30% {
+    transform: translate(0, 210px) rotate(3deg) scale(1.32);
+    opacity: 1;
+    animation-timing-function: ease-in-out;
+  }
+  /* Squared up under the card it has come for. */
+  46% {
+    transform: translate(0, 118px) rotate(-3deg) scale(1.4);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(.8, 0, 1, .35);
+  }
+  /* Straight through it. */
+  58% {
+    transform: translate(0, -6px) rotate(11deg) scale(1.52);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(.2, .7, .4, 1);
+  }
+  /* Clear of the wreck, and then away. Slowly: it has done the only thing it
+     was ever going to do. */
+  68% {
+    transform: translate(0, -46px) rotate(-2deg) scale(1.44);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(.35, .1, .5, 1);
+  }
+  88% { opacity: 1; }
+  100% { transform: translate(0, -62vh) rotate(0deg) scale(1.06); opacity: 0; }
+}
+
+/* Clear of the card's top edge once it has been flattened: a ring squashed to
+   two fifths of its height is 33px of the 78 it is laid out at, so it has to be
+   hung further up than it looks like it needs. */
+.second-life-halo {
+  position: absolute;
+  left: 11px;
+  top: -84px;
+  width: 78px;
+  height: 78px;
+  transform: scaleY(0.42);
+  animation: secondLifeHalo var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeHalo {
+  0%, 58% { opacity: 0; transform: scaleY(0.42) scale(0.5); }
+  72%  { opacity: 0.95; transform: scaleY(0.42) scale(1); }
+  88%  { opacity: 0.95; transform: scaleY(0.42) scale(1); }
+  100% { opacity: 0; transform: scaleY(0.42) scale(1.1); }
+}
+
+/* Under the wreck rather than over it: by the time this is up the halves are
+   falling past it and the card that did the tearing is on its way out of the
+   top, so the space below the middle is the only space nothing else wants. */
+.second-life-word {
+  position: absolute;
+  left: 50%;
+  top: 128px;
+  font-size: 34px;
+  transform: translateX(-50%) rotate(-2deg);
+  animation: secondLifeWord var(--life-dur, 5000ms) both;
+}
+
+@keyframes secondLifeWord {
+  0%, 58% { opacity: 0; transform: translateX(-50%) rotate(-2deg) scale(0.6); }
+  68%  { opacity: 1; transform: translateX(-50%) rotate(-2deg) scale(1.12); }
+  76%  { opacity: 1; transform: translateX(-50%) rotate(-2deg) scale(1); }
+  92%  { opacity: 1; transform: translateX(-50%) translateY(-14px) rotate(-2deg) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-26px) rotate(-2deg) scale(1); }
 }
 
 /* ─── Fizzled card ───
@@ -1423,6 +1697,17 @@ label {
   .fizzle-caption,
   .gambler-reveal,
   .gambler-reveal-card,
+  .bust-card,
+  .second-life,
+  .second-life-wash,
+  .second-life-echo,
+  .second-life-doomed,
+  .second-life-half-l,
+  .second-life-half-r,
+  .second-life-clash,
+  .second-life-saver,
+  .second-life-halo,
+  .second-life-word,
   .points-toll,
   .points-take,
   .score-total,

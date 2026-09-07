@@ -31,7 +31,7 @@ interface SpunHandProps {
  * on screen is the one trip.
  *
  * The offset is worked out per player id from the seats themselves, not from a
- * constant: SEAT_POSITIONS is indexed by the players around *you*, so the same
+ * constant: the seat arc is walked from the players around *you*, so the same
  * rotation is a different distance for every client at the table.
  */
 export function SpunHand({ spinId, dx, dy, children }: SpunHandProps) {

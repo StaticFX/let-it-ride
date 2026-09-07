@@ -125,10 +125,12 @@ test.describe('two players at one table', () => {
       .toEqual(await read(guest.page.getByTestId('summary-row')))
   })
 
-  test('the table fills up and turns the sixth player away', async ({ app, openPlayer, api }) => {
+  test('the table fills up and turns the eleventh player away', async ({ app, openPlayer, api }) => {
     const code = await app.host('devin')
-    await app.addBotsUntil(5)
-    await expect(app.players).toHaveCount(5)
+    await app.addBotsUntil(10)
+    await expect(app.players).toHaveCount(10)
+    // Ten seats, ten names: nobody sits down as the unnamed "Bot 7" fallback.
+    await expect(app.page.getByTestId('lobby-player').filter({ hasText: /Bot \d/ })).toHaveCount(0)
 
     expect((await api.roomInfo(code)).joinable).toBe(false)
 
@@ -137,7 +139,7 @@ test.describe('two players at one table', () => {
     late.guard.allow(/WebSocket|Failed to load resource/i)
     await late.app.join('sam', code)
     await expect(late.page.getByTestId('lobby-error')).toContainText('full or already underway')
-    await expect(app.players).toHaveCount(5)
+    await expect(app.players).toHaveCount(10)
   })
 })
 

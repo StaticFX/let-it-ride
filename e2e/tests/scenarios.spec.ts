@@ -211,7 +211,10 @@ test.describe('busting', () => {
       { policy: alwaysHit, description: 'the duplicate that ends my round' },
     )
 
-    // The table calls the clash out before it scatters the hand.
+    // The clash is called out before the hand scatters — and, now that the card
+    // that did it is carried up over the seat first, only once it has landed.
+    // The tag is deliberately left up through the scatter as well: the pair is
+    // the reason the hand is in the air, and it flies off with it.
     if (summary.screen === 'board') {
       await expect(app.table.mySeat).toHaveAttribute('data-status', 'bust')
       await expect(page.locator('.bust-match-tag').first()).toBeVisible({ timeout: 5_000 })

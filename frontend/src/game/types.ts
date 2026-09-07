@@ -467,7 +467,14 @@ export type GameEvent =
    */
   | { type: 'pointsTransferred'; fromPlayerId: string; toPlayerId: string; points: number }
   | { type: 'actionPlayed'; cardDefId: string; fromPlayerId: string; targetPlayerId: string }
-  | { type: 'secondChance'; playerId: string; card: Card; matched?: Card }
+  /**
+   * A duplicate eaten instead of a bust. `card` is what would have ended the
+   * round, `matched` is what it clashed with, and `saver` is the second life
+   * that was spent stopping it — which is already off the modifier row in the
+   * state that arrives with this, so the event is the only place it exists.
+   * Older servers omit it.
+   */
+  | { type: 'secondChance'; playerId: string; card: Card; matched?: Card; saver?: Card }
   | { type: 'secondChancePassed'; fromPlayerId: string; toPlayerId: string }
   | { type: 'fizzled'; cardDefId: string; playerId: string }
   | { type: 'flip7'; playerId: string }

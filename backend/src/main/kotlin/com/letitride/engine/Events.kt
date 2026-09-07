@@ -135,10 +135,25 @@ sealed class GameEvent {
         val targetPlayerId: String,
     ) : GameEvent()
 
-    /** Second chance consumed: the duplicate was discarded instead of busting. */
+    /**
+     * Second chance consumed: the duplicate was discarded instead of busting.
+     *
+     * [card] is the duplicate that would have ended the round and [matched] is
+     * what it collided with, the same pair [Bust] names. [saver] is the card
+     * that was spent to stop it — it has already left the modifier row by the
+     * time this goes out, and the state that travels with it is the state
+     * *after*, so a client that wanted to show what saved somebody could not
+     * find it anywhere. A card that dies for you is worth watching die; sending
+     * it is what lets the table watch.
+     */
     @Serializable
     @SerialName("secondChance")
-    data class SecondChance(val playerId: String, val card: Card, val matched: Card? = null) : GameEvent()
+    data class SecondChance(
+        val playerId: String,
+        val card: Card,
+        val matched: Card? = null,
+        val saver: Card? = null,
+    ) : GameEvent()
 
     /** An action card was drawn that nobody at the table could be hit with. */
     @Serializable

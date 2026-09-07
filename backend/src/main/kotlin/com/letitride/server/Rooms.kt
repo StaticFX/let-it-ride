@@ -99,20 +99,56 @@ private val OUTRO_PAYOUT_TAIL_MS = paced(600L)
 /** How long the table needs to pay [players] seats, one after another. */
 internal fun payoutWindowFor(players: Int): Long =
     if (players <= 0) 0L else OUTRO_PAYOUT_LEAD_MS + players * OUTRO_PAYOUT_STEP_MS + OUTRO_PAYOUT_TAIL_MS
-internal val OUTRO_AFTER_BUST_MS = paced(2200L)
+// A bust with no card of its own — a coin called wrong, a bottle, a hand that
+// busted on something it was given. The card that inflicted it is the
+// announcement, so the bust waits for that card to land before it starts, and
+// this covers `SMASH_LAND_MS` as well as the client's own two beats.
+internal val OUTRO_AFTER_BUST_MS = paced(2800L)
 internal val OUTRO_AFTER_FLIP7_MS = paced(3300L)
 internal val OUTRO_AFTER_COIN_MS = paced(3300L)
 internal val OUTRO_AFTER_SPIN_MS = paced(3100L)
 internal val OUTRO_AFTER_TRANSFER_MS = paced(2400L)
 
 /**
+ * ...and the same bust, when the card that did it came off the deck this turn.
+ *
+ * Twice the window, for an animation that is doing twice the work. A bust
+ * inflicted by a card — a coin called wrong, a bottle, an assassination — has
+ * already been explained by the card that inflicted it, and the table only has
+ * to be told who. A bust the player *drew* has no other announcement, so the
+ * card is carried up over the seat and held there before it comes down, which
+ * is the only beat in the game between finding out and knowing.
+ *
+ * The client draws exactly the same distinction, off exactly the same fact —
+ * whether the busting card is in a [GameEvent.Draw] in this batch — so the two
+ * halves of it stay in step. See `BUST_CARD_MS` in `useGame.ts`.
+ *
+ * No `SMASH_LAND_MS` term, unlike [OUTRO_AFTER_BUST_MS]: this one is never held
+ * back behind a played card. The card is coming off the deck and is dealt on the
+ * beat every other draw in the batch is.
+ */
+internal val OUTRO_AFTER_DRAWN_BUST_MS = paced(4600L)
+
+/**
+ * A second life being spent, which is the longest thing the client can play.
+ *
+ * A save is a whole scene rather than a caption now — the card that would have
+ * ended the round is held up in the middle of the screen and torn in half by
+ * the one being spent to stop it — and it can land in a round-ending batch:
+ * a banked seat can burn a second life in the same transition that busts the
+ * last active one (see `resolveBustAfterGain(finishedToo = true)`). Without a
+ * window of its own the closing card would come over halfway through it.
+ */
+internal val OUTRO_AFTER_SECOND_LIFE_MS = paced(6000L)
+
+/**
  * A gambler card ending a round has to be readable on the way out.
  *
- * The longest window here, and it has to be: a card played in the last moment of
- * a round may be one nobody at the table has ever seen, and the closing card
- * comes down on whatever this number allowed. Its client half is
- * `ANIMATION_TTL_MS.gamblerPlayed` at its first-sight length, plus a beat —
- * lengthen one and this has to follow.
+ * A card played in the last moment of a round may be one nobody at the table has
+ * ever seen, and the closing card comes down on whatever this number allowed.
+ * Its client half is `ANIMATION_TTL_MS.gamblerPlayed` at its first-sight length,
+ * plus a beat — lengthen one and this has to follow. It was the longest window
+ * here until a save became something to watch; see [OUTRO_AFTER_SECOND_LIFE_MS].
  */
 internal val OUTRO_AFTER_GAMBLER_MS = paced(4800L)
 
@@ -174,17 +210,23 @@ private const val EMPTY_ROOM_TTL_MS = 10 * 60 * 1000L
  * never comes near it. It has to clear the longest animation the client can
  * play by a comfortable margin, or a slow machine gets cut off mid-bust.
  *
- * It was five seconds while every card at the table was one you already knew.
- * A gambler card nobody has seen has to be *read* — a name and a sentence, by
- * three people at once — which the client spends a little over four seconds on,
- * and a card played behind another one starts later still. The cost of the extra
- * two seconds is only that a hung tab owns a table for that much longer;
- * animating time is handed straight back to whoever is on the clock (see
- * [closeGate]), so nobody's turn is shorter for it.
+ * It was five seconds while every card at the table was one you already knew,
+ * and seven once a gambler card nobody has seen had to be *read* — a name and a
+ * sentence, by three people at once. It is eight now that the two moments a
+ * round actually turns on are played out rather than announced: a second life
+ * spent is five seconds of client, and a card played in front of it starts it
+ * nearly a second late. The cost of the extra second is only that a hung tab
+ * owns a table for that much longer; animating time is handed straight back to
+ * whoever is on the clock (see [closeGate]), so nobody's turn is shorter for it.
  */
-internal val ANIMATION_GATE_MAX_MS = paced(7000L)
+internal val ANIMATION_GATE_MAX_MS = paced(8000L)
 
-private val BOT_NAMES = listOf("Ace", "Bluff", "Chips", "Dice", "Echo", "Faro")
+/**
+ * One per seat, so a full table of bots never falls through to "Bot 7".
+ * Alphabetical because that is how you tell at a glance that nobody is missing.
+ */
+private val BOT_NAMES =
+    listOf("Ace", "Bluff", "Chips", "Dice", "Echo", "Faro", "Gambit", "Hazard", "Ivory", "Joker")
 
 class Connection(val playerId: String, val outbound: Channel<String>)
 
@@ -210,16 +252,30 @@ private data class AnimationGate(
  * coin called wrong sends a coin flip *and* the bust it caused, and the coin is
  * still turning long after the bust would have been done with.
  */
-internal fun outroPreambleFor(events: List<GameEvent>): Long =
-    events.maxOfOrNull { closingWindowFor(it) } ?: 0L
+internal fun outroPreambleFor(events: List<GameEvent>): Long {
+    // One event is not enough to size a bust: what the table is about to watch
+    // depends on how the card got there, and the only thing that says so is
+    // whether the rest of the batch drew it. Read once for the batch rather
+    // than per event, since [closingWindowFor] is asked about every one of them.
+    val drawn = events.filterIsInstance<GameEvent.Draw>().map { it.playerId to it.card.id }.toSet()
+    return events.maxOfOrNull { closingWindowFor(it, drawn) } ?: 0L
+}
 
-private fun closingWindowFor(event: GameEvent): Long = when (event) {
+private fun closingWindowFor(event: GameEvent, drawnThisBatch: Set<Pair<String, String>>): Long = when (event) {
     is GameEvent.GamblerPlayed -> OUTRO_AFTER_GAMBLER_MS
+    is GameEvent.SecondChance -> OUTRO_AFTER_SECOND_LIFE_MS
     is GameEvent.Flip7 -> OUTRO_AFTER_FLIP7_MS
     is GameEvent.CoinFlip -> OUTRO_AFTER_COIN_MS
     is GameEvent.BottleSpin -> OUTRO_AFTER_SPIN_MS
     is GameEvent.PointsTransferred -> OUTRO_AFTER_TRANSFER_MS
-    is GameEvent.Bust -> OUTRO_AFTER_BUST_MS
+    // Matched on the seat as well as the card, so a drawn card handed straight
+    // on to somebody else — see "redirect" — is not mistaken for one the seat
+    // it busted took off the deck itself. The client asks the same question the
+    // same way, and shows the long animation to exactly the answers this does.
+    is GameEvent.Bust ->
+        if (event.card != null && (event.playerId to event.card.id) in drawnThisBatch) OUTRO_AFTER_DRAWN_BUST_MS
+        else OUTRO_AFTER_BUST_MS
+
     else -> 0L
 }
 

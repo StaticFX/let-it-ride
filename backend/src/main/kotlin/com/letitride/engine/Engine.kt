@@ -11,7 +11,15 @@ const val FLIP7_BONUS = 15
 const val FLIP7_TARGET = 7
 
 const val MIN_PLAYERS = 2
-const val MAX_PLAYERS = 5
+
+/**
+ * How many seats a table has.
+ *
+ * The client is told this in the catalog rather than knowing it, and the felt
+ * lays its seats out on an arc worked out from how many there are — so this is
+ * the only place the number lives, and moving it moves the table.
+ */
+const val MAX_PLAYERS = 10
 
 /** What happened to the player who just drew a card. */
 enum class DrawOutcome {
@@ -751,9 +759,13 @@ class Ctx(state: GameState, val rng: Rng) {
     }
 
     fun consumeSecondChance(playerId: String, duplicate: Card, matched: Card? = null) {
-        consumePassive(playerId, SECOND_LIFE.id)
+        // Kept rather than dropped: the card is off the modifier row and into
+        // the discard pile by the end of this line, and the state that goes out
+        // with the event is the state after it. Nothing downstream could name
+        // what was spent unless the event carries it.
+        val saver = consumePassive(playerId, SECOND_LIFE.id)
         discardFromHand(playerId, duplicate)
-        emit(GameEvent.SecondChance(playerId, duplicate, matched))
+        emit(GameEvent.SecondChance(playerId, duplicate, matched, saver))
     }
 
     // ─── Bust rules ───
