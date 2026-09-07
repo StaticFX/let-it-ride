@@ -641,6 +641,9 @@ export type ClientMessage =
   | { type: 'SET_CONFIG'; config: GameConfig }
   | { type: 'START_GAME' }
   | { type: 'NEXT_ROUND' }
+  /** "again!" from the results screen — the host's, and it puts the whole
+   *  table back in its own lobby rather than sending anybody home. */
+  | { type: 'PLAY_AGAIN' }
   | { type: 'KICK'; playerId: string }
   | { type: 'ADD_BOT' }
   | { type: 'PING' }

@@ -40,11 +40,30 @@ class ExtremeTest {
     }
 
     @Test
-    fun `without the rule the same strike cannot see them at all`() {
+    fun `a strike reaches one with no house rules on at all`() {
+        // What the card takes is a card, and a card lying in front of a seat
+        // that has finished is still a card. That is the strike's own reach,
+        // not something "extreme" lends it — see `TargetRule.reachesFinished`.
         val dealt = startedAndDealt(
             players = listOf("a", "b", "c"),
             openingCards = listOf(num(1), num(9), num(5)),
             rest = listOf(action(STRIKE.id)),
+        )
+        var state = withStatus(dealt, "b", PlayerStatus.STAYED)
+        state = t(state, GameAction.Hit("a"))
+
+        assertTrue("b" in state.pendingAction!!.validTargets)
+    }
+
+    @Test
+    fun `without the rule a freeze cannot see them at all`() {
+        // ...and what the rule is still for. A freeze takes the rest of your
+        // round; a seat that is out has no rest of its round to take, so no
+        // ordinary table is offered one.
+        val dealt = startedAndDealt(
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(9), num(5)),
+            rest = listOf(action(FREEZE.id)),
         )
         var state = withStatus(dealt, "b", PlayerStatus.STAYED)
         state = t(state, GameAction.Hit("a"))

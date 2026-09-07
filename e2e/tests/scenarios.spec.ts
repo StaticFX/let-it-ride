@@ -4,6 +4,7 @@ import { FLIP_SEVEN, LOCAL_BUST } from '../support/seeds'
 /** Cards named the way a stacked deck names them — see `hostStacked`. */
 const FREEZE = 'freeze'
 const SWAP_CARDS = 'swapCards'
+const SPIN_TABLE = 'spinTable'
 
 /**
  * The moments a round is built around — an action card in your hand, a bust, a
@@ -151,6 +152,48 @@ test.describe('a card that points at cards', () => {
     const settled = await app.table.playUntil(
       (snapshot) => snapshot.screen !== 'board' || !snapshot.pending?.mine,
       { policy: alwaysHit, timeoutMs: 45_000, description: 'the swap to resolve' },
+    )
+    expect(settled.pending?.mine ?? false).toBe(false)
+  })
+})
+
+test.describe('a card that asks a question', () => {
+  test('the table shows which way it would turn before you answer', async ({ app, page }) => {
+    test.slow()
+
+    // "left" and "right" on two buttons say nothing about a round table, so
+    // the felt answers instead: an arrow round the deck, turning the way the
+    // hovered option would.
+    await app.hostStacked('devin', ['2', '3', '4', '5', SPIN_TABLE])
+    await app.startAndWatch()
+
+    const drawn = await app.table.playUntil(
+      (snapshot) => snapshot.screen !== 'board' || !!snapshot.pending?.mine,
+      { policy: alwaysHit, description: 'a spin of my own' },
+    )
+    expect(drawn.screen, 'the stacked deck did not deal me the spin').toBe('board')
+    expect(drawn.pending?.cardDefId).toBe(SPIN_TABLE)
+
+    await expect(page.getByTestId('choice-picker')).toBeVisible()
+    // Nothing is being pointed at yet, so nothing is drawn.
+    await expect(page.getByTestId('spin-preview')).toHaveCount(0)
+
+    const option = (which: string) => page.locator(`[data-testid="choice-option"][data-option="${which}"]`)
+
+    await option('left').hover()
+    await expect(page.getByTestId('spin-preview')).toHaveAttribute('data-direction', 'left')
+
+    await option('right').hover()
+    await expect(page.getByTestId('spin-preview')).toHaveAttribute('data-direction', 'right')
+
+    // ...and calling it lets the table go on rather than sitting on the
+    // question. The answer stays drawn while it does — the picker is gone by
+    // then on a fast table, which is why that is not asserted here.
+    await option('right').click()
+
+    const settled = await app.table.playUntil(
+      (snapshot) => snapshot.screen !== 'board' || !snapshot.pending?.mine,
+      { policy: alwaysHit, timeoutMs: 45_000, description: 'the spin to resolve' },
     )
     expect(settled.pending?.mine ?? false).toBe(false)
   })

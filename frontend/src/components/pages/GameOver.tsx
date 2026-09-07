@@ -1,11 +1,12 @@
 import { useGameStore } from '../../state/gameStore'
-import { leaveGame } from '../../net/client'
+import { leaveGame, send } from '../../net/client'
 import { PlayingCard } from '../cards/PlayingCard'
 import { SketchButton } from '../ui/Button'
 
 export function GameOver() {
   const state = useGameStore((s) => s.state)
   const localPlayerId = useGameStore((s) => s.localPlayerId)
+  const isHost = useGameStore((s) => s.isHost)
 
   if (!state) return null
 
@@ -65,7 +66,21 @@ export function GameOver() {
           </div>
         )}
 
-        <SketchButton variant="primary" testId="play-again" onClick={leaveGame}>play again!</SketchButton>
+        {/* "again" keeps the table together rather than sending everybody back
+            to the front door: the room drops into its own lobby with the same
+            seats, the same bots and the same settings, and whoever wants to
+            change something can. Leaving is still one click, it is simply no
+            longer the only one. */}
+        <div className="flex flex-col items-center gap-3">
+          {isHost ? (
+            <SketchButton variant="primary" testId="play-again" onClick={() => send({ type: 'PLAY_AGAIN' })}>
+              play again!
+            </SketchButton>
+          ) : (
+            <p className="text-center text-muted" data-testid="waiting-for-host">waiting for host…</p>
+          )}
+          <SketchButton variant="ghost" testId="leave-game" onClick={leaveGame}>back to menu</SketchButton>
+        </div>
       </div>
     </div>
   )

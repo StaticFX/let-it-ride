@@ -628,6 +628,32 @@ class Room(
                     applyLocked(GameAction.NextRound)
                 }
 
+                ClientMessage.PlayAgain -> {
+                    if (playerId != hostId) return
+                    val restarted = applyLocked(GameAction.PlayAgain)
+                    // The pacer was timing a game that no longer exists. Every
+                    // one of these is worked out again by [tick] from the state
+                    // it is handed — the same clearing [applyDev] does, and for
+                    // the same reason — so dropping them is enough. What is
+                    // deliberately left alone is anything that has to keep
+                    // climbing for the life of the *room*: `gateCounter`, whose
+                    // reuse would let a stale ANIM_DONE release a live gate,
+                    // `botCounter`, whose reuse would name two seats the same,
+                    // `seenGamblers`, because the same people have still seen
+                    // what they saw, and the room's `rng`, which is the one
+                    // stream a replay from the seed rests on.
+                    promptKey = null
+                    turnDeadline = null
+                    nextStepAt = 0
+                    roundIntroUntil = null
+                    roundOutroFrom = null
+                    roundOutroUntil = null
+                    nextRoundAt = null
+                    interludeUntil = null
+                    gate = null
+                    restarted
+                }
+
                 is ClientMessage.Kick -> {
                     if (playerId != hostId || message.playerId == hostId) return
                     val target = connections[message.playerId]

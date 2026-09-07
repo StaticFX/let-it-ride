@@ -138,7 +138,14 @@ class RuleSet(val rules: List<LobbyRule>) {
     val bountyPoints: Int = rules.maxOfOrNull { it.bountyPoints } ?: 0
     val antiFlip: Boolean = rules.any { it.antiFlip }
 
-    /** Whether a card that takes something away may reach a seat already out. */
+    /**
+     * Whether *every* card may be aimed at a seat that is already out.
+     *
+     * A card that takes something away reaches one on any table — that is a
+     * fact about the card, and it lives on `TargetRule.reachesFinished`. This
+     * is the blanket on top: under "extreme" the rest of them may be pointed
+     * there too, whether or not there is anything left for them to do.
+     */
     val reachesFinished: Boolean = rules.any { it.extreme }
 
     /** Whether a round may leave a player worse off than they started it. */

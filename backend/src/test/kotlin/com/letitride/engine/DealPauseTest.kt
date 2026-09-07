@@ -55,12 +55,31 @@ class DealPauseTest {
             openingCards = listOf(num(1), num(2), num(3)),
             rest = listOf(action(STEAL.id)),
         )
-        // c has gone out, b is still in with a card.
+        // c is sitting behind nothing at all — no hand and no modifier row —
+        // so there is nothing there for a thief to reach into.
+        state = state.copy(
+            players = state.players.map {
+                if (it.id == "c") it.copy(hand = emptyList(), handValue = 0) else it
+            },
+        )
+        state = t(state, GameAction.Hit("a"))
+        assertEquals(listOf("b"), state.pendingAction?.validTargets)
+    }
+
+    @Test
+    fun `a seat that has gone out is still worth stealing from`() {
+        var state = startedAndDealt(
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+            rest = listOf(action(STEAL.id)),
+        )
+        // Their round is over; the card in front of them is not. It is still
+        // worth points and it is still worth taking.
         state = state.copy(
             players = state.players.map { if (it.id == "c") it.copy(status = PlayerStatus.STAYED) else it },
         )
         state = t(state, GameAction.Hit("a"))
-        assertEquals(listOf("b"), state.pendingAction?.validTargets)
+        assertEquals(listOf("b", "c"), state.pendingAction?.validTargets)
     }
 
     @Test

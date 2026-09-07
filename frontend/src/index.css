@@ -1102,6 +1102,29 @@ label {
   100% { transform: translate(-50%, -50%) scale(0.96); opacity: 0; }
 }
 
+/* The same spin, asked rather than answered: the ring drawn round the deck
+   while the drawer is still hovering a direction. Slow and continuous, because
+   it is a question rather than an event — nothing is waiting on it and nothing
+   about it should read as having happened yet. */
+
+.spin-preview {
+  animation: spinPreviewIn 180ms ease-out both;
+}
+
+.spin-preview-ring {
+  animation: spinPreviewTurn 5200ms linear infinite;
+}
+
+@keyframes spinPreviewIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes spinPreviewTurn {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(var(--preview-turn, 360deg)); }
+}
+
 /* ─── Choice picker ───
    The one overlay in the game that is clicked rather than watched. */
 
@@ -1392,6 +1415,8 @@ label {
   .bottle-verdict,
   .table-swirl,
   .table-swirl-arrow,
+  .spin-preview,
+  .spin-preview-ring,
   .choice-picker,
   .fizzle-note,
   .fizzle-strike,

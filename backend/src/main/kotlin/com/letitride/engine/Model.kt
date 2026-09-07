@@ -731,4 +731,22 @@ sealed class GameAction {
     @Serializable
     @SerialName("NEXT_ROUND")
     data object NextRound : GameAction()
+
+    /**
+     * Puts a finished game back in its own lobby, with the same people still
+     * sitting at it.
+     *
+     * The lobby rather than a fresh deal, and that is the whole point of the
+     * card: a table that has just played usually wants to change something
+     * before it plays again, and a room in [GamePhase.LOBBY] is one somebody
+     * can still walk into with the code they were already given. Dealing
+     * straight into round one would have made "play again" the one button in
+     * the game you cannot take back.
+     *
+     * It is also the one phase every client already knows how to render, so a
+     * tab that has not reloaded lands in the waiting room rather than nowhere.
+     */
+    @Serializable
+    @SerialName("PLAY_AGAIN")
+    data object PlayAgain : GameAction()
 }

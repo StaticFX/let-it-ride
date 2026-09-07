@@ -195,6 +195,56 @@ class ActionCardTest {
     }
 
     @Test
+    fun `a seat that has busted can still be swapped with`() {
+        var state = withPending(SWAP.id, players = listOf("a", "b", "c"), openingCards = listOf(num(1), num(2), num(3)))
+        state = state.copy(
+            players = state.players.map {
+                when (it.id) {
+                    "b" -> it.copy(status = PlayerStatus.BUST, bustReason = "duplicate")
+                    "c" -> it.copy(status = PlayerStatus.STAYED)
+                    else -> it
+                }
+            },
+        )
+
+        // Neither of them is playing any more and both are still holding cards.
+        // Taking a banked hand off somebody, or handing your live one to a
+        // wreck, is the trade this card is for.
+        val targets = state.pendingAction!!.validTargets
+        assertTrue("b" in targets, "a busted seat is still holding its cards")
+        assertTrue("c" in targets, "and a banked one is still holding points")
+
+        state = t(state, GameAction.PlayAction("a", "c", SWAP.id))
+        assertEquals(3, state.player("a")!!.handValue)
+        assertEquals(1, state.player("c")!!.handValue)
+        assertEquals(PlayerStatus.STAYED, state.status("c"), "the hand moved; the seat's round did not")
+    }
+
+    @Test
+    fun `a banked hand handed a duplicate by a swap busts anyway`() {
+        var state = withPending(SWAP.id, openingCards = listOf(num(1), num(2)))
+        state = state.copy(
+            players = state.players.map {
+                when (it.id) {
+                    // b has gone out on a pair they were allowed to keep — a
+                    // cooler hand — and a is about to be handed it.
+                    "b" -> it.copy(
+                        hand = listOf(num(7, id = "seven"), num(7, id = "seven-again")),
+                        handValue = 14,
+                        status = PlayerStatus.STAYED,
+                    )
+
+                    else -> it
+                }
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "b", SWAP.id))
+
+        assertEquals(PlayerStatus.BUST, state.status("a"), "a duplicate is a duplicate however quietly it arrived")
+    }
+
+    @Test
     fun `a swap that pushes a hand over the threshold busts on arrival`() {
         var state = withPending(SWAP.id, openingCards = listOf(num(1), num(12)))
             .let { s -> s.copy(config = s.config.copy(ruleIds = listOf(LobbyRules.BLACKJACKING.id))) }
@@ -374,6 +424,59 @@ class ActionCardTest {
 
         val left = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_LEFT))
         assertEquals(listOf(2, 3, 1), listOf("a", "b", "c").map { left.player(it)!!.handValue })
+    }
+
+    @Test
+    fun `a spin takes the modifier row with the hand`() {
+        var state = withPending(
+            SPIN_TABLE.id,
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(2), num(3)),
+        )
+        state = state.copy(
+            players = state.players.map {
+                when (it.id) {
+                    "a" -> it.copy(passives = listOf(passive(DOUBLE_POINTS.id, id = "the-double")))
+                    "b" -> it.copy(passives = listOf(passive(DISCORDIA.id, id = "the-discordia")))
+                    else -> it
+                }
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+
+        // Everything in front of a seat travels together, exactly as it does in
+        // a swap: the ×2 goes to the seat that inherited the hand it was
+        // doubling, and nobody keeps a modifier for a hand they no longer hold.
+        assertEquals(emptyList(), state.player("a")!!.passives.map { it.id })
+        assertEquals(listOf("the-double"), state.player("b")!!.passives.map { it.id })
+        assertEquals(listOf("the-discordia"), state.player("c")!!.passives.map { it.id })
+    }
+
+    @Test
+    fun `the cooler that made a hand survivable travels with it`() {
+        var state = withPending(SPIN_TABLE.id, openingCards = listOf(num(1), num(2)))
+        state = state.copy(
+            players = state.players.map {
+                // b is holding a pair and a cooler, which is the only reason
+                // they are still in. Spun onto a, the pair would bust them —
+                // unless the card that makes it legal comes with it.
+                if (it.id == "b") {
+                    it.copy(
+                        hand = listOf(num(7, id = "seven"), num(7, id = "seven-again")),
+                        handValue = 14,
+                        passives = listOf(passive(COOLER.id, id = "the-cooler")),
+                    )
+                } else {
+                    it
+                }
+            },
+        )
+
+        state = t(state, GameAction.PlayAction("a", "a", SPIN_TABLE.id, SPIN_RIGHT))
+
+        assertEquals(listOf("the-cooler"), state.player("a")!!.passives.map { it.id })
+        assertEquals(PlayerStatus.ACTIVE, state.status("a"), "what made the hand legal arrived with it")
     }
 
     @Test

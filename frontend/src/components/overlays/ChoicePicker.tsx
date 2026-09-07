@@ -14,6 +14,12 @@ interface ChoicePickerProps {
    */
   waiting: boolean
   onPick: (option: string) => void
+  /**
+   * The option under the cursor, or null when there is none. For a question
+   * whose answer is easier to show than to word — see [SpinPreview], which
+   * draws which way the table would turn while you are still deciding.
+   */
+  onHover?: (option: string | null) => void
   /** Screen position of the card the question belongs to. */
   x: number
   y: number
@@ -28,7 +34,7 @@ interface ChoicePickerProps {
  * is offered whenever the card carries options, never on how many seats it
  * happens to advertise.
  */
-export function ChoicePicker({ cardDefId, options, chosen, waiting, onPick, x, y }: ChoicePickerProps) {
+export function ChoicePicker({ cardDefId, options, chosen, waiting, onPick, onHover, x, y }: ChoicePickerProps) {
   return (
     <div
       className="fixed z-[230] flex flex-col items-center gap-2 choice-picker"
@@ -42,7 +48,19 @@ export function ChoicePicker({ cardDefId, options, chosen, waiting, onPick, x, y
 
       <div className="flex gap-3.5">
         {options.map((option) => (
-          <div key={option} data-testid="choice-option" data-option={option} data-picked={chosen === option}>
+          <div
+            key={option}
+            data-testid="choice-option"
+            data-option={option}
+            data-picked={chosen === option}
+            // Focus as well as hover: the picker is two buttons, and somebody
+            // tabbing to one is asking the same question as somebody pointing
+            // at it.
+            onMouseEnter={() => onHover?.(option)}
+            onMouseLeave={() => onHover?.(null)}
+            onFocus={() => onHover?.(option)}
+            onBlur={() => onHover?.(null)}
+          >
             <SketchButton
               variant={chosen === option ? 'primary' : 'ghost'}
               disabled={!!chosen}

@@ -25,33 +25,50 @@ enum class PassiveScoring {
     NEGATE,
 }
 
-/** Who a card is allowed to be pointed at. */
-enum class TargetRule {
+/**
+ * Who a card is allowed to be pointed at.
+ *
+ * [reachesFinished] is a fact about what the card *takes*, which is why it is
+ * written on the rule rather than left to the house rules. A strike takes a
+ * card, a steal takes a card, a swap takes a whole row — and every one of those
+ * is still lying face up in front of a seat that has banked or busted, still
+ * worth points to whoever ends up holding it. A freeze takes the rest of
+ * somebody's round, and a seat that is out has no rest of the round to take;
+ * offering one is a card spent for nothing, which is the thing `fizzle` and
+ * [ActionCardDef.skipHolding] exist to prevent.
+ *
+ * Two cards had already worked this out for themselves — `swapCards` reads
+ * every card on the table and the spin turns every seat — so the rules that
+ * point at what somebody is holding are simply being brought in line with the
+ * two that point at the cards directly.
+ */
+enum class TargetRule(
+    /** Whether this rule reaches a seat that is already finished with the round. */
+    val reachesFinished: Boolean,
+) {
     /** Anyone still in the round, including the player who drew it. */
-    ANY_ACTIVE,
+    ANY_ACTIVE(reachesFinished = false),
 
-    /** Anyone still in the round who actually has cards to lose. */
-    ACTIVE_WITH_CARDS,
-
-    /** Someone else, still in the round, who actually has cards. */
-    OTHER_ACTIVE_WITH_CARDS,
+    /**
+     * Anyone holding cards, whatever became of their round. A banked hand is
+     * points that are still on the board and a busted one is the duplicate that
+     * killed it — a card somebody could be made to carry.
+     */
+    ANYONE_WITH_CARDS(reachesFinished = true),
 
     /**
      * Someone else who is holding anything at all — a hand, a modifier row, or
-     * both. What a card that moves everything in front of you has to ask for:
-     * a player sitting behind nothing but a ×2 has plenty worth swapping for,
-     * and [OTHER_ACTIVE_WITH_CARDS] would not offer them.
+     * both. What a card that moves everything in front of you has to ask for: a
+     * player sitting behind nothing but a ×2 has plenty worth swapping for, and
+     * [ANYONE_WITH_CARDS] would not offer them.
      */
-    OTHER_WITH_ANYTHING,
+    OTHER_WITH_ANYTHING(reachesFinished = true),
 
-    /**
-     * Anyone at the table at all — busted, gone out, or still playing. The only
-     * rule that reaches a seat which is already finished with the round.
-     */
-    ANY_PLAYER,
+    /** Anyone at the table at all — busted, gone out, or still playing. */
+    ANY_PLAYER(reachesFinished = true),
 
     /** Resolves on the drawer; no picker is shown. */
-    SELF,
+    SELF(reachesFinished = false),
 }
 
 /**
@@ -181,23 +198,23 @@ internal fun targetsFor(
     fromId: String,
     skipHolding: String? = null,
 ): List<String> {
-    // "Extreme": a card that takes something away reaches a seat that is
-    // already out, because what it takes is points and those are still on
-    // the board. The rules are read off the state rather than passed in —
-    // a game knows what it is being played under, and threading a rule set
-    // through every call site would only carry the same answer by hand.
-    val active =
-        if (RuleSet.of(state.config).reachesFinished) state.players
+    // Two ways a seat that is out is still worth pointing at. The card's own —
+    // what it takes is lying in front of them and stays worth having wherever
+    // it ends up, see [TargetRule.reachesFinished] — and "extreme", which
+    // widens the rest of them on top of that. The house rules are read off the
+    // state rather than passed in: a game knows what it is being played under,
+    // and threading a rule set through every call site would only carry the
+    // same answer by hand.
+    val pool =
+        if (rule.reachesFinished || RuleSet.of(state.config).reachesFinished) state.players
         else state.players.filter { it.status == PlayerStatus.ACTIVE }
     val byRule = when (rule) {
         TargetRule.SELF -> listOf(fromId)
-        TargetRule.ANY_ACTIVE -> active.map { it.id }
-        TargetRule.ACTIVE_WITH_CARDS -> active.filter { it.hand.isNotEmpty() }.map { it.id }
-        TargetRule.OTHER_ACTIVE_WITH_CARDS ->
-            active.filter { it.id != fromId && it.hand.isNotEmpty() }.map { it.id }
+        TargetRule.ANY_ACTIVE -> pool.map { it.id }
+        TargetRule.ANYONE_WITH_CARDS -> pool.filter { it.hand.isNotEmpty() }.map { it.id }
 
         TargetRule.OTHER_WITH_ANYTHING ->
-            active.filter { it.id != fromId && (it.hand.isNotEmpty() || it.passives.isNotEmpty()) }
+            pool.filter { it.id != fromId && (it.hand.isNotEmpty() || it.passives.isNotEmpty()) }
                 .map { it.id }
 
         TargetRule.ANY_PLAYER -> state.players.map { it.id }
@@ -480,14 +497,14 @@ val DRAW_THREE = ActionCardDef(
 val STRIKE = ActionCardDef(
     id = "strike",
     name = "strike",
-    description = "target loses their highest card",
+    description = "target loses their highest card, in the round or out of it",
     sigil = "✗",
-    targetRule = TargetRule.ACTIVE_WITH_CARDS,
+    targetRule = TargetRule.ANYONE_WITH_CARDS,
     price = 15,
 ) { ctx, play ->
     val fresh = ctx.player(play.target.id) ?: return@ActionCardDef
-    // A banked hand is still worth points, so under "extreme" striking one is
-    // the whole idea. Whether this seat may be aimed at at all was settled by
+    // A banked hand is still worth points, so striking one is the whole idea.
+    // Whether this seat may be aimed at at all was settled by
     // [ActionCardDef.validTargets] before it got here.
     if (fresh.hand.isEmpty()) return@ActionCardDef
     if (ctx.hasPassive(fresh.id, ARMOR.id)) {
@@ -539,7 +556,8 @@ val SWAP = ActionCardDef(
 ) { ctx, play ->
     if (play.from.id == play.target.id) return@ActionCardDef
     // Whole rows move, so no duplicate can appear — but "blackjacking" caps the
-    // total, and under "extreme" the hand coming back can be a busted one.
+    // total, and the hand coming back can be a busted one: a seat that is out
+    // is still holding cards, and taking them off it is the point.
     for (id in ctx.swapHands(play.from.id, play.target.id)) {
         ctx.resolveBustAfterGain(id, finishedToo = true)
     }
@@ -647,13 +665,14 @@ const val SPIN_LEFT = "left"
 const val SPIN_RIGHT = "right"
 
 /**
- * Every hand at the table slides one seat the way the drawer called — busted
- * seats and banked ones included. See [Ctx.rotateHands].
+ * Everything in front of every seat — the hand and the modifier row both —
+ * slides one place the way the drawer called, busted seats and banked ones
+ * included. See [Ctx.rotateHands].
  */
 val SPIN_TABLE = ActionCardDef(
     id = "spinTable",
     name = "spin the table",
-    description = "every hand at the table slides one seat left or right — busted ones too",
+    description = "everything on the table slides one seat left or right — modifiers and busted hands too",
     sigil = "↻",
     targetRule = TargetRule.SELF,
     options = listOf(SPIN_LEFT, SPIN_RIGHT),

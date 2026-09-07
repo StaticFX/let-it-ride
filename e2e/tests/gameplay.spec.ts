@@ -193,7 +193,31 @@ test.describe('a game from the title card to the final standings', () => {
     await expect(top).toHaveAttribute('data-player-name', winnerName!)
   })
 
-  test('"play again" hands you back a clean title card', async ({ app, page }) => {
+  test('"play again" keeps the table together', async ({ app, page }) => {
+    test.slow()
+
+    await app.hostVersusBots('devin')
+    await app.configure({ rounds: 1 })
+    const code = await app.roomCode()
+    await app.start()
+    await app.playToGameOver({ policy: alwaysHit, maxRounds: 3 })
+
+    await page.getByTestId('play-again').click()
+
+    // The same room, the same seats, the same settings — and the button to go
+    // again right where it was before the first game.
+    await expect(page.getByTestId('waiting-room')).toBeVisible()
+    await expect(page.getByTestId('room-code')).toHaveText(code)
+    await expect(page.getByTestId('lobby-player')).toHaveCount(4)
+    await expect(page.getByTestId('table-goal')).toHaveText('best of 1 rounds')
+    await expect(page.getByTestId('start-game')).toBeEnabled()
+
+    // ...and it deals a whole new game rather than a hand of leftovers.
+    await app.start()
+    await expect(page.getByTestId('game-board')).toBeVisible()
+  })
+
+  test('"back to menu" hands you a clean title card', async ({ app, page }) => {
     test.slow()
 
     await app.hostVersusBots('devin')
@@ -201,7 +225,7 @@ test.describe('a game from the title card to the final standings', () => {
     await app.start()
     await app.playToGameOver({ policy: alwaysHit, maxRounds: 3 })
 
-    await page.getByTestId('play-again').click()
+    await page.getByTestId('leave-game').click()
     await expect(page.getByTestId('title-screen')).toBeVisible()
     await expect(page.getByTestId('name-input')).toHaveValue('devin')
 

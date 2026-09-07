@@ -84,6 +84,14 @@ Freezing a busted player, striking someone who had gone out, and so on. The
 target must still be in the round; otherwise the card falls back onto the player
 who drew it.
 
+*Since narrowed to the cards it was actually about.* A card that **takes**
+something — strike, steal, swap — reaches a finished seat again, because what it
+takes is cards, and those are still lying in front of that seat and still worth
+points to whoever ends up holding them. What stays true is the half this entry
+was really for: a card that makes somebody **do** something — freeze, draw 3,
+skip — is still only offered to a seat that can do it. See
+`TargetRule.reachesFinished`.
+
 ### Slots cancelled a draw 3 in progress
 
 Drawing **slots** during forced draws overwrote the running forced-draw counter

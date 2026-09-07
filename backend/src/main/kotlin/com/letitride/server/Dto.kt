@@ -421,6 +421,15 @@ sealed class ClientMessage {
     @SerialName("NEXT_ROUND")
     data object NextRound : ClientMessage()
 
+    /**
+     * "Again!" from the results screen — the host's, like every other message
+     * that decides something for the whole table. Takes the room back to its
+     * lobby with everybody still in it; see [com.letitride.engine.GameAction.PlayAgain].
+     */
+    @Serializable
+    @SerialName("PLAY_AGAIN")
+    data object PlayAgain : ClientMessage()
+
     @Serializable
     @SerialName("KICK")
     data class Kick(val playerId: String) : ClientMessage()

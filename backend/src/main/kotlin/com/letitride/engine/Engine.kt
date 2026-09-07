@@ -415,8 +415,16 @@ class Ctx(state: GameState, val rng: Rng) {
     }
 
     /**
-     * Slides every hand one seat around the table, in seat order. "right" moves
-     * each hand to the next seat, "left" to the previous one.
+     * Slides everything in front of every seat one place around the table, in
+     * seat order — the hand and the modifier row both. "right" moves each of
+     * them to the next seat, "left" to the previous one.
+     *
+     * The row travels with the hand for the same reason [swapHands] takes it:
+     * everything in this game is a card, so what is in front of you is one
+     * thing rather than two piles that some cards reach and others do not. A
+     * spin that left the ×2 and the antimatter behind was picking and choosing
+     * which cards count — and it was already a lie on screen, because the
+     * client draws the row inside the hand it slides.
      *
      * Every seat takes part, whatever became of its round. A busted hand is
      * still a hand, and pushing one onto the player in front — who is holding
@@ -426,19 +434,24 @@ class Ctx(state: GameState, val rng: Rng) {
      *
      * Whole hands move intact, so nobody is handed a card that clashes with one
      * they kept — but the hand that arrives can be over the threshold, or be a
-     * busted hand holding the duplicate that killed it. The caller re-checks
-     * every seat this returns.
+     * busted hand holding the duplicate that killed it. What protects it moves
+     * too: the cooler that made a duplicate survivable and the second life that
+     * would have saved the seat both go with the hand rather than staying to
+     * cover whatever arrives. The caller re-checks every seat this returns.
      */
     fun rotateHands(direction: String): List<String> {
         val participants = state.players
         if (participants.size < 2) return emptyList()
+        // Both piles are read before anything moves, so the rotation happens all
+        // at once rather than cascading through the seats one at a time.
         val hands = participants.map { it.hand }
+        val rows = participants.map { it.passives }
         val size = participants.size
         for (index in participants.indices) {
             // Who this seat receives from: the seat behind it when spinning
             // right, the seat ahead of it when spinning left.
             val donor = if (direction == SPIN_LEFT) (index + 1) % size else (index + size - 1) % size
-            update(participants[index].id) { withHand(it, hands[donor]) }
+            update(participants[index].id) { withHand(it.copy(passives = rows[donor]), hands[donor]) }
         }
         val ids = participants.map { it.id }
         emit(GameEvent.TableSpun(direction, ids))
@@ -809,6 +822,7 @@ object Engine {
             GameAction.ResolveOutcome -> resolveOutcome(ctx)
             is GameAction.Timeout -> timeout(ctx, action.playerId)
             GameAction.NextRound -> nextRound(ctx)
+            GameAction.PlayAgain -> playAgain(ctx)
         }
     }
 
@@ -883,6 +897,50 @@ object Engine {
                 )
             },
             dealQueue = dealOrder(state.players.map { it.id }, 0),
+        )
+    }
+
+    /**
+     * Takes a finished game back to its lobby with the same table still sitting
+     * at it — see [GameAction.PlayAgain].
+     *
+     * Built out of [newGame] rather than by copying the finished state and
+     * clearing the fields that must not survive. A copy keeps whatever is added
+     * to [GameState] next, and "the field nobody remembered to clear" is the
+     * exact bug this function exists to not have: `startGame` right above has a
+     * page of them written out by hand and is only correct because it runs on a
+     * state that was never played. Everything carried over here is carried over
+     * on purpose, and there are three of them.
+     *
+     * The seats are rebuilt from the constructor for the same reason. [Player]
+     * has a dozen fields and all but three of them — who you are, what you are
+     * called, and whether anybody is home — want their default: a score, a
+     * status, a bust reason and a hand from last game are all things a new game
+     * must not start with.
+     */
+    private fun playAgain(ctx: Ctx) {
+        val state = ctx.state
+        if (state.phase != GamePhase.GAME_END) return
+
+        ctx.state = newGame(state.config).copy(
+            // A seat whose tab has gone is not carried into the next game. It
+            // would be dealt cards nobody plays and hold the turn clock for its
+            // whole length every round — `deadlineFor` asks whether a seat is a
+            // bot, not whether anybody is behind it — and it would count
+            // against the room filling up. Same rule the shop already
+            // uses in `GameState.waitingOnShop`: a tab that closed cannot press
+            // a button. Somebody who comes back walks into a lobby and simply
+            // sits down again.
+            players = state.players
+                .filter { it.isBot || it.connected }
+                .map { Player(id = it.id, name = it.name, isBot = it.isBot) },
+            // Two counters that must keep climbing for the life of the room
+            // rather than for the life of a game. Nothing minted survives a
+            // restart, but an id handed out twice is a card that two things
+            // believe they are holding, and that is not a bug worth risking to
+            // save a number — see [Ctx.mint] and [GameState.stackCounter].
+            minted = state.minted,
+            stackCounter = state.stackCounter,
         )
     }
 

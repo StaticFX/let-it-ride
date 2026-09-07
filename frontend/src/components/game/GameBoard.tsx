@@ -28,6 +28,7 @@ import { ChoicePicker } from '../overlays/ChoicePicker'
 import { CoinToss } from '../overlays/CoinToss'
 import { SpinningBottle } from '../overlays/SpinningBottle'
 import { TableSwirl } from '../overlays/TableSwirl'
+import { SpinPreview, SPIN_TABLE_DEF_ID } from '../overlays/SpinPreview'
 import { Showdown } from '../overlays/Showdown'
 import { FizzleNote } from '../overlays/FizzleNote'
 import { GamblerReveal } from '../overlays/GamblerReveal'
@@ -80,6 +81,15 @@ export function GameBoard() {
   const { w, h } = useWindowSize()
   const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null)
   const [inspectedCard, setInspectedCard] = useState<CardType | null>(null)
+  /**
+   * The option under the cursor while a card is asking a question, tagged with
+   * the card that asked it.
+   *
+   * The tag is the whole reason this is not a plain string: the next spin off
+   * the deck opens the same picker, and a hover left over from the last one
+   * would draw an arrow over a question nobody has looked at yet.
+   */
+  const [hoveredOption, setHoveredOption] = useState<{ cardKey: string; option: string } | null>(null)
   // Where each player's line on the scoreboard is, so the round's points have
   // somewhere to land. Measured when a payout starts rather than kept in state:
   // the scoreboard does not move, and a rect in state is a rect that goes stale.
@@ -176,6 +186,22 @@ export function GameBoard() {
   const showdown = animations.find((a) => a.type === 'showdown')
   const reveals = animations.filter((a) => a.type === 'gamblerPlayed')
   const counters = animations.filter((a) => a.type === 'countered')
+
+  // Which copy of which card is asking. `cardId` is unique per physical card;
+  // an older server sends only the def id, which is enough to tell one card's
+  // question from the next one's.
+  const pendingCardKey = game.pendingAction?.cardId ?? game.pendingAction?.cardDefId ?? ''
+  /**
+   * The direction the spin would go if the drawer committed to what they are
+   * pointing at — the hover, or the call they have already made.
+   *
+   * Only ever a picture. Which directions exist and what either of them does
+   * are the server's, and arrive in the card's own options.
+   */
+  const previewSpin =
+    isPickingTarget && pendingIsLocal && game.pendingAction?.cardDefId === SPIN_TABLE_DEF_ID
+      ? (hoveredOption?.cardKey === pendingCardKey ? hoveredOption.option : null) ?? optionChosen
+      : null
 
   // Which of the local player's gambler cards the server says are live right
   // now. The client only ever reads this list — whether a window is open is a
@@ -502,7 +528,12 @@ export function GameBoard() {
               // A targetable seat has to sit above the local player's bar
               // (z-8), or on a short window the bar swallows the click.
               zIndex: targetable ? 30 : isActive || isBeingDealt ? 10 : 3,
-              opacity: dimmed ? 0.45 : isPickingTarget && !targetable ? 0.3 : backgrounded ? 0.7 : 1,
+              // A seat you can point at is lit even when its round is over.
+              // Cards that take something reach a seat that is already out —
+              // its hand is still points and its modifier row is still cards —
+              // so dimming it for being out would say the opposite of what the
+              // server just offered.
+              opacity: targetable ? 1 : dimmed ? 0.45 : isPickingTarget ? 0.3 : backgrounded ? 0.7 : 1,
               transition: 'opacity 280ms, transform 350ms cubic-bezier(.2,.9,.3,1.3)',
               cursor: targetable ? 'crosshair' : isPickingTarget ? 'not-allowed' : 'default',
             }}
@@ -532,7 +563,10 @@ export function GameBoard() {
                     </span>
                     {statusBadge(p)}
                     {timedOutIds.includes(p.id) && <span className="status-badge border border-[var(--ink-soft)]">timed out</span>}
-                    {isPickingTarget && pendingIsLocal && !seatIsImplied && !targetable && p.status === 'active' && (
+                    {/* Deliberately not gated on the seat still being in the
+                        round: a seat that is out can be a legal target now, so
+                        one that is not has a reason worth saying out loud. */}
+                    {isPickingTarget && pendingIsLocal && !seatIsImplied && !targetable && (
                       <span className="status-badge border border-[var(--ink-soft)] text-[var(--ink-soft)]">
                         {p.hand.length === 0 ? 'no cards' : 'no target'}
                       </span>
@@ -971,6 +1005,11 @@ export function GameBoard() {
         />
       )}
 
+      {/* Which way the table would turn, drawn round the deck for as long as
+          the cursor is on a direction — and left up once one is called, so the
+          answer does not blink out between the click and the spin. */}
+      {previewSpin && <SpinPreview direction={previewSpin} x={deckCenter.x} y={deckCenter.y} />}
+
       {isPickingTarget && pendingIsLocal && needsChoice && (
         <ChoicePicker
           cardDefId={game.pendingAction?.cardDefId ?? ''}
@@ -978,6 +1017,7 @@ export function GameBoard() {
           chosen={optionChosen}
           waiting={animating}
           onPick={pickOption}
+          onHover={(option) => setHoveredOption(option ? { cardKey: pendingCardKey, option } : null)}
           x={cardStage.x}
           y={Math.min(cardStage.y + 142, h - 168)}
         />

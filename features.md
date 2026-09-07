@@ -783,6 +783,109 @@ one moment.
 
 ---
 
+# Nothing in front of you is safe, and the table stays together
+
+Three from the same pass. The first two are the same sentence twice — a card
+that takes something reaches the cards, wherever they are lying and whatever
+became of the seat in front of them — and the third is about what happens after
+the last round.
+
+## ✅ Spinning the table left the modifier rows behind
+
+> Spinning the tabel does not spin passives.
+
+`rotateHands` moved every hand one seat and every modifier row nowhere, so a ×2
+stayed to double a hand it had never seen and an antimatter stayed to curse one
+that arrived clean. It now slides both, which is what `swap hands` has always
+done and for the same reason: everything in this game is a card, so what is in
+front of you is one thing rather than two piles that some cards reach and others
+do not.
+
+It cuts both ways, which is the interesting part. The cooler that made a hand
+full of duplicates survivable travels with it, so the seat it lands on is not
+busted by a hand its owner was allowed to keep — and the second life you were
+sitting behind has gone off with your own hand and is protecting somebody else
+by the time the wreck arrives.
+
+The client needed nothing at all. `SpunHand` already wrapped both piles, so the
+modifier row had been visibly sliding in from the donor seat this whole time
+while the state said it had not moved. The animation was right and the rules
+were wrong.
+
+## ✅ A seat that is out could not be struck, stolen from or swapped with
+
+> when somebody is out you cant strike them, or swap hands etc.
+
+Only two cards could reach a finished seat — `swap cards` and the spin, both of
+which point at the cards themselves rather than at a player — and everything
+that pointed at a *player* was filtered down to whoever was still in the round
+unless "extreme" was on.
+
+Which seats a card may be aimed at now lives on `TargetRule` as
+`reachesFinished`, because it is a fact about what the card takes rather than a
+house rule. A strike takes a card, a steal takes a card, a swap takes a whole
+row, and every one of those is still lying face up in front of somebody who
+banked or busted, still worth points to whoever ends up holding it. A freeze
+takes the rest of your round and there is no rest of it to take, so freeze,
+draw 3 and skip are still offered only to seats that can do something about
+them — a card offered against nothing is a card spent for nothing, which is what
+`fizzle` and `skipHolding` exist to prevent.
+
+`ACTIVE_WITH_CARDS` was renamed `ANYONE_WITH_CARDS` because the old name had
+become a lie, and `OTHER_ACTIVE_WITH_CARDS` was deleted: no card had named it
+for a long time. "Extreme" keeps its blanket — under it *every* card may be
+pointed at a seat that is out, warts and all — and is no longer the only way to
+strike a banked hand.
+
+Two things on the felt had to follow. A seat that is out is drawn dimmed, and
+that was tested *before* whether it was a legal target, so a seat you could now
+strike still read as unavailable; targetable wins now. And the "no target" badge
+was only drawn on seats still in the round, so an out seat that genuinely was
+not a legal target said nothing at all.
+
+## ✅ "Play again" broke the table up
+
+> When you click play again the lobby persists.
+
+It called `leaveGame` — the same thing the pause menu does — so the host walked
+out of the room and everybody else was left on a results screen in a room that
+could never start another game. Playing again meant one person re-hosting and
+four people typing a new code in.
+
+There is a `PLAY_AGAIN` now, and like every other message that decides something
+for the whole table it is the host's. It puts the room back in **its own
+lobby**: same seats, same bots, same settings, scores wiped, and the code on the
+wall unchanged. The lobby rather than a fresh deal on purpose — a table that has
+just played usually wants to change something first, and dealing straight into
+round one would make it the one button in the game you cannot take back.
+
+The transition is built out of `newGame` rather than by copying the finished
+state and clearing what must not survive, because "the field nobody remembered
+to clear" is the exact bug it exists not to have. Two counters are carried
+across on purpose — the ones that name minted cards and stack frames, which
+have to keep climbing for the life of the *room* — and one thing is dropped: a
+seat whose tab has gone. It would be dealt cards nobody plays, hold the turn
+clock for its full run every round and count against the room filling up. Same
+rule the shop already uses; somebody who comes back simply sits down again.
+
+Everybody who is not the host gets "waiting for host…", the way they do between
+rounds, and both of them get a way out — leaving used to *be* the play-again
+button, and taking it away without a replacement would strand a guest on a
+screen with no controls.
+
+## ✅ ...and the spin says which way it is going before you commit
+
+> for spin the card also on the table around the deck show an arrow when
+> hovering over a direction so its more clear where it moves
+
+"left" and "right" on two buttons say nothing about a round table: which way
+your hand actually travels is a fact about the seats, not about the words. Hover
+either option and a ring is drawn round the deck, turning the way the table
+would. It is deliberately the shape the payoff comes in, and it costs nothing to
+look — which is the point of showing it before the click rather than after.
+
+---
+
 # Still open
 
 - **⬜ A round can be taken off you before you have had a turn.** An opening card
