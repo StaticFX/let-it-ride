@@ -52,7 +52,7 @@ export function Interlude() {
 
   return (
     <div
-      className="page-shell justify-start pt-6 pb-8 overflow-y-auto"
+      className="page-shell justify-start overflow-y-auto"
       data-testid="interlude"
       data-seconds={seconds ?? ''}
       data-purse={purse}
@@ -64,12 +64,12 @@ export function Interlude() {
           meant to compare at a glance — it left four cards crammed into the
           middle third with the description at nine points and the rest of the
           monitor empty. */}
-      <div className="w-full max-w-[1500px] px-4 sm:px-8 flex flex-col items-center gap-4 my-auto">
-        <div className="flex items-baseline gap-4">
-          <h2 className="-rotate-1 text-4xl sm:text-5xl">~ the table is open ~</h2>
+      <div className="w-full max-w-[1500px] px-0 sm:px-8 flex flex-col items-center gap-4 my-auto">
+        <div className="flex flex-wrap items-baseline justify-center gap-x-4">
+          <h2 className="-rotate-1 text-3xl sm:text-5xl">~ the table is open ~</h2>
           {seconds !== null && (
             <span
-              className={`number text-4xl sm:text-5xl leading-none ${seconds <= 10 ? 'text-[var(--accent)]' : ''}`}
+              className={`number text-3xl sm:text-5xl leading-none ${seconds <= 10 ? 'text-[var(--accent)]' : ''}`}
               data-testid="interlude-clock"
               data-seconds={seconds}
             >
@@ -82,7 +82,7 @@ export function Interlude() {
             auction sat below the fold on a two-minute clock, which is the one
             place in the game where not scrolling costs you money. */}
         <div className="w-full flex flex-col xl:flex-row items-stretch justify-center gap-4">
-          <div className="sketch-box rounded p-5 sm:p-6 flex-1 flex flex-col items-center gap-4">
+          <div className="sketch-box rounded p-3 sm:p-6 flex-1 flex flex-col items-center gap-4">
             <div className="display text-2xl sm:text-3xl -rotate-1">
               buy a card — <span className="text-[var(--accent)]">{purse}</span> to spend
               {spent > 0 && <small className="ml-2 text-base">({spent} spent)</small>}
@@ -126,7 +126,7 @@ export function Interlude() {
               <button
                 onClick={() => setInspected(shop.lot!.card)}
                 data-testid="auction-inspect"
-                className="bg-transparent border-none p-0 cursor-pointer transition-transform duration-150 hover:scale-105 hover:-rotate-1"
+                className="bg-transparent border-none p-0 cursor-pointer transition-transform duration-150 [@media(hover:hover)]:hover:scale-105 [@media(hover:hover)]:hover:-rotate-1"
               >
                 <PlayingCard card={shop.lot.card} size="large" />
               </button>

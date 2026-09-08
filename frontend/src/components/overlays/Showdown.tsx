@@ -36,7 +36,7 @@ export function Showdown({ title, sides, footnote }: {
       data-testid="showdown"
       data-title={title}
     >
-      <div className="showdown-sheet flex flex-col items-center gap-3 px-8 py-6">
+      <div className="showdown-sheet reveal-sheet flex flex-col items-center gap-3 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
         <div className="display text-[30px] font-bold text-[var(--accent)] -rotate-1">{title}</div>
 
         <div className="flex items-end justify-center gap-5 flex-wrap max-w-[560px]">

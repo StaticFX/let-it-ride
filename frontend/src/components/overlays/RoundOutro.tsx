@@ -72,7 +72,7 @@ export function RoundOutro({ round, winner, points, flip7, flipTarget, untilMs }
       </div>
 
       <div
-        className="display text-[62px] font-bold leading-none mt-1 text-center"
+        className="display text-[clamp(2rem,9vw,62px)] font-bold leading-tight mt-1 text-center break-words px-[max(1rem,var(--safe-left))]"
         style={{
           transform: held ? 'scale(1) rotate(-1deg)' : phase === 'in' ? 'scale(0.75)' : 'scale(1.08)',
           opacity: held ? 1 : 0,

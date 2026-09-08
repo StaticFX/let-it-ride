@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Kalam:wght@300;400;700&family=Patrick+Hand&family=Caveat:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -13,6 +12,27 @@
   --font-display: 'Kalam', cursive;
   --font-body: 'Patrick Hand', cursive;
   --font-number: 'Caveat', cursive;
+
+  /* The felt runs under the notch and the home bar — see `viewport-fit=cover`
+     in index.html — so anything that has to be *read* or *reached* is held off
+     the edges by these instead. Zero everywhere that has no cutouts, which is
+     every desktop browser, so nothing moves on a machine with a mouse. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+html {
+  /* Landscape on iOS otherwise reflows every font on the page by its own
+     guess at what is readable, and a felt laid out in pixels does not survive
+     being told its type is now 18% bigger. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Declared here as well as on `body` below. Which element the viewport takes
+     its overscroll from is the root's to say, and Safari is under no obligation
+     to read it off the body. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -23,6 +43,46 @@ body {
   -webkit-font-smoothing: antialiased;
   font-family: var(--font-body);
   color: var(--ink);
+  /* A table is not a document. Nothing here scrolls the page, so a drag that
+     runs off the felt should do nothing at all rather than rubber-band the
+     whole game away from under the player's thumb — or, worse, pull the
+     browser's refresh down in the middle of somebody's turn. */
+  overscroll-behavior: none;
+  /* Every card is tapped, and the grey box Android paints over one is drawn on
+     top of the ink rather than under it. Not `transparent`, though: something
+     has to answer a finger before the socket does, and a wash of the same ink
+     the table is drawn in reads as the paper darkening under a thumb rather
+     than as a browser widget. */
+  -webkit-tap-highlight-color: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+/* ─── Everything below is a component, and says so ───
+ *
+ * `@import "tailwindcss"` declares `theme, base, components, utilities`, and a
+ * rule written outside every layer beats a rule inside one whatever their
+ * specificities — so unlayered `.page-shell { padding: 24px }` was quietly
+ * winning against `pt-12` at the call site, and `.sketch-input`'s 24px against
+ * `text-4xl` on the join code. Neither of those utilities had ever done
+ * anything. Saying which layer these rules are in is what puts the ordinary
+ * rule — a utility beats the component it is written on — back.
+ *
+ * `:root`, `html` and `body` above stay out of it. They are the sheet itself
+ * rather than anything drawn on it, and a layer around them would only invite
+ * a stray utility to take the felt's background off the page.
+ */
+@layer components {
+
+/* Nothing on this table is a document, so no tap needs to be held back 350ms in
+   case a second one is coming. Applied at the root and given back on the pages
+   that really are documents — the rules, the deck builder, the lobby — which is
+   the way round that cannot be got wrong by adding a control somewhere new. */
+#root {
+  touch-action: manipulation;
+}
+
+.page-shell,
+.rules-scroll {
+  touch-action: auto;
 }
 
 /* ─── Base typography ─── */
@@ -135,6 +195,19 @@ label {
   overflow: hidden;
   font-family: var(--font-body);
   color: var(--ink);
+  /* A card held a moment too long is a card, not a paragraph. Without this a
+     long press on the felt raises iOS's selection loupe and its copy/share
+     callout over whatever is being decided. The pages are documents and are
+     left alone — see `.page-shell` — and so is anything typed into. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .hover-glow {
@@ -204,9 +277,14 @@ label {
   transform: scaleX(0);
 }
 
+/* "bust!", "out", "away" — the shortest things on the felt and the ones a seat
+   is read by from across the table. The seat around them is scaled down as the
+   table fills up, which at ten players took "bust!" to nine pixels and at the
+   narrow table's floor would take it to six. Dividing the size back out is what
+   a badge is for: it says the same thing at every table size. */
 .status-badge {
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: calc(13px / var(--seat-scale, 1));
   padding: 0 6px;
   border-radius: 2px;
   font-weight: 700;
@@ -235,12 +313,40 @@ label {
   justify-content: center;
   cursor: pointer;
   animation: inspectFadeIn 200ms ease-out;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
 
+/* A deck card blown up to be read. 2.8× is 280 by 398, which fits a phone held
+   upright and does not fit one turned on its side — so the scale is named, and
+   a short window gets a smaller one rather than a card with its ends cut off. */
 .card-inspect-pop {
-  transform: scale(2.8);
+  --inspect-scale: 2.8;
+  transform: scale(var(--inspect-scale));
   animation: inspectCardPop 300ms cubic-bezier(.2,.9,.3,1.3) both;
   pointer-events: none;
+}
+
+@media (max-height: 460px) {
+  .card-inspect-pop {
+    --inspect-scale: 2;
+  }
+}
+
+/* A card nobody has seen, on a sheet of its own — see GamblerReveal and
+   Showdown. Held to the window as a whole rather than shrunk piece by piece:
+   what these are *for* is a face and a sentence being read by several people at
+   once, and a description set two sizes smaller is a description nobody reads
+   in the time the gate allows. */
+.reveal-sheet {
+  max-height: 92dvh;
+  max-width: 96vw;
+}
+
+@media (max-height: 460px) {
+  .reveal-sheet {
+    transform: scale(0.78);
+    transform-origin: center;
+  }
 }
 
 /* ─── Common animations as classes ─── */
@@ -254,12 +360,39 @@ label {
 /* ─── Game board layout helpers ─── */
 .action-buttons {
   position: absolute;
-  bottom: 24px;
+  bottom: calc(24px + var(--safe-bottom));
   left: 50%;
   z-index: 90;
   display: flex;
+  /* Anchored at the middle and then pulled back over itself, so what is left of
+     the window to shrink-to-fit in is only ever half of it — which on a phone
+     is 195px and is what broke "let it ride!" over two lines. The row is as
+     wide as the buttons in it and the translate does the rest. */
+  width: max-content;
   gap: 18px;
   transition: transform 520ms cubic-bezier(.2,.9,.25,1.25), opacity 360ms ease;
+}
+
+/* ─── The narrow window ───
+   One block, matching COMPACT_WIDTH in useViewport.ts, so what a phone is told
+   about the type on it is decided in the same place the felt is told about its
+   own shape. Anything that has to *move* is worked out in tableLayout.ts; this
+   is only what fits through a stylesheet. */
+@media (max-width: 719px) {
+  :root {
+    --button-pad: 9px 18px;
+    --button-min-width: 92px;
+    --button-font-size: 20px;
+  }
+
+  .action-buttons {
+    gap: 10px;
+    bottom: calc(16px + var(--safe-bottom));
+  }
+
+  .pick-target-label {
+    font-size: 17px;
+  }
 }
 
 .action-buttons.visible {
@@ -274,6 +407,11 @@ label {
   pointer-events: none;
 }
 
+/* Anything typed into. The size is deliberately well over sixteen pixels: iOS
+   zooms the whole page in on any field smaller than that and gives you no way
+   back out, which on a join screen means the code you are typing goes off the
+   side of the screen as you type it. A call site may make this bigger — it is
+   in the components layer, so a utility wins — and must never make it smaller. */
 .sketch-input {
   width: 100%;
   background: transparent;
@@ -354,7 +492,74 @@ label {
   align-items: center;
   font-family: var(--font-body);
   color: var(--ink);
-  padding: 24px;
+  padding: calc(24px + var(--safe-top)) calc(16px + var(--safe-right))
+    calc(24px + var(--safe-bottom)) calc(16px + var(--safe-left));
+  /* A phone has no gutter to give away: 24px either side of a 390px screen is
+     an eighth of the page spent on nothing. The wider padding comes back as
+     soon as there is room for it. */
+
+  /* A page scrolls down and never sideways.
+     Several things on these screens overhang their own box on purpose — the
+     coffee ring on the scoreboard is drawn half off the pad, which is what
+     makes it a stain rather than a circle — and an overhang like that has no
+     business adding eleven pixels of horizontal scroll to a phone. `clip`
+     rather than `hidden` so this stays a statement about the sideways
+     direction and does not quietly turn the page into a scroll container. */
+  overflow-x: clip;
+}
+
+@media (min-width: 640px) {
+  .page-shell {
+    padding: calc(24px + var(--safe-top)) calc(24px + var(--safe-right))
+      calc(24px + var(--safe-bottom)) calc(24px + var(--safe-left));
+  }
+}
+
+/* A page taller than the window centres by overflowing at *both* ends, and the
+   overflow at the start end cannot be scrolled to — so a title card that is
+   450px tall in a landscape phone loses its first 54px permanently. `safe`
+   gives up centring rather than the top of the page. */
+.page-shell.justify-center {
+  justify-content: safe center;
+}
+
+/* The rules book, and the margin ruled down it. Both give up most of their
+   inline padding on a narrow window — a sheet is a thing to read, and 88px of
+   gutter on a 390px screen is a third of the page spent on nothing. */
+.paper-sheet {
+  padding: 32px 20px 40px;
+}
+
+.paper-sheet-margin {
+  left: 12px;
+}
+
+@media (min-width: 640px) {
+  .paper-sheet {
+    padding: 48px 44px 56px;
+  }
+
+  .paper-sheet-margin {
+    left: 40px;
+  }
+}
+
+/* Anything a finger has to find.
+   The floor is only applied where there is a finger. 44px is the smallest
+   square somebody hits without looking; a cursor hits a 20px one exactly as
+   well, and growing every control on a desktop to fit a thumb that is not there
+   pushed the waiting room's own start button below the fold. */
+.tap-target {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (pointer: coarse) {
+  .tap-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* Card sway */
@@ -540,6 +745,8 @@ label {
   50% { opacity: 0.8; transform: translateX(-1px) skewX(-18deg) scaleY(1.3); }
 }
 
+/* ...and the same for the one on the scoreboard, which shrinks with the board
+   rather than with a seat. */
 .score-brink-tag {
   display: inline-block;
   margin-left: 6px;
@@ -548,7 +755,7 @@ label {
   background: var(--accent);
   color: var(--card-face);
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: calc(10px / var(--board-scale, 1));
   font-weight: 700;
   letter-spacing: 0.04em;
   vertical-align: middle;
@@ -675,12 +882,12 @@ label {
     animation-timing-function: cubic-bezier(.25, .8, .35, 1);
   }
   38% {
-    transform: translate(-50%, calc(-50% - 142px)) rotate(-8deg) scale(1.46);
+    transform: translate(-50%, calc(-50% - var(--smash-lift, 156px) * 0.91)) rotate(-8deg) scale(1.46);
     filter: drop-shadow(0 34px 26px rgba(0, 0, 0, 0.28));
     animation-timing-function: ease-in-out;
   }
   52% {
-    transform: translate(-50%, calc(-50% - 156px)) rotate(-11deg) scale(1.52);
+    transform: translate(-50%, calc(-50% - var(--smash-lift, 156px))) rotate(-11deg) scale(1.52);
     filter: drop-shadow(0 40px 28px rgba(0, 0, 0, 0.3));
     animation-timing-function: cubic-bezier(.65, 0, .9, .35);
   }
@@ -719,8 +926,8 @@ label {
 
 /* Card inspection pop */
 @keyframes inspectCardPop {
-  from { transform: scale(1.8); opacity: 0.5; }
-  to { transform: scale(2.8); opacity: 1; }
+  from { transform: scale(calc(var(--inspect-scale, 2.8) * 0.64)); opacity: 0.5; }
+  to { transform: scale(var(--inspect-scale, 2.8)); opacity: 1; }
 }
 
 /* Bust strikethrough reveal */
@@ -907,6 +1114,35 @@ label {
 
 .second-life {
   animation: secondLifeSheet var(--life-dur, 5000ms) both;
+
+  /* How far apart the three cards this is about are thrown, and how big the one
+     being torn in half is drawn.
+     ...
+     The numbers are the ones the animation was built with and are the ones a
+     wide felt still gets. They are named rather than written into the keyframes
+     because this is the animation CLAUDE.md calls one of the two moments a
+     round actually turns on, and half of it was happening off the side of a
+     phone: the echo card alone reached 62px past the left edge of a 390px
+     screen, and the torn halves flew to ±198px against a 195px half-screen —
+     so the table watched a caption naming a card it could not see. */
+  --life-spread: 190px;
+  --life-scale: 2.2;
+  --life-caption: 216px;
+}
+
+@media (max-width: 480px) {
+  .second-life {
+    --life-spread: min(190px, 30vw);
+    --life-scale: 1.5;
+  }
+}
+
+/* ...and the clash caption is hung off the top of the sheet, which in landscape
+   is only a couple of hundred pixels tall to begin with. */
+@media (max-height: 560px) {
+  .second-life {
+    --life-caption: 34dvh;
+  }
 }
 
 @keyframes secondLifeSheet {
@@ -939,7 +1175,7 @@ label {
    as a pair, and the duplicate is the card this is about. */
 .second-life-echo {
   opacity: 0.62;
-  transform: translate(-190px, 18px) rotate(-11deg) scale(1.35);
+  transform: translate(calc(var(--life-spread) * -1), 18px) rotate(-11deg) scale(1.35);
   animation: secondLifeEcho var(--life-dur, 5000ms) both;
 }
 
@@ -962,7 +1198,7 @@ label {
   top: 50%;
   width: 0;
   height: 0;
-  transform: scale(2.2);
+  transform: scale(var(--life-scale));
   animation: secondLifeDoomed var(--life-dur, 5000ms) both;
 }
 
@@ -1010,7 +1246,7 @@ label {
 .second-life-clash {
   position: absolute;
   left: 50%;
-  top: -216px;
+  top: calc(var(--life-caption) * -1);
   font-size: 30px;
   transform: translateX(-50%) rotate(-3deg);
   animation: secondLifeClash var(--life-dur, 5000ms) both;
@@ -1273,7 +1509,7 @@ label {
 @keyframes coinToss {
   /* Thrown in from above the table. */
   0% {
-    transform: perspective(760px) translateY(-340px) rotateX(0deg) scale(0.72);
+    transform: perspective(760px) translateY(max(-340px, -40dvh)) rotateX(0deg) scale(0.72);
     animation-timing-function: cubic-bezier(.45, 0, .75, .5);
   }
   /* Turning fast, near the top of its arc. */
@@ -1323,7 +1559,7 @@ label {
    stopped — was the one thing nobody saw. */
 @keyframes bottleSpin {
   0% {
-    transform: translate(-50%, -50%) translateY(-300px) rotate(0deg) scale(1.5);
+    transform: translate(-50%, -50%) translateY(max(-300px, -35dvh)) rotate(0deg) scale(1.5);
     opacity: 0;
     animation-timing-function: cubic-bezier(.5, 0, .8, .5);
   }
@@ -1525,7 +1761,23 @@ label {
   transition: filter 160ms ease, outline-color 160ms ease;
 }
 
-.card-pickable:hover {
+/* Pointed at, one way or the other.
+ *
+ * Two selectors and one set of declarations, which is the whole of the touch
+ * model in CSS: a cursor resting on a card and a first tap on one are the same
+ * fact — *this is the card I am about to spend the answer on* — and they get
+ * the same mark. The hover half is behind a query because iOS leaves `:hover`
+ * latched on the last thing tapped, and a card left looking pointed-at after
+ * the answer went in reads as an answer that did not. */
+@media (hover: hover) and (pointer: fine) {
+  .card-pickable:hover {
+    outline-style: solid;
+    outline-color: var(--accent);
+    filter: drop-shadow(0 3px 0 rgba(176, 68, 50, 0.35));
+  }
+}
+
+.card-pickable[data-armed='true'] {
   outline-style: solid;
   outline-color: var(--accent);
   filter: drop-shadow(0 3px 0 rgba(176, 68, 50, 0.35));
@@ -1547,138 +1799,17 @@ label {
   cursor: pointer;
 }
 
-.card-takeable:hover {
-  outline-style: dashed;
-  filter: drop-shadow(2px 3px 0 rgba(176, 68, 50, 0.2)) grayscale(0.35);
+@media (hover: hover) and (pointer: fine) {
+  .card-takeable:hover {
+    outline-style: dashed;
+    filter: drop-shadow(2px 3px 0 rgba(176, 68, 50, 0.2)) grayscale(0.35);
+  }
 }
 
 .card-unpickable {
   cursor: not-allowed;
   opacity: 0.35;
   filter: grayscale(0.7);
-}
-
-/* ─── The run at the target ───
-   A pencil line under each name on the scoreboard, filled as far as that player
-   has got. It is quiet for most of a game on purpose: a bar that shouts from
-   the first round has nothing left to say in the last one.
-
-   Two thresholds, and the second is the one worth having. At `close` the fill
-   goes to the accent and starts breathing. At `brink` it is struck twice as
-   heavily, glows, and the row says "match point" — which is the moment the
-   scoreboard stops being a tally and becomes the thing everybody is watching. */
-
-.score-bar {
-  position: relative;
-  height: 3px;
-  margin: 3px 2px 1px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-  overflow: visible;
-}
-
-.score-bar-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--run, 0%);
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--ink) 45%, transparent);
-  /* The run is drawn rather than snapped: points landing on the scoreboard
-     push it along, which is the whole of what a payout looks like from here. */
-  transition: width 520ms cubic-bezier(.25, .9, .3, 1), background-color 400ms ease;
-}
-
-.score-bar[data-close="true"] .score-bar-fill {
-  /* Warm rather than hot: three steps, so "in the running" and "about to take
-     it" do not read as the same thing across a whole scoreboard. */
-  background: color-mix(in srgb, var(--accent) 62%, var(--ink));
-  animation: scoreRunPulse 1.6s ease-in-out infinite;
-}
-
-.score-bar[data-brink="true"] .score-bar-fill {
-  background: var(--accent);
-}
-
-.score-bar[data-brink="true"] {
-  height: 5px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-/* ...and the line it belongs to warms up with it, so the seat about to take
-   the game reads as hot from across the room rather than on inspection. */
-[data-testid="score-row"][data-brink="true"] {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--accent) 12%, transparent),
-    transparent 88%
-  );
-  border-radius: 2px;
-}
-
-.score-bar[data-brink="true"] .score-bar-fill {
-  animation: scoreRunBrink 900ms ease-in-out infinite;
-}
-
-/* The last of it, scratched past the end of the line — the bar is full and the
-   pencil kept going. */
-.score-bar[data-brink="true"]::after {
-  content: '';
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  left: var(--run, 0%);
-  width: 10px;
-  transform: translateX(-4px) skewX(-18deg);
-  background: linear-gradient(90deg, var(--accent), transparent);
-  opacity: 0.5;
-  animation: scoreRunEdge 900ms ease-in-out infinite;
-}
-
-@keyframes scoreRunPulse {
-  0%, 100% { opacity: 0.75; }
-  50% { opacity: 1; }
-}
-
-@keyframes scoreRunBrink {
-  0%, 100% { opacity: 0.8; box-shadow: 0 0 0 rgba(176, 68, 50, 0); }
-  50% { opacity: 1; box-shadow: 0 0 9px 1px rgba(176, 68, 50, 0.55); }
-}
-
-@keyframes scoreRunEdge {
-  0%, 100% { opacity: 0.35; transform: translateX(-4px) skewX(-18deg) scaleY(1); }
-  50% { opacity: 0.8; transform: translateX(-1px) skewX(-18deg) scaleY(1.3); }
-}
-
-.score-brink-tag {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 0 4px;
-  border-radius: 2px;
-  background: var(--accent);
-  color: var(--card-face);
-  font-family: var(--font-display);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  vertical-align: middle;
-  transform: rotate(-2deg);
-  animation: brinkTag 1.8s ease-in-out infinite;
-}
-
-/* A total that has just been written down. */
-.score-total {
-  animation: scoreLand 520ms cubic-bezier(.2, .9, .3, 1.4) both;
-}
-
-@keyframes scoreLand {
-  0% { transform: translateY(-6px) scale(1.35); color: var(--accent); }
-  60% { transform: translateY(0) scale(1); }
-  100% { transform: translateY(0) scale(1); color: var(--ink); }
-}
-
-@keyframes brinkTag {
-  0%, 100% { transform: rotate(-2deg) scale(1); }
-  50% { transform: rotate(-2deg) scale(1.07); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1723,3 +1854,6 @@ label {
     transition: none;
   }
 }
+
+}
+/* ─── end of the components layer ─── */

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { theme } from '../../theme'
 
 /**
@@ -175,10 +175,30 @@ export function TableShader({ myTurn, urgency, shock = null, onReady }: TableSha
   const propsRef = useRef({ myTurn, urgency })
   const shocksRef = useRef<Shock[]>([])
   const seenShock = useRef<string | null>(null)
+  /** Bumped when the browser hands the GPU context back, to build it all again. */
+  const [contextEpoch, setContextEpoch] = useState(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+
+    /**
+     * Two four-octave fbms per pixel over a megapixel and a bit, every frame of
+     * your own turn.
+     *
+     * A machine with a mouse can afford that and the felt is worth it there: it
+     * is the biggest thing on a wide screen and the whole of what says the move
+     * is yours. A phone can afford it least at exactly the moment it costs most
+     * — the shader runs while somebody is on the clock, which is the one time a
+     * tap has to answer immediately — and at six inches the paper grain it is
+     * drawing cannot be seen at all. So the narrow table says so and takes the
+     * CSS vignette instead, which was written as the no-WebGL fallback and does
+     * the same job in one composited layer.
+     */
+    if (window.matchMedia?.('(hover: none)').matches || window.innerWidth < 720) {
+      onReady?.(false)
+      return
+    }
 
     const gl = canvas.getContext('webgl2', {
       alpha: false,
@@ -322,7 +342,33 @@ export function TableShader({ myTurn, urgency, shock = null, onReady }: TableSha
     }
     stillness.addEventListener('change', onStillnessChange)
 
+    /**
+     * A browser is allowed to take the context back whenever it likes, and a
+     * phone does — every app switch, every lock, every time another tab wants
+     * the GPU. Without this the canvas keeps its last frame, `feltLive` stays
+     * latched true, and the vignette that would have said whose turn it is
+     * never comes back for the rest of the game.
+     *
+     * `preventDefault` on the loss is what makes the restore fire at all.
+     */
+    const onLost = (e: Event) => {
+      e.preventDefault()
+      if (frame) cancelAnimationFrame(frame)
+      frame = 0
+      onReady?.(false)
+    }
+    const onRestored = () => {
+      // The program went with the context. Ask React to build the whole thing
+      // again rather than trying to patch it up from here — there is one place
+      // that knows how to set this canvas up and it is above.
+      setContextEpoch((epoch) => epoch + 1)
+    }
+    canvas.addEventListener('webglcontextlost', onLost)
+    canvas.addEventListener('webglcontextrestored', onRestored)
+
     return () => {
+      canvas.removeEventListener('webglcontextlost', onLost)
+      canvas.removeEventListener('webglcontextrestored', onRestored)
       stillness.removeEventListener('change', onStillnessChange)
       observer.disconnect()
       if (frame) cancelAnimationFrame(frame)
@@ -335,10 +381,11 @@ export function TableShader({ myTurn, urgency, shock = null, onReady }: TableSha
       // report the felt unavailable for the whole of development. The context
       // goes when React drops the canvas with it.
     }
-    // Set up once. Everything that changes afterwards arrives through refs, so
-    // a new turn or a new ripple never rebuilds the program.
+    // Set up once — and again if the browser takes the context away and gives
+    // it back. Everything else that changes arrives through refs, so a new turn
+    // or a new ripple never rebuilds the program.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [contextEpoch])
 
   // The turn changed hands, or the clock moved on — hand the new values to the
   // loop, repaint, and start it again if there is now something to animate.

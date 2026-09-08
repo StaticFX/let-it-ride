@@ -30,10 +30,16 @@ export function SketchButton({ children, onClick, disabled, variant = 'primary',
       ref={ref}
       data-testid={testId}
       disabled={disabled}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
-      onMouseDown={() => setPressed(true)}
-      onMouseUp={() => setPressed(false)}
+      // Pointer events rather than mouse ones, so the press reads on a screen
+      // being tapped as well as one being clicked — a synthesised mouse event
+      // arrives after the finger has already come off, which is a button that
+      // never looks pressed at all. `pointercancel` matters here: a tap that
+      // turns into a scroll never gets its `up`.
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHovered(true) }}
+      onPointerLeave={() => { setHovered(false); setPressed(false) }}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      onPointerCancel={() => { setPressed(false); setHovered(false) }}
       onClick={() => {
         // Every button in the game routes through here, so the click is wired
         // once rather than at each call site.
@@ -45,10 +51,12 @@ export function SketchButton({ children, onClick, disabled, variant = 'primary',
         background: 'transparent',
         color: fg,
         border: 'none',
-        padding: '10px 26px',
-        minWidth: 110,
+        // Read from the sheet so a narrow window can bring every button in the
+        // game down a size at once — see the compact block in index.css.
+        padding: 'var(--button-pad, 10px 26px)',
+        minWidth: 'var(--button-min-width, 110px)',
         fontFamily: theme.fontDisplay,
-        fontSize: 24,
+        fontSize: 'var(--button-font-size, 24px)',
         letterSpacing: '0.01em',
         fontWeight: 700,
         cursor: disabled ? 'not-allowed' : 'pointer',

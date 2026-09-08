@@ -168,14 +168,46 @@ about something ending, the event has to carry it.
 **The table's size is one number, and the felt lays itself out from it.**
 `MAX_PLAYERS` in `Engine.kt` is the only place it lives; the client is *told* it
 in the catalog (`minPlayers`/`maxPlayers`) rather than knowing it. Seats are not
-a list of places — `seatFraction` in `GameBoard.tsx` spreads however many other
-players there are along an arc, symmetrically about the top and clockwise from
-the seat on your left, which is the order `others` is already in and therefore
-the order the turn goes round. Two things scale with the crowd rather than being
-allowed to overlap: the seats themselves (`seatScale`) and the scoreboard
+a list of places — `tableLayout.ts` spreads however many other players there are
+along an arc, symmetrically about the top and clockwise from the seat on your
+left, which is the order `others` is already in and therefore the order the turn
+goes round. Two things scale with the crowd rather than being allowed to
+overlap: the seats themselves (`seatScale`) and the scoreboard
 (`scoreboardScale`), which grows a row at a time out of the bottom-left corner
 and otherwise climbs into the seat at that end of the arc. Anything that flies
 between seats measures from `seatOfId`, so that stays the only mapping.
+
+**...and it has two shapes, worked out in one place.** An arc is a shape for a
+room wider than it is tall, and a phone held upright is the opposite of that: at
+390px across, four seats on an ellipse collide before anybody has drawn a card.
+So `tableLayout(viewport, others, players, rolling)` answers the same questions
+either way — where each seat sits, where the piles are, where a played card is
+held — and `GameBoard` reads it without ever asking which shape it got. Narrow,
+the other seats are packed into rows (`packSeats` picks the row count with the
+most room in it, and `shareOut` fills the far rows first), the piles go between
+them and your own hand, and your own seat stacks instead of sitting in a line.
+Turned sideways the piles step out of that column into the bottom-right corner,
+because 390px of *height* cannot hold seats, piles and a hand stacked. The wide
+felt is untouched behind `if (!compact)`, so nothing on a desktop can regress —
+and the one rule for anything added here is that it goes through `tableLayout`
+rather than growing a second geometry beside it.
+
+**Hover is an enrichment and never a channel.** Everything a cursor says has to
+be sayable another way, because half the tables have no cursor:
+`viewport.touch` (from `useViewport`, which asks `(hover: none)` rather than
+guessing at a device) switches one rule on. A tap on a seat *looks* at it — the
+same state a hover sets, spreading its hand and stepping the rest of the table
+back. A tap on something the answer can be spent on **arms** it and the second
+tap commits, so a mis-tap is not a strike on the wrong player; what is armed
+carries `data-armed` and gets exactly the declarations the `:hover` rule
+carries, and every `:hover` that means something is behind `@media (hover:
+hover)` so iOS cannot latch it after a tap. Your own hand is drawn open on a
+touch screen whatever the turn, and a hidden card is read by tapping it and
+played from the sheet that opens — a 52px card that plays itself on contact is
+the one irreversible tap on the felt. The three `@mobile` Playwright projects
+drive the DOM with `tap()` and not `click()`, because a click dispatches
+`mouseenter` even in a touch context and would pass against exactly the
+hover-only code they exist to catch.
 
 **Test hooks gate anything that reveals or chooses cards.** `LETITRIDE_TEST_HOOKS=1`
 turns on the pinnable seed, the stacked deck, the pacing knob and the testing
@@ -204,8 +236,11 @@ frontend/src/
   net/client.ts     REST + WebSocket, with reconnect
   state/gameStore.ts a mirror of server state, nothing more
   hooks/useGame.ts  events → animations, and the ack that releases the table
+  hooks/useViewport.ts  the window, and whether it has a cursor
+  components/game/tableLayout.ts  where the felt puts things, in both its shapes
   components/dev/   the testing panel
 e2e/                Playwright, driven through the DOM like a player
+  support/layout.ts   the assertions the mobile projects are built on
 ```
 
 ## Recipes
@@ -297,6 +332,20 @@ ignores the message entirely.
   `index.css` (`var(--ink)`, `var(--felt)`, `var(--accent)`, …). Reusable patterns
   become components; the hand-drawn look is `RoughShapes`, `SketchButton`,
   `PlayingCard`, `CardBack` and the `.sketch-box` family, not new one-off CSS.
+- **Everything hand-written in `index.css` is inside `@layer components`, and
+  has to stay there.** Tailwind v4 puts every utility in `@layer utilities`, and
+  a rule written outside every layer beats a layered one at any specificity — so
+  an unlayered `.page-shell { padding }` silently won against `pt-12` at the call
+  site and `.sketch-input`'s `font-size` against `text-4xl`, and neither of those
+  utilities had ever done anything. A new block added after the closing brace
+  will quietly do the same thing again.
+- **A size a phone has to work at is a variable, not a number in a keyframe.**
+  `--bust-lift`, `--smash-lift`, `--life-spread`, `--inspect-scale` and the
+  `--button-*` trio all exist because the animation they belong to was measured
+  against a 900px felt and has to survive a 390px one. Anything new that holds a
+  card off an edge or throws one in from off-screen wants the same treatment.
+  The safe-area insets are `--safe-top`/`-right`/`-bottom`/`-left`, declared once
+  and read back into the geometry by `useViewport`.
 - **UI copy is lowercase and conversational** — "let it ride!", "waiting for host
   to start…", "a deck of your own". Match it.
 - **`data-testid` on anything the e2e suite touches**, and keep the id stable when

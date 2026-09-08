@@ -12,7 +12,8 @@ export function SketchOption({ selected, onClick, children, testId }: {
   return (
     <button ref={ref} onClick={onClick} data-testid={testId} data-selected={selected} style={{
       flex: 1, position: 'relative',
-      padding: '10px 12px',
+      padding: '12px',
+      minHeight: 44,
       fontFamily: theme.fontDisplay, fontSize: 17, fontWeight: 700,
       color: ink, cursor: 'pointer',
       background: 'transparent', border: 'none',

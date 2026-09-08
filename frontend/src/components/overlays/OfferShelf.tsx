@@ -53,7 +53,7 @@ export function OfferShelf({
   const noRoom = slotsFree !== undefined && slotsFree <= 0
   const big = size !== 'small'
   return (
-    <div className={`flex flex-wrap justify-center ${big ? 'gap-5' : 'gap-2.5'} py-1 ${className}`}>
+    <div className={`flex flex-wrap justify-center ${big ? 'gap-3 sm:gap-5' : 'gap-2 sm:gap-2.5'} py-1 ${className}`}>
       {offers.map((offer) => {
         const sold = bought?.includes(offer.id) ?? false
         const picked = chosen === offer.id
@@ -89,7 +89,9 @@ export function OfferShelf({
               data-sold={sold}
               data-affordable={affordable && !noRoom}
               className={`relative bg-transparent border-none p-0 transition-transform duration-150 ${
-                takeable ? 'cursor-pointer hover:scale-110 hover:-rotate-2' : 'cursor-default'
+                takeable
+                  ? 'cursor-pointer [@media(hover:hover)]:hover:scale-110 [@media(hover:hover)]:hover:-rotate-2'
+                  : 'cursor-default'
               } ${picked ? 'scale-110 -rotate-2' : ''} ${sold || !affordable || noRoom ? 'opacity-30' : ''}`}
             >
               {face}
@@ -114,8 +116,13 @@ export function OfferShelf({
             <button
               onClick={() => onInspect(offer.card)}
               data-testid="shop-inspect"
-              title="have a proper look"
-              className={`relative bg-transparent border-none p-0 cursor-pointer transition-transform duration-150 hover:scale-105 hover:-rotate-1 ${
+              aria-label={`look at ${offer.card.label}`}
+              // The lift is a hint and only a hint, so it is only offered where
+              // a cursor can take it back: iOS holds `:hover` on the last thing
+              // tapped, and a card left lifted after a purchase reads as a
+              // second card picked. The caption above the shelf says what a tap
+              // does, which is what the tooltip here used to be for.
+              className={`relative bg-transparent border-none p-0 cursor-pointer transition-transform duration-150 [@media(hover:hover)]:hover:scale-105 [@media(hover:hover)]:hover:-rotate-1 ${
                 sold ? 'opacity-40' : ''
               } ${picked ? 'scale-105 -rotate-1' : ''}`}
             >
@@ -126,9 +133,11 @@ export function OfferShelf({
               onClick={() => takeable && onPick(offer.id)}
               disabled={!takeable}
               data-testid="shop-buy"
-              className={`display rounded border-2 px-3 py-1 text-base leading-none transition-colors ${
+              // Tapped repeatedly, against a clock. 28px was a target you had
+              // to aim at; this is the 44 a thumb finds without looking.
+              className={`display rounded border-2 px-4 py-2.5 min-h-11 text-base leading-none transition-colors ${
                 takeable
-                  ? 'cursor-pointer border-[var(--ink)] bg-[var(--ink)] text-[var(--card-face)] hover:bg-[var(--accent)] hover:border-[var(--accent)]'
+                  ? 'cursor-pointer border-[var(--ink)] bg-[var(--ink)] text-[var(--card-face)] [@media(hover:hover)]:hover:bg-[var(--accent)] [@media(hover:hover)]:hover:border-[var(--accent)]'
                   : 'cursor-default border-dashed border-[var(--ink-soft)] bg-transparent text-[var(--ink-soft)]'
               }`}
             >

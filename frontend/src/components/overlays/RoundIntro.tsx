@@ -40,7 +40,7 @@ export function RoundIntro({ round, startingPlayerName, untilMs }: RoundIntroPro
       }}
     >
       <div
-        className="display text-[80px] font-bold leading-none"
+        className="display text-[clamp(2.5rem,12vw,80px)] font-bold leading-tight text-center break-words px-[max(1rem,var(--safe-left))]"
         style={{
           transform: phase === 'hold'
             ? 'scale(1) translateY(0)'

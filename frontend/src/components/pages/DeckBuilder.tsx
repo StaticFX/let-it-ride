@@ -37,7 +37,7 @@ function Row({ card, count, max, onChange }: {
           onClick={() => onChange(Math.max(0, count - 1))}
           disabled={count === 0}
           data-testid="deck-less"
-          className={`display text-lg leading-none w-5 h-5 bg-transparent border-none ${
+          className={`tap-target display text-lg leading-none bg-transparent border-none ${
             count === 0 ? 'text-[var(--ink)]/20 cursor-default' : 'cursor-pointer'
           }`}
         >
@@ -48,7 +48,7 @@ function Row({ card, count, max, onChange }: {
           onClick={() => onChange(Math.min(max, count + 1))}
           disabled={count >= max}
           data-testid="deck-more"
-          className={`display text-lg leading-none w-5 h-5 bg-transparent border-none ${
+          className={`tap-target display text-lg leading-none bg-transparent border-none ${
             count >= max ? 'text-[var(--ink)]/20 cursor-default' : 'cursor-pointer'
           }`}
         >
@@ -177,7 +177,7 @@ export function DeckBuilder({ deck, catalog, onChange }: {
         <button
           onClick={() => setShared(encodeDeck(deck))}
           data-testid="deck-share"
-          className="bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] -rotate-1"
+          className="tap-target bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] -rotate-1"
         >
           share this deck
         </button>
@@ -200,7 +200,7 @@ export function DeckBuilder({ deck, catalog, onChange }: {
           data-testid="deck-share-text"
           onFocus={(e) => e.currentTarget.select()}
           value={shared}
-          className="sketch-box-light w-full mt-2 p-2 rounded text-[11px] font-mono break-all h-16"
+          className="sketch-box-light w-full mt-2 p-2 rounded text-[16px] font-mono break-all h-24"
         />
       )}
     </div>

@@ -18,9 +18,13 @@ export function PaperSheet({ children, rotation, zIndex, onClick, style = {} }: 
     <div
       ref={ref}
       onClick={onClick}
+      // The padding is a class rather than an inline style so it can give way
+      // on a narrow window. 88px of it either side left the rules a 250px
+      // column on a phone — 204px once the sigil beside each card is paid for —
+      // and an inline style has no way to say "less than that here".
+      className="paper-sheet"
       style={{
         position: 'relative',
-        padding: '48px 44px 56px',
         maxWidth: 640,
         width: '100%',
         minHeight: 600,
@@ -57,11 +61,14 @@ export function PaperSheet({ children, rotation, zIndex, onClick, style = {} }: 
         />
       )}
       {/* Red margin line */}
-      <div style={{
-        position: 'absolute', top: 0, bottom: 0, left: 40,
-        width: 2, background: 'rgba(192, 57, 43, 0.15)',
-        zIndex: 0, pointerEvents: 'none',
-      }} />
+      <div
+        className="paper-sheet-margin"
+        style={{
+          position: 'absolute', top: 0, bottom: 0,
+          width: 2, background: 'rgba(192, 57, 43, 0.15)',
+          zIndex: 0, pointerEvents: 'none',
+        }}
+      />
       {/* Wrinkle texture — diagonal creases */}
       <svg style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%',

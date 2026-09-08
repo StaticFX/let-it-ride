@@ -16,6 +16,8 @@ interface SpunHandProps {
   /** Where this hand came from, as an offset from where it now sits. */
   dx: number
   dy: number
+  /** Passed through so the seat around it can order its own stack of rows. */
+  className?: string
   children: React.ReactNode
 }
 
@@ -34,7 +36,7 @@ interface SpunHandProps {
  * constant: the seat arc is walked from the players around *you*, so the same
  * rotation is a different distance for every client at the table.
  */
-export function SpunHand({ spinId, dx, dy, children }: SpunHandProps) {
+export function SpunHand({ spinId, dx, dy, className, children }: SpunHandProps) {
   const ref = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -74,7 +76,7 @@ export function SpunHand({ spinId, dx, dy, children }: SpunHandProps) {
   }, [spinId, dx, dy])
 
   return (
-    <div ref={ref} data-testid="spun-hand" data-spinning={!!spinId}>
+    <div ref={ref} className={className} data-testid="spun-hand" data-spinning={!!spinId}>
       {children}
     </div>
   )

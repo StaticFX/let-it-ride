@@ -60,7 +60,7 @@ export function SketchSlider({ min, max, step, value, onChange, label, testId, f
         data-min={min}
         data-max={max}
         style={{
-          position: 'relative', height: 32, cursor: 'pointer',
+          position: 'relative', height: 44, cursor: 'pointer',
           display: 'flex', alignItems: 'center',
           touchAction: 'none',
         }}

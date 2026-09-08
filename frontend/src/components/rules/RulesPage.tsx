@@ -334,7 +334,7 @@ export function RulesPage({ onClose, config, flip7Target }: RulesPageProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-auto"
+      className="rules-scroll fixed inset-0 z-[400] bg-[var(--felt)] flex flex-col items-center overflow-y-auto overflow-x-hidden"
       data-testid="rules-page"
       data-page={page + 1}
       // How many pages there are, so a spec can page to the end without knowing
@@ -343,14 +343,14 @@ export function RulesPage({ onClose, config, flip7Target }: RulesPageProps) {
       data-pages={pages.length}
       data-flip-target={flipTarget}
     >
-      <div className="flex items-center justify-between w-full max-w-[640px] px-6 pt-6 z-20">
-        <button onClick={onClose} data-testid="rules-back" className="bg-transparent border-none cursor-pointer display text-xl font-bold px-2 py-1">
+      <div className="flex items-center justify-between w-full max-w-[640px] px-3 sm:px-6 pt-[calc(1.5rem+var(--safe-top))] z-20">
+        <button onClick={onClose} data-testid="rules-back" className="tap-target bg-transparent border-none cursor-pointer display text-xl font-bold">
           ← back
         </button>
         <small>{page + 1} / {pages.length}</small>
       </div>
 
-      <div className="flex-1 flex items-start justify-center w-full px-6 pt-6 pb-32 relative">
+      <div className="flex-1 flex items-start justify-center w-full px-3 sm:px-6 pt-6 pb-32 relative">
         <div className={`w-full flex justify-center transition-all ${flipClass}`}>
           <PaperSheet rotation={ROTATIONS[page % ROTATIONS.length]} zIndex={10}>
             {pages[page].node}
@@ -361,7 +361,7 @@ export function RulesPage({ onClose, config, flip7Target }: RulesPageProps) {
         </div>
       </div>
 
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex gap-6 items-center z-30">
+      <div className="fixed bottom-[calc(2rem+var(--safe-bottom))] left-1/2 -translate-x-1/2 flex gap-6 items-center z-30">
         <button
           onClick={() => page > 0 && goToPage(page - 1)}
           data-testid="rules-prev"

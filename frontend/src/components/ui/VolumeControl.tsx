@@ -34,7 +34,7 @@ export function VolumeControl() {
       <button
         onClick={toggleMute}
         aria-label={muted ? 'turn sound on' : 'turn sound off'}
-        className={`bg-transparent border-none cursor-pointer text-xl leading-none p-1 shrink-0 transition-opacity ${
+        className={`tap-target bg-transparent border-none cursor-pointer text-xl leading-none p-1 shrink-0 transition-opacity ${
           muted ? 'opacity-40' : 'opacity-90'
         }`}
       >

@@ -40,7 +40,7 @@ export function RoundSummary() {
 
   return (
     <div
-      className="page-shell pt-10"
+      className="page-shell"
       data-testid="round-summary"
       data-round={round}
       data-winner-id={roundWinnerId ?? ''}

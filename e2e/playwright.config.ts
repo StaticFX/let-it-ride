@@ -46,14 +46,41 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      // Everything except the phone specs, which drive the page with `tap()`
+      // and need a touch context this project deliberately does not have.
+      grepInvert: /@mobile/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
     },
+    /**
+     * The narrow table, at the three shapes it actually has to hold.
+     *
+     * All three are Chromium with `hasTouch` and `isMobile` on, which is what
+     * makes `(hover: none)` and `(pointer: coarse)` true — the two facts the
+     * client branches on. A named device would drag WebKit into CI for a
+     * viewport box that can simply be written down.
+     *
+     * The portrait size is deliberately the *short* one rather than the phone's
+     * nominal 844: nothing inside the felt scrolls, so Safari never retracts
+     * its toolbars and a table on an iPhone 14 gets about 664px of height for
+     * the whole session. Testing the number the device is sold with would be
+     * testing a window nobody has.
+     */
     {
-      // The table is laid out for a desktop window; only the screens that are
-      // meant to work on a phone are checked here.
-      name: 'mobile',
+      name: 'mobile-portrait',
       grep: /@mobile/,
-      use: { ...devices['Pixel 7'] },
+      use: { ...devices['Pixel 7'], viewport: { width: 390, height: 664 } },
+    },
+    {
+      name: 'mobile-landscape',
+      grep: /@mobile/,
+      use: { ...devices['Pixel 7'], viewport: { width: 844, height: 390 } },
+    },
+    {
+      // A tablet is wide enough for the arc and still has no cursor, which is
+      // the one combination neither of the others covers.
+      name: 'tablet',
+      grep: /@mobile/,
+      use: { ...devices['Pixel 7'], viewport: { width: 768, height: 1024 } },
     },
   ],
 

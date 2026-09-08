@@ -28,16 +28,38 @@ function newPlayerId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
+/**
+ * Gets the room code to somebody else, by whichever of the three doors is open.
+ *
+ * The clipboard is only offered on a secure origin, and a homelab box on plain
+ * http over a LAN address is not one — which is the documented way this thing
+ * gets played. So a phone, where the tap that copies it is the whole point, was
+ * the case where nothing happened at all and the caption underneath went on
+ * cheerfully saying "share it with your friends".
+ *
+ * The share sheet is the phone's own answer to this and needs no secure
+ * context; the selection is the last resort, and is what the `select-all` on
+ * the code itself has always been for. What comes back says which of them
+ * happened, because "copied!" is a lie if the sheet was cancelled.
+ */
+async function shareRoomCode(text: string): Promise<'copied' | 'shared' | 'none'> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text)
-      return true
+      return 'copied'
     }
   } catch {
-    // Falls through to the manual selection path below.
+    // Falls through.
   }
-  return false
+  try {
+    if (navigator.share) {
+      await navigator.share({ text })
+      return 'shared'
+    }
+  } catch {
+    // Cancelling the sheet lands here, and cancelling is an answer.
+  }
+  return 'none'
 }
 
 export function Lobby() {
@@ -169,7 +191,7 @@ export function Lobby() {
   // ── Settings ──
   if (view === 'settings' && config) {
     return (
-      <div className="page-shell justify-start pt-12" data-testid="settings-screen" data-host={isHost}>
+      <div className="page-shell justify-start" data-testid="settings-screen" data-host={isHost}>
         <div className="content-width">
           <h1 className="text-4xl mb-1 text-center sway-slow">~ settings ~</h1>
           <p className="text-muted text-center mb-6">
@@ -211,7 +233,7 @@ export function Lobby() {
 
           {(localError || error) && <p className="text-[var(--accent)] mb-4" data-testid="lobby-error">{localError ?? error}</p>}
 
-          <div className="flex gap-3.5 mb-4">
+          <div className="flex flex-wrap justify-center gap-3.5 mb-4">
             <SketchButton variant="primary" testId="host-game" onClick={() => host()} disabled={!playerName.trim() || busy}>
               host a game
             </SketchButton>
@@ -226,7 +248,7 @@ export function Lobby() {
             <div className="divider-line" />
           </div>
 
-          <div className="flex gap-3.5">
+          <div className="flex flex-wrap justify-center gap-3.5">
             <SketchButton variant="ghost" testId="play-vs-bots" onClick={() => host(DEFAULT_BOTS)} disabled={!playerName.trim() || busy}>
               play vs bots
             </SketchButton>
@@ -290,7 +312,7 @@ export function Lobby() {
   const missing = Math.max(0, minPlayers - players.length)
 
   return (
-    <div className="page-shell justify-start pt-12" data-testid="waiting-room" data-host={isHost}>
+    <div className="page-shell justify-start" data-testid="waiting-room" data-host={isHost}>
       {countdown && <Countdown onDone={startGame} />}
 
       <div className="max-w-[460px] w-full">
@@ -299,7 +321,7 @@ export function Lobby() {
           {roomCode && (
             <button
               onClick={async () => {
-                if (await copyToClipboard(roomCode)) {
+                if ((await shareRoomCode(roomCode)) === 'copied') {
                   setCopied(true)
                   setTimeout(() => setCopied(false), 2000)
                 }
@@ -308,7 +330,11 @@ export function Lobby() {
             >
               <label>room code: </label>
               <span data-testid="room-code" className="display text-4xl tracking-[0.25em] room-code-border pb-1 select-all">{roomCode}</span>
-              <small className="block mt-2">{copied ? 'copied!' : 'share it with your friends'}</small>
+              {/* Four letters somebody has to read out or send on. What the tap
+                  actually does depends on where the game is being served from —
+                  see [shareRoomCode] — so the caption only promises the one
+                  thing that is always true. */}
+              <small className="block mt-2">{copied ? 'copied!' : 'tap to share it with your friends'}</small>
             </button>
           )}
         </div>
@@ -335,7 +361,7 @@ export function Lobby() {
             <button
               onClick={() => setShowDeckCards(!showDeckCards)}
               data-testid="toggle-deck-cards"
-              className="bg-transparent border-none cursor-pointer display text-base text-[var(--accent)]"
+              className="tap-target shrink-0 bg-transparent border-none cursor-pointer display text-base text-[var(--accent)]"
             >
               {showDeckCards ? 'hide cards' : 'see cards'}
             </button>
@@ -408,7 +434,7 @@ export function Lobby() {
                   <button
                     onClick={() => send({ type: 'KICK', playerId: p.id })}
                     data-testid="kick-player"
-                    className="bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] px-1.5 -rotate-1"
+                    className="tap-target bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] -rotate-1"
                   >
                     kick
                   </button>
@@ -420,7 +446,7 @@ export function Lobby() {
             <button
               onClick={() => send({ type: 'ADD_BOT' })}
               data-testid="add-bot"
-              className="mt-2 bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] -rotate-1"
+              className="tap-target mt-2 bg-transparent border-none cursor-pointer display text-base text-[var(--accent)] -rotate-1"
             >
               + add a bot
             </button>
@@ -429,7 +455,7 @@ export function Lobby() {
 
         {error && <p className="text-[var(--accent)] text-center mb-3" data-testid="lobby-error">{error}</p>}
 
-        <div className="flex gap-3.5">
+        <div className="flex flex-wrap justify-center gap-3.5">
           {isHost ? (
             <SketchButton variant="primary" testId="start-game" onClick={() => setCountdown(true)} disabled={missing > 0}>
               {missing > 0 ? `need ${missing} more` : 'let it ride!'}

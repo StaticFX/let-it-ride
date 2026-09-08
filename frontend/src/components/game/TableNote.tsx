@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { GameConfig } from '../../game/types'
 import { useCatalog } from '../../state/gameStore'
 import { useElementSize } from '../../hooks/useElementSize'
@@ -13,6 +14,8 @@ const WIDTH = 214
 export function TableNote({ config }: { config: GameConfig }) {
   const catalog = useCatalog()
   const { ref, size } = useElementSize<HTMLDivElement>()
+  /** The rule whose description is open, if any — see the chips below. */
+  const [openRule, setOpenRule] = useState<string | null>(null)
 
   // Not `findDeck` — its fallback to the first preset would confidently name
   // the wrong deck. A deck this client has no entry for keeps its own id.
@@ -75,10 +78,26 @@ export function TableNote({ config }: { config: GameConfig }) {
                   key={rule.id}
                   title={rule.description}
                   data-testid="table-note-rule"
-                  className="flex items-start gap-1.5 leading-tight"
+                  data-rule-id={rule.id}
+                  className="flex flex-col leading-tight"
                 >
-                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
-                  <span className="text-[15px]">{rule.name}</span>
+                  <button
+                    onClick={() => setOpenRule((id) => (id === rule.id ? null : rule.id))}
+                    className="flex items-start gap-1.5 bg-transparent border-none p-0 text-left cursor-pointer"
+                  >
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                    <span className="text-[15px]">{rule.name}</span>
+                  </button>
+                  {/* What the rule actually does. It was in a `title` and
+                      nowhere else, which is a thing only a cursor can ask for —
+                      and this note is read at a table where half the players
+                      have no cursor. The chips already stack, so one of them
+                      growing a line costs nothing else on the felt. */}
+                  {openRule === rule.id && (
+                    <small className="ml-3 mt-0.5 block leading-snug" data-testid="table-note-rule-detail">
+                      {rule.description}
+                    </small>
+                  )}
                 </li>
               ))}
             </ul>

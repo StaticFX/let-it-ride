@@ -435,6 +435,36 @@ export function useGame() {
   }, [])
 
   /**
+   * A tab nobody is looking at holds nothing.
+   *
+   * The gate exists so an animation is *watched* — the server will not deal or
+   * move the turn on until this client says the table has finished looking at
+   * something. A backgrounded tab is not looking at anything, and worse, it
+   * cannot say so: every hold releases on a `setTimeout`, which Chrome clamps
+   * to a minute or so in a hidden tab and iOS suspends outright when the phone
+   * locks. So the ack never went out, and the server waited the full
+   * ANIMATION_GATE_MAX_MS — eight seconds — *for every batch*. Since the gate
+   * falls back to the host when the owning seat has nothing to say, a host who
+   * pockets their phone becomes the table's metronome at eight seconds a beat,
+   * with the whole of each wait handed back to whoever is on the clock.
+   *
+   * Nothing is corrupted by letting go early: the state is already applied, and
+   * a stale `ANIM_DONE` arriving afterwards is dropped by the server's own id
+   * check. What is lost is an animation nobody was watching.
+   */
+  useEffect(() => {
+    const onHidden = () => {
+      if (!document.hidden) return
+      const gate = gateRef.current
+      if (!gate) return
+      gate.holds = 0
+      ack(gate)
+    }
+    document.addEventListener('visibilitychange', onHidden)
+    return () => document.removeEventListener('visibilitychange', onHidden)
+  }, [ack])
+
+  /**
    * Registers one running animation against the open batch and returns the
    * release to call when it finishes. It releases itself after [ms] regardless,
    * so an animation that never reports back costs a beat rather than stalling

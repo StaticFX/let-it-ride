@@ -62,7 +62,7 @@ export function GamblerReveal({ card, name, ms, firstSeen }: {
       data-first-seen={firstSeen}
       style={{ '--reveal-dur': `${ms}ms` } as CSSProperties}
     >
-      <div className="showdown-sheet flex flex-col items-center gap-3 px-8 py-6">
+      <div className="showdown-sheet reveal-sheet flex flex-col items-center gap-3 px-5 py-5 sm:px-8 sm:py-6">
         <div className="display text-xl -rotate-1 text-[var(--ink-soft)]">
           {name} had this all along
         </div>

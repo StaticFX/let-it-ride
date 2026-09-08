@@ -58,7 +58,7 @@ export function GameOver() {
         {winner && winner.hand.length > 0 && (
           <div className="mb-6">
             <small>winning hand</small>
-            <div className="flex justify-center gap-1 mt-2">
+            <div className="flex flex-wrap justify-center gap-1 mt-2">
               {winner.hand.map((card) => (
                 <PlayingCard key={card.id} card={card} size="small" />
               ))}

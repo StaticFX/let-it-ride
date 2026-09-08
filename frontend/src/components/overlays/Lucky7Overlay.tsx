@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { theme } from '../../theme'
 import { PlayingCard } from '../cards/PlayingCard'
 import type { Card } from '../../game/types'
+import { useViewport } from '../../hooks/useViewport'
 
 export function Lucky7Overlay({ cards, startPos }: { cards: Card[]; startPos: { x: number; y: number } }) {
   const [phase, setPhase] = useState<'init' | 'flying' | 'dancing'>('init')
@@ -12,8 +13,14 @@ export function Lucky7Overlay({ cards, startPos }: { cards: Card[]; startPos: { 
     return () => clearTimeout(timer)
   }, [])
 
-  const cx = window.innerWidth / 2
-  const cy = window.innerHeight * 0.4
+  const { w, h, compact } = useViewport()
+  const cx = w / 2
+  const cy = h * 0.4
+  // How far apart the fan spreads. Tightened on a narrow window, where nine
+  // cards at the wide step reach a hundred pixels past either edge of the
+  // screen — and this is the one animation in the game that is *about* how
+  // many cards there are.
+  const fanStep = compact ? 22 : 34
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 300, pointerEvents: 'none' }}>
@@ -25,7 +32,7 @@ export function Lucky7Overlay({ cards, startPos }: { cards: Card[]; startPos: { 
       }} />
       {cards.map((card, idx) => {
         const fanAngle = (idx - (cards.length - 1) / 2) * 10
-        const fanOffsetX = (idx - (cards.length - 1) / 2) * 34
+        const fanOffsetX = (idx - (cards.length - 1) / 2) * fanStep
         const arrived = phase === 'flying' || phase === 'dancing'
         return (
           <div key={card.id} style={{

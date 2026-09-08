@@ -13,9 +13,11 @@ export function SoundToggle({ className = '' }: { className?: string }) {
   return (
     <button
       onClick={toggle}
-      title={muted ? 'sound off' : 'sound on'}
+      // No `title`: a tooltip is a thing a cursor can ask for and this control
+      // is mostly tapped. The label is what a screen reader reads and the icon
+      // is what everyone else does.
       aria-label={muted ? 'turn sound on' : 'turn sound off'}
-      className={`bg-transparent border-none cursor-pointer display text-xl leading-none p-1 transition-opacity ${
+      className={`tap-target bg-transparent border-none cursor-pointer display text-xl leading-none p-1 transition-opacity ${
         muted ? 'opacity-40' : 'opacity-90'
       } ${className}`}
     >

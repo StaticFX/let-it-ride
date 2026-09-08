@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Card as CardType, Player } from '../../game/types'
 import { PAYOUT_FLIGHT_MS, useGame } from '../../hooks/useGame'
-import { useWindowSize } from '../../hooks/useWindowSize'
+import { useViewport } from '../../hooks/useViewport'
+import { fanOverlap, tableLayout } from './tableLayout'
 import { findAction, findGambler, useCatalog } from '../../state/gameStore'
 import { RoughBox } from '../ui/RoughShapes'
 import { PlayingCard } from '../cards/PlayingCard'
@@ -39,77 +40,17 @@ import { PointsFlight } from '../overlays/PointsFlight'
 import { PointsAward } from '../overlays/PointsAward'
 import { Shop } from '../overlays/Shop'
 
-/**
- * The arc the other seats sit on, as fractions of the window: an ellipse
- * centred on the felt, with you at the bottom of it.
+/*
+ * Where every seat, pile and stage on the felt sits lives in [tableLayout]. The
+ * table has two shapes — an arc on anything wide enough, and rows of seats on a
+ * phone held upright — and working both out in one place is what keeps
+ * [seatOfId] below the single mapping everything that flies between seats
+ * measures from.
  *
- * An arc rather than the four hand-placed seats it replaces, because the table
- * takes ten now and ten places that also had to look right at three was never
- * going to hold. Its ends are where the left and right seats always were, and
- * its top is where the top ones were, so a table of five draws itself almost
- * exactly where it used to; what changes below that is that three seats are
- * now spread evenly rather than crowded into the left of the arc.
+ * What is left up here is the two animations that have to be told how much room
+ * they have, because only the board knows where the seat they are aimed at ended
+ * up.
  */
-const SEAT_ARC = { cx: 0.5, cy: 0.46, rx: 0.41, ry: 0.335 }
-
-/**
- * How far down the arc the end seats sit, in degrees either side of the top.
- *
- * A full quarter-turn each way at the sizes that fit in one, which is exactly
- * where the two hand-placed end seats used to be. A crowded table pulls its
- * ends up instead: the scoreboard grows a row at a time out of the bottom-left
- * corner, and past six other players it reaches the seat that would sit there.
- */
-function seatSpan(others: number): number {
-  return others > 5 ? 82 : 90
-}
-
-/**
- * Where the [index]th of [count] other players sits, in fractions of the window.
- *
- * Spread symmetrically about the top and running clockwise from the seat on
- * your left, so one opponent sits across from you, two sit either side of the
- * deck, and the ends of a full table draw about level with your own seat.
- * Reading this against [others] — which is in play order starting from whoever
- * follows me — is what makes the table go round the way the turn does.
- */
-function seatFraction(index: number, count: number) {
-  const span = seatSpan(count)
-  const degrees = count > 1 ? -span + (index * 2 * span) / (count - 1) : 0
-  const t = (degrees * Math.PI) / 180
-  return {
-    left: SEAT_ARC.cx + SEAT_ARC.rx * Math.sin(t),
-    top: SEAT_ARC.cy - SEAT_ARC.ry * Math.cos(t),
-  }
-}
-
-/**
- * How big a seat is drawn when there are [count] of them.
- *
- * The arc is the same length however many people are on it, so past about six
- * the seats have to give something up or they print over each other. Only the
- * seats shrink: the deck, the card being played and your own hand are all the
- * same size at a table of ten as at a table of three.
- */
-function seatScale(count: number): number {
-  if (count <= 4) return 1
-  if (count <= 6) return 0.84
-  return 0.7
-}
-
-/**
- * ...and how big the scoreboard is drawn at a table of [players].
- *
- * It is pinned to the bottom-left corner and grows upward a row at a time, so
- * a full table's worth of rows climbs straight into the seat at that end of the
- * arc. Shrinking it is the cheaper of the two: every row still says what it
- * said, and the felt is where the game is actually being read.
- */
-function scoreboardScale(players: number): number {
-  if (players <= 6) return 1
-  if (players <= 8) return 0.88
-  return 0.78
-}
 
 /**
  * How high above [anchorY] the card that busted somebody is held before it comes
@@ -128,6 +69,21 @@ function bustLift(anchorY: number): number {
   const HANG_SCALE = 1.6
   const half = (142 * HANG_SCALE) / 2
   return anchorY - Math.max(anchorY - 138, half + 16)
+}
+
+/**
+ * ...and the same question for the card being brought down on somebody, which
+ * `targetSmash` winds up 156px above the seat before it falls.
+ *
+ * Same reasoning and a different number: the smash peaks at 1.52 times a deck
+ * card, so 108px of it is above its own anchor before the lift is counted at
+ * all. On a wide felt every seat is far enough down the screen for the full
+ * wind-up to fit and nothing changes; on a narrow one the seats along the top
+ * are a hundred pixels from the edge, and the beat this animation exists for —
+ * the card hanging over somebody — was happening off the top of the screen.
+ */
+function smashLift(anchorY: number): number {
+  return Math.max(40, Math.min(156, anchorY - 116))
 }
 
 /**
@@ -163,7 +119,16 @@ const FIZZLE_REASONS: Record<string, string> = {
 export function GameBoard() {
   const game = useGame()
   const catalog = useCatalog()
-  const { w, h } = useWindowSize()
+  const viewport = useViewport()
+  const { w, h } = viewport
+  /**
+   * The seat the player is looking at.
+   *
+   * A hover on a machine with a cursor and a tap on one without — see
+   * [focusSeat]. It is the same fact either way, which is why it is one piece
+   * of state and not two: the seat you are paying attention to spreads its hand
+   * out and steps forward, and everything else steps back.
+   */
   const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null)
   const [inspectedCard, setInspectedCard] = useState<CardType | null>(null)
   /**
@@ -179,8 +144,20 @@ export function GameBoard() {
   // somewhere to land. Measured when a payout starts rather than kept in state:
   // the scoreboard does not move, and a rect in state is a rect that goes stale.
   const scoreRows = useRef(new Map<string, HTMLDivElement>())
+  /**
+   * ...and where the pad itself is, on a felt too narrow to leave it open.
+   *
+   * A round's points have to land somewhere they can be believed. With the
+   * scoreboard folded up there is no line to land on, so they land on the thing
+   * you would pick up to read it — which is the same answer, only shorter.
+   */
+  const scorePad = useRef<HTMLButtonElement>(null)
+  const [scoresOpen, setScoresOpen] = useState(false)
   const measureScoreRow = useCallback(
-    (playerId: string) => scoreRows.current.get(playerId)?.getBoundingClientRect() ?? null,
+    (playerId: string) =>
+      scoreRows.current.get(playerId)?.getBoundingClientRect()
+        ?? scorePad.current?.getBoundingClientRect()
+        ?? null,
     [],
   )
   // Whether the felt is being drawn by the shader. If it is not — no WebGL2 —
@@ -210,9 +187,15 @@ export function GameBoard() {
     retainDealtCards(cardsOnTable.split(' ').filter(Boolean))
   }, [cardsOnTable])
 
-  const deckCenter = { x: w / 2 - 20, y: h * 0.42 }
+  /**
+   * The whole felt's geometry, worked out from the window and the size of the
+   * table sitting at it — see [tableLayout], which is where the arc and the
+   * narrow table's rows both live.
+   */
+  const layout = tableLayout(viewport, others.length, players.length, game.isRollingRules)
+  const deckCenter = layout.deck
   /** Where a card being played is held up before it is sent at a seat. */
-  const cardStage = { x: w / 2, y: h * 0.62 }
+  const cardStage = layout.cardStage
   /**
    * ...and where a pile of cards answering each other sits, which is higher.
    *
@@ -220,22 +203,42 @@ export function GameBoard() {
    * and at the card stage the two of them were printed straight across the
    * local player's hand.
    */
-  const responseStage = { x: w / 2, y: h * 0.55 }
+  const responseStage = layout.responseStage
 
   /**
-   * Where a seat sits on screen — see [seatFraction]. Anything that flies
-   * between seats measures from here, so this is the only place the mapping
-   * may live.
+   * Where a seat sits on screen. Anything that flies between seats measures
+   * from here, so this is the only place the mapping may live.
    */
   function seatOfId(playerId: string) {
-    if (playerId === me?.id) return { x: w / 2, y: h - 120 }
+    if (playerId === me?.id) return layout.mine
     const seat = others.findIndex((p) => p.id === playerId)
-    const pos = seatFraction(Math.max(seat, 0), others.length)
-    return { x: pos.left * w, y: pos.top * h }
+    return layout.seat(Math.max(seat, 0), others.length)
+  }
+
+  /**
+   * A thing of this size, centred as near [at] as it can be without hanging off
+   * the felt.
+   *
+   * For what is thrown *at* a seat rather than for the seat itself — the frost
+   * bloom is 190px across, the draw-three stamp 120, a stolen card 124 — and
+   * deliberately not folded into [seatOfId], which has to keep answering where
+   * the seat actually *is*. A card that flew to a clamped point would land
+   * beside the hand it was taken from. On a wide felt no seat is near enough to
+   * an edge for any of this to bite; on a narrow one the end of a row is twenty
+   * pixels from it, and half of what happens to that player happened off the
+   * screen.
+   */
+  function clampToFelt(at: { x: number; y: number }, width: number, height: number) {
+    const halfW = Math.min(width, w) / 2
+    const halfH = Math.min(height, h) / 2
+    return {
+      x: Math.min(Math.max(at.x, halfW), w - halfW),
+      y: Math.min(Math.max(at.y, halfH), h - halfH),
+    }
   }
 
   /** Where a bottle lands, and what every bearing is measured from. */
-  const tableCenter = { x: w / 2, y: h * 0.46 }
+  const tableCenter = layout.centre
 
   /**
    * Degrees clockwise from north to [playerId]'s seat, as seen from the middle
@@ -312,13 +315,82 @@ export function GameBoard() {
     return { dx: from.x - own.x, dy: from.y - own.y }
   }
 
+  /**
+   * Paying attention to a seat, on a screen with no cursor to do it with.
+   *
+   * The felt has one hover and it means one thing: *this is the seat I am
+   * looking at*. It fans the hand out, steps the seat forward and steps the
+   * rest of the table back, and on a machine with a mouse it costs nothing to
+   * ask for — you get it by looking. A touch screen has no such thing, so the
+   * tap that would otherwise do nothing is spent on it instead: tap a seat to
+   * look at it, tap it again to look away, tap the felt to look away from all
+   * of them.
+   *
+   * Only where the tap is not already spoken for. A seat that can be pointed at
+   * takes the tap as the answer to the question on the table, which is the
+   * whole reason it is lit — a card asking for a target is not the moment to
+   * make somebody tap twice.
+   */
+  const focusSeat = (playerId: string) =>
+    setHoveredPlayerId((id) => (id === playerId ? null : playerId))
+
+  /**
+   * ...and spending a card on something, which is the other half.
+   *
+   * A cursor arrives before a click does, so on a machine with one the table
+   * has already said what you are about to hit by the time you hit it. A finger
+   * arrives *as* the click, and the cards that ask a question are the ones you
+   * cannot take back — a mis-tap on a seat is a strike on the wrong player and
+   * a mis-tap on a card is the wrong card gone. So on a touch screen the first
+   * tap arms and the second commits, and what is armed is marked exactly the
+   * way a hover marks it. On a mouse nothing is ever armed and the first click
+   * still commits, which is what it has always done.
+   *
+   * One piece of state for seats and cards together, because only one question
+   * is ever on the table and it can only be pointed at one thing at a time.
+   */
+  const [armed, setArmed] = useState<{ cardKey: string; id: string } | null>(null)
+  // Tagged with the card that asked, and read back through that tag rather than
+  // cleared when the question goes — the same trick [hoveredOption] uses just
+  // above, and for the same reason: the next card off the deck asks the next
+  // question, and a seat still armed from the last one is armed for a card
+  // nobody has looked at yet.
+  const armedId = armed?.cardKey === pendingCardKey ? armed.id : null
+  const setArmedId = (id: string | null) =>
+    setArmed(id === null ? null : { cardKey: pendingCardKey, id })
+  const armedFor = (id: string) => (viewport.touch && armedId === id ? true : undefined)
+
+  /** Whether a tap on [id] should commit, or only arm. */
+  function commitsOnTap(id: string): boolean {
+    return !viewport.touch || armedId === id
+  }
+
+  function seatPointerProps(playerId: string, targetable: boolean, onPick: () => void) {
+    if (viewport.touch) {
+      return {
+        onClick: targetable
+          ? () => (commitsOnTap(playerId) ? onPick() : setArmedId(playerId))
+          : () => focusSeat(playerId),
+      }
+    }
+    return {
+      onClick: targetable ? onPick : undefined,
+      onMouseEnter: () => setHoveredPlayerId(playerId),
+      onMouseLeave: () => setHoveredPlayerId((id) => (id === playerId ? null : id)),
+    }
+  }
+
   const showButtons = isMyTurn && !isEliminated && !isPickingTarget
   const canInspect = !isPickingTarget
   // Somebody is on the clock, so every other seat can step back — a lit seat
   // only reads as lit if the ones around it are not.
   const someoneOnClock = !isDealing && !isPickingTarget && currentPlayer?.status === 'active'
   const myHovered = hoveredPlayerId === me?.id
-  const mySpread = isMyTurn || myHovered
+  // On a screen with no cursor your own hand is open by default. Folded away it
+  // is drawn at 0.75 of `small`, which is a 39x57 card behind a 22px strip of
+  // its neighbour — small enough to read at a glance and far too small to aim
+  // a finger at, and there is no hover to open it with.
+  const mySpread = isMyTurn || myHovered || viewport.touch
   // How hard the felt should be breathing. Only your own clock counts — the
   // table stays still while somebody else is thinking. Whether the clock is
   // close at all belongs to [useGame], which is also what sounds the warning.
@@ -380,6 +452,11 @@ export function GameBoard() {
     return picksCards && [...player.hand, ...player.passives].some((c) => validCards.includes(c.id))
   }
 
+  // Note that a hand being picked from is already laid *flat* rather than
+  // fanned, which is what makes a card in one aimable at all: in a fan every
+  // card but the last is a 22px strip with the wrong card immediately beside
+  // it, so a miss is not a no-op — it picks the neighbour.
+
   function pickState(card: CardType) {
     if (!picksCards) return null
     const picked = cardsChosen.includes(card.id)
@@ -391,19 +468,47 @@ export function GameBoard() {
       picked,
       canPick,
       canUnpick,
+      armed: armedFor(card.id),
       className: picked
         ? `card-picked ${canUnpick ? 'card-takeable' : ''}`
         : canPick ? 'card-pickable' : 'card-unpickable',
       onClick: canPick || canUnpick
         ? (e: React.MouseEvent) => {
             e.stopPropagation()
-            pickCard(card.id)
+            // Taking a card back out of an answer is already reversible, so it
+            // goes in on the first tap. Putting one in is not — see [armedId].
+            if (picked || commitsOnTap(card.id)) pickCard(card.id)
+            else setArmedId(card.id)
           }
         : undefined,
     }
   }
 
-  function handCard(player: Player, card: CardType, idx: number, size: 'small' | 'normal', spread: boolean) {
+  /**
+   * How far each card in a row is pulled back over the one before it.
+   *
+   * The fan has always had a fixed overlap per size, which is right until the
+   * row is wider than the felt it is lying on: a hand of eight normal cards is
+   * 452px across at the overlap this game was written with, and a phone held
+   * upright is 390. So the overlap the hand *wants* is the starting point and
+   * the width it has to fit in is the limit — see [fanOverlap], which tightens
+   * one against the other and stops once a card would be all but hidden.
+   *
+   * The passives are counted in it because they are on the same line: the row
+   * in front of a seat is the hand and the modifier row and a gap between them,
+   * and fitting the hand alone would push the ×2 off the edge instead.
+   */
+  function fanMargin(player: Player, size: 'small' | 'normal', spread: boolean, width: number) {
+    const preferred = size === 'normal' ? (spread ? -32 : -38) : spread ? -18 : -30
+    const cardWidth = size === 'normal' ? 92 : 52
+    const count = player.hand.length + player.passives.length
+    return fanOverlap(count, cardWidth, width, preferred)
+  }
+
+  function handCard(
+    player: Player, card: CardType, idx: number,
+    size: 'small' | 'normal', spread: boolean, margin: number,
+  ) {
     const role = bustRole(player.id, card.id)
     const pick = pickState(card)
     const laidOut = isLaidOut(player)
@@ -423,9 +528,10 @@ export function GameBoard() {
         data-pickable={pick?.canPick}
         data-picked={pick?.picked}
         data-unpickable={pick?.canUnpick}
+        data-armed={pick?.armed}
         className={`origin-bottom cursor-pointer ${pick?.className ?? ''}`}
         style={{
-          marginLeft: idx === 0 ? 0 : laidOut ? 3 : size === 'normal' ? (spread ? -32 : -38) : spread ? -18 : -30,
+          marginLeft: idx === 0 ? 0 : laidOut ? 3 : margin,
           transform: `rotate(${fanAngle}deg) translateY(${Math.abs(fanAngle) * 0.7}px)`,
           transition: 'margin-left 280ms ease, transform 280ms cubic-bezier(.2,.9,.3,1.3)',
         }}
@@ -464,6 +570,14 @@ export function GameBoard() {
   return (
     <div
       className={`game-shell ${shakeClass}`}
+      // Looking away. A tap on the felt itself — never on anything drawn on it,
+      // which is what the target check is for — puts down whatever was armed
+      // and stops looking at whatever seat was being read.
+      onClick={(e) => {
+        if (e.target !== e.currentTarget) return
+        setArmedId(null)
+        setHoveredPlayerId(null)
+      }}
       data-testid="game-board"
       data-round={round}
       data-my-turn={isMyTurn}
@@ -471,6 +585,12 @@ export function GameBoard() {
       data-picking-target={isPickingTarget}
       data-my-status={me?.status ?? 'none'}
       data-mode={game.isRollingRules ? 'rollingRules' : 'classic'}
+      // Which of the two tables is being drawn, and whether it is being pointed
+      // at rather than hovered — so a spec can assert the branch it means to be
+      // testing actually engaged, instead of inferring it from a viewport size
+      // and being wrong the day the threshold moves.
+      data-compact={layout.compact}
+      data-touch={viewport.touch}
       data-responding={game.canPass}
       data-purse={game.purse}
       data-minted-gamblers={game.state?.mintedGamblers ?? 0}
@@ -512,32 +632,57 @@ export function GameBoard() {
         </div>
       )}
 
-      {/* Outer frame */}
+      {/* Outer frame. The second, fainter box is the felt's own margin note and
+          the first thing a narrow window gives up — two nested frames spend
+          22px either side of a screen that only has 390 of them. */}
       <div className="absolute inset-0 pointer-events-none z-[1]">
         <div className="absolute inset-3.5">
           <RoughBox width={w - 28} height={h - 28} stroke="var(--ink)" strokeWidth={2} roughness={2.0} boil={false} />
         </div>
-        <div className="absolute inset-[22px] opacity-55">
-          <RoughBox width={w - 44} height={h - 44} stroke="var(--ink)" strokeWidth={1} roughness={2.4} boil={false} />
-        </div>
+        {!layout.compact && (
+          <div className="absolute inset-[22px] opacity-55">
+            <RoughBox width={w - 44} height={h - 44} stroke="var(--ink)" strokeWidth={1} roughness={2.4} boil={false} />
+          </div>
+        )}
       </div>
 
       {/* Top-left */}
-      <div className="absolute top-7 left-[38px] z-[55] flex items-center gap-3">
-        <h1 className="text-[38px] -rotate-[1.5deg] sway-slow">let it ride</h1>
-        <SoundToggle className="mt-1.5" />
+      <div
+        className="absolute z-[55] flex items-center gap-3"
+        style={{ top: `calc(${layout.compact ? 20 : 28}px + var(--safe-top))`, left: `calc(${layout.gutter}px + var(--safe-left))` }}
+      >
+        <h1 className={`-rotate-[1.5deg] sway-slow ${layout.compact ? 'text-[24px]' : 'text-[38px]'}`}>let it ride</h1>
+        <SoundToggle className={layout.compact ? '' : 'mt-1.5'} />
       </div>
 
       {/* Top-right */}
-      <div className="absolute top-7 right-[38px] z-[55] text-right flex flex-col items-end gap-1">
+      <div
+        className="absolute z-[55] text-right flex flex-col items-end gap-1 max-w-[52%]"
+        style={{
+          top: `calc(${layout.compact ? 18 : 28}px + var(--safe-top))`,
+          // Room for the pause button, which is only drawn where there is no
+          // Escape key to press — see [EscapeMenu], which decides on the same
+          // fact so the two cannot get out of step.
+          right: `calc(${layout.gutter + (viewport.touch ? 50 : 0)}px + var(--safe-right))`,
+        }}
+      >
         <small className="rotate-1 block" data-testid="round-label">round {String(round).padStart(2, '0')}</small>
-        <div className="display text-[30px] leading-none flex items-center gap-2.5 justify-end rotate-1 sway-mid" data-testid="turn-name">
+        <div
+          className={`display leading-none flex items-center gap-2.5 justify-end rotate-1 sway-mid ${
+            layout.compact ? 'text-[20px]' : 'text-[30px]'
+          }`}
+          data-testid="turn-name"
+        >
           <span className="text-[var(--accent)]">→</span>
-          {isPickingTarget
-            ? responders.length > 1
-              ? 'everyone'
-              : players.find((p) => p.id === game.pendingAction?.playerId)?.name ?? '...'
-            : isDealing ? 'dealing…' : currentPlayer?.name || '...'}
+          {/* A name long enough to run off a phone is cut rather than allowed
+              to push the whole block over the felt's own border. */}
+          <span className="truncate">
+            {isPickingTarget
+              ? responders.length > 1
+                ? 'everyone'
+                : players.find((p) => p.id === game.pendingAction?.playerId)?.name ?? '...'
+              : isDealing ? 'dealing…' : currentPlayer?.name || '...'}
+          </span>
         </div>
         <small className="rotate-1 block" data-testid="turn-prompt">
           {isPickingTarget
@@ -561,7 +706,10 @@ export function GameBoard() {
       {timer && clockIsClose && (
         <div
           className="absolute left-1/2 z-[60] flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1 pointer-events-none"
-          style={{ top: h * 0.42 - 96 }}
+          // Above the deck, but never off the top of the felt: on a phone held
+          // sideways the piles stand at the top of the band and there is no
+          // ninety-six pixels above them to hang a clock in.
+          style={{ top: Math.max(deckCenter.y - 96, 108) }}
           data-testid="deck-clock"
         >
           <TurnClock timer={timer} size="lg" />
@@ -571,8 +719,23 @@ export function GameBoard() {
         </div>
       )}
 
-      {/* Center piles */}
-      <div className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 flex items-center gap-[38px] z-[4]">
+      {/* Center piles. Placed off the same number [DealtCard] flies a card from,
+          so the card that leaves the deck leaves the deck. */}
+      <div
+        className={`absolute flex items-center z-[4] ${layout.compact ? 'gap-5' : 'gap-[38px]'}`}
+        style={{
+          left: layout.piles.x,
+          top: layout.piles.y,
+          // One transform rather than the two utilities this used to carry.
+          // The order matters: scaled about its own middle first, then pulled
+          // back over that middle by half its *unscaled* box — which lands the
+          // row's centre exactly on the point above, whatever the scale, and
+          // keeps the deck's own middle half a scaled row to the left of it.
+          // That is the number [tableLayout] hands out as `deck`, and it is
+          // where every dealt card is flown from.
+          transform: `translate(-50%, -50%) scale(${layout.pilesScale})`,
+        }}
+      >
         <div
           className={`relative ${isMyTurn ? 'cursor-pointer' : 'cursor-default'}`}
           onClick={isMyTurn ? hit : undefined}
@@ -606,8 +769,8 @@ export function GameBoard() {
 
       {/* Other players */}
       {others.map((p, i) => {
-        const seatPos = seatFraction(i, others.length)
-        const crowded = seatScale(others.length)
+        const seatPos = layout.seat(i, others.length)
+        const crowded = layout.seatScale
         const pIndex = players.findIndex((pl) => pl.id === p.id)
         const isActive = !isDealing && !isPickingTarget && pIndex === turnIndex && p.status === 'active'
         const isBeingDealt = dealingPlayerId === p.id
@@ -616,16 +779,15 @@ export function GameBoard() {
         // A card that asks a question resolves on its own drawer, so there is
         // nothing to point at and the seats stay out of it — see [seatIsImplied].
         const targetable = pendingIsLocal && !seatIsImplied && !targetChosen && validTargets.includes(p.id)
-        const targetHovered = targetable && hoveredPlayerId === p.id
+        const targetHovered = targetable && (hoveredPlayerId === p.id || armedId === p.id)
         const spread = hoveredPlayerId === p.id
         const slide = handSlide(p.id)
+        const seatFan = fanMargin(p, 'small', spread, layout.seatHandWidth)
 
         return (
           <div
             key={p.id}
-            onClick={targetable ? () => pickTarget(p.id) : undefined}
-            onMouseEnter={() => setHoveredPlayerId(p.id)}
-            onMouseLeave={() => setHoveredPlayerId((id) => (id === p.id ? null : id))}
+            {...seatPointerProps(p.id, targetable, () => pickTarget(p.id))}
             data-testid="seat"
             data-player-id={p.id}
             data-player-name={p.name}
@@ -636,18 +798,22 @@ export function GameBoard() {
             data-gambler-count={game.gamblerCounts?.[p.id] ?? 0}
             data-gambler-slots={game.state?.gamblerLimits?.[p.id] ?? 0}
             data-targetable={targetable}
+            data-armed={armedFor(p.id)}
             data-active={isActive}
             data-bot={p.isBot}
             style={{
               position: 'absolute',
-              left: `${seatPos.left * 100}%`,
-              top: `${seatPos.top * 100}%`,
+              left: seatPos.x,
+              top: seatPos.y,
               // The crowd's scale multiplies the seat's own rather than
               // replacing it: a seat being dealt to at a table of ten still
               // steps forward, it simply steps forward from smaller.
               transform: `translate(-50%, -50%) scale(${
                 crowded * (isBeingDealt ? 1.12 : targetHovered ? 1.15 : isActive ? 1.09 : 1)
               })`,
+              // Published so the badges inside can divide it back out — a seat
+              // shrinking is the point, "bust!" at six pixels is not.
+              '--seat-scale': crowded,
               // A targetable seat has to sit above the local player's bar
               // (z-8), or on a short window the bar swallows the click.
               zIndex: targetable ? 30 : isActive || isBeingDealt ? 10 : 3,
@@ -659,7 +825,7 @@ export function GameBoard() {
               opacity: targetable ? 1 : dimmed ? 0.45 : isPickingTarget ? 0.3 : backgrounded ? 0.7 : 1,
               transition: 'opacity 280ms, transform 350ms cubic-bezier(.2,.9,.3,1.3)',
               cursor: targetable ? 'crosshair' : isPickingTarget ? 'not-allowed' : 'default',
-            }}
+            } as React.CSSProperties}
           >
             <div
               className={`flex flex-col items-center gap-2 ${isFrozen(p.id) ? 'frozen-seat' : ''}`}
@@ -703,7 +869,7 @@ export function GameBoard() {
                   className="flex min-h-[86px] px-1.5 py-0.5 cursor-pointer origin-bottom transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)]"
                   style={{ transform: spread ? 'scale(1.15)' : 'scale(1)' }}
                 >
-                  {p.hand.map((card, idx) => handCard(p, card, idx, 'small', spread))}
+                  {p.hand.map((card, idx) => handCard(p, card, idx, 'small', spread, seatFan))}
                   {p.passives.length > 0 && (
                     <>
                       <div className="w-2.5 shrink-0" />
@@ -721,9 +887,10 @@ export function GameBoard() {
                           data-pickable={pick?.canPick}
                           data-picked={pick?.picked}
                           data-unpickable={pick?.canUnpick}
+                          data-armed={pick?.armed}
                           className={`card-fan-transition opacity-85 cursor-pointer ${pick?.className ?? ''}`}
                           style={{
-                            marginLeft: idx === 0 ? 0 : isLaidOut(p) ? 3 : -30,
+                            marginLeft: idx === 0 ? 0 : isLaidOut(p) ? 3 : seatFan,
                             transform: isLaidOut(p)
                               ? 'none'
                               : `rotate(${(idx - (p.passives.length - 1) / 2) * 3}deg)`,
@@ -777,27 +944,43 @@ export function GameBoard() {
       {/* My hand */}
       {me && (() => {
         const targetable = pendingIsLocal && !seatIsImplied && !targetChosen && validTargets.includes(me.id)
-        const targetHovered = targetable && hoveredPlayerId === me.id
+        const targetHovered = targetable && (hoveredPlayerId === me.id || armedId === me.id)
         const dimmed = !isMyTurn && !isEliminated && !isDealing
         const slide = handSlide(me.id)
         // Your own seat gets the same halo and ring as everyone else's. The
         // vignette already says the move is yours; this says which of the seats
         // on screen that means, in the shape you have been reading all round.
         const myTurnNow = isMyTurn && !isEliminated
+        // The hand is laid out at the size it is *about* to be drawn at, so a
+        // fan that fits while it is folded away does not burst its banks the
+        // moment your turn comes round and it opens.
+        const myFan = fanMargin(me, mySpread ? layout.myCardSize : 'small', mySpread, layout.handWidth)
 
         return (
           <div
-            className="absolute bottom-0 left-0 right-0 flex flex-col items-center z-[8]"
+            // Transparent to the pointer across its whole width — only what is
+            // actually drawn in it takes a tap. It is a full-width bar sitting
+            // over the bottom of the felt, and on a phone held sideways the
+            // draw pile is down in that same corner: without this the bar would
+            // quietly swallow every tap meant for the deck.
+            className="absolute bottom-0 left-0 right-0 flex flex-col items-center z-[8] pointer-events-none"
             style={{
-              paddingBottom: showButtons ? 90 : 14,
+              // The buttons' room is reserved on a narrow table whether or not
+              // they are showing: everything above the hand is placed off the
+              // bottom of the screen, and a felt that shuffled itself up and
+              // down as turns changed hands would be a felt nobody could learn.
+              paddingBottom: layout.compact
+                ? `calc(${layout.buttonsHeight}px + var(--safe-bottom))`
+                : showButtons ? 90 : 14,
               transition: 'padding-bottom 520ms cubic-bezier(.2,.9,.25,1.25)',
             }}
           >
-            <div style={{ animation: impact?.targetId === me.id ? 'impactShake 500ms ease-out' : 'none' }}>
+            <div
+              className="pointer-events-auto"
+              style={{ animation: impact?.targetId === me.id ? 'impactShake 500ms ease-out' : 'none' }}
+            >
               <div
-                onClick={targetable ? () => pickTarget(me.id) : undefined}
-                onMouseEnter={() => setHoveredPlayerId(me.id)}
-                onMouseLeave={() => setHoveredPlayerId((id) => (id === me.id ? null : id))}
+                {...seatPointerProps(me.id, targetable, () => pickTarget(me.id))}
                 data-testid="seat"
                 data-self="true"
                 data-player-id={me.id}
@@ -809,14 +992,29 @@ export function GameBoard() {
                 data-gambler-count={game.gamblerCounts?.[me.id] ?? 0}
                 data-gambler-slots={game.gamblerSlots}
                 data-targetable={targetable}
-                className={`flex items-end gap-[18px] px-4 py-2 relative transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)] ${isFrozen(me.id) ? 'frozen-seat' : ''}`}
+                data-armed={armedFor(me.id)}
+                // On a narrow table the three things in front of you stack
+                // instead of sitting side by side: at 390px the name, a hand of
+                // seven and a rack of hidden cards are half as wide again as
+                // the screen, and the hand is the one that has to stay big.
+                className={`relative transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)] ${
+                  layout.stacked
+                    ? 'flex flex-col items-center gap-1 px-2 py-1'
+                    : 'flex items-end gap-[18px] px-4 py-2'
+                } ${isFrozen(me.id) ? 'frozen-seat' : ''}`}
                 style={{
                   cursor: targetable ? 'crosshair' : 'default',
                   transform: targetHovered ? 'scale(1.05)' : 'scale(1)',
                 }}
               >
                 <div className={`hover-glow-self ${targetHovered ? 'opacity-100' : 'opacity-0'}`} />
-                <div className="flex flex-col items-end gap-1.5 min-w-[120px] relative">
+                <div
+                  className={`relative flex gap-1.5 ${
+                    layout.stacked
+                      ? 'order-1 flex-row items-center'
+                      : `flex-col items-end ${layout.compact ? '' : 'min-w-[120px]'}`
+                  }`}
+                >
                   {myTurnNow && <div className="turn-halo" />}
                   <div
                     className="flex items-center gap-2.5 relative z-[1] transition-transform duration-300 ease-[cubic-bezier(.2,.9,.3,1.3)]"
@@ -828,13 +1026,17 @@ export function GameBoard() {
                       onTurn={myTurnNow}
                       id={0}
                     />
-                    <div>
-                      <div className="display text-[26px] leading-none relative">
+                    <div className={layout.compact ? 'flex items-center gap-2' : undefined}>
+                      <div className={`display leading-none relative ${layout.compact ? 'text-[20px]' : 'text-[26px]'}`}>
                         {me.name}
                         {bust?.playerId === me.id && <div className="bust-strike" />}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className={`number text-[28px] leading-none ${me.status === 'bust' ? 'text-[var(--accent)]' : ''}`}>
+                      <div className={`flex items-center gap-1.5 ${layout.compact ? '' : 'mt-0.5'}`}>
+                        <span
+                          className={`number leading-none ${layout.compact ? 'text-[22px]' : 'text-[28px]'} ${
+                            me.status === 'bust' ? 'text-[var(--accent)]' : ''
+                          }`}
+                        >
                           {worthOf(me)}
                         </span>
                         {statusBadge(me)}
@@ -843,11 +1045,16 @@ export function GameBoard() {
                   </div>
                 </div>
 
-                <SpunHand spinId={tableSpin?.id ?? null} dx={slide?.dx ?? 0} dy={slide?.dy ?? 0}>
+                <SpunHand
+                  spinId={tableSpin?.id ?? null}
+                  dx={slide?.dx ?? 0}
+                  dy={slide?.dy ?? 0}
+                  className={layout.stacked ? 'order-3' : undefined}
+                >
                   <div
                     className="flex items-end px-3 origin-bottom"
                     style={{
-                      minHeight: mySpread ? 180 : 110,
+                      minHeight: mySpread ? layout.handHeight.spread : layout.handHeight.folded,
                       transform: mySpread ? 'scale(1)' : dealingPlayerId === me.id ? 'scale(0.9)' : 'scale(0.75)',
                       opacity: bust?.playerId === me.id ? 1 : isEliminated ? 0.4 : dimmed && !myHovered ? 0.55 : 1,
                       transition:
@@ -855,7 +1062,8 @@ export function GameBoard() {
                       filter: dimmed && !isEliminated && !myHovered ? 'grayscale(0.6)' : 'none',
                     }}
                   >
-                    {me.hand.map((card, idx) => handCard(me, card, idx, mySpread ? 'normal' : 'small', mySpread))}
+                    {me.hand.map((card, idx) =>
+                      handCard(me, card, idx, mySpread ? layout.myCardSize : 'small', mySpread, myFan))}
                     {me.passives.length > 0 && (
                       <>
                         <div className="shrink-0" style={{ width: mySpread ? 18 : 12 }} />
@@ -873,9 +1081,10 @@ export function GameBoard() {
                             data-pickable={pick?.canPick}
                             data-picked={pick?.picked}
                             data-unpickable={pick?.canUnpick}
+                            data-armed={pick?.armed}
                             className={`card-fan-transition-slow opacity-85 cursor-pointer ${pick?.className ?? ''}`}
                             style={{
-                              marginLeft: idx === 0 ? 0 : isLaidOut(me) ? 3 : -38,
+                              marginLeft: idx === 0 ? 0 : isLaidOut(me) ? 3 : myFan,
                               transform: isLaidOut(me)
                                 ? 'none'
                                 : `rotate(${(idx - (me.passives.length - 1) / 2) * 3}deg)`,
@@ -901,7 +1110,7 @@ export function GameBoard() {
                     you are out is one of the things this hand is *for*. */}
                 {game.isRollingRules && (
                   <div
-                    className="flex items-end pb-1 relative"
+                    className={`flex items-end pb-1 relative ${layout.stacked ? 'order-2' : ''}`}
                     style={{ zIndex: hasPlayable ? 35 : 9 }}
                     data-testid="gambler-hand"
                     data-count={game.gamblerHand.length}
@@ -923,8 +1132,15 @@ export function GameBoard() {
                           data-window={info?.window ?? ''}
                           data-playable={playable}
                           data-offered={offered}
+                          // On a narrow table this rack is drawn small, and a
+                          // card that plays itself the instant a thumb brushes
+                          // it would be the one irreversible tap on the felt.
+                          // So a tap opens it up to be read instead, and it is
+                          // played from there — see the inspection sheet, which
+                          // is the only place a phone can show a face this hand
+                          // is meant to be read at.
                           onClick={
-                            playable
+                            playable && !layout.compact
                               ? () => game.playGambler(card.id)
                               : () => setInspectedCard(card)
                           }
@@ -932,19 +1148,23 @@ export function GameBoard() {
                             offered ? 'card-picked' : playable ? 'card-pickable' : ''
                           }`}
                           style={{
-                            marginLeft: idx === 0 ? 0 : hasPlayable ? -34 : -58,
+                            marginLeft: idx === 0
+                              ? 0
+                              : layout.compact ? (hasPlayable ? -18 : -30) : hasPlayable ? -34 : -58,
                             transform: `rotate(${(idx - (game.gamblerHand.length - 1) / 2) * 3}deg)`,
                             // A card you cannot play is still a card you can
                             // read — held back a little rather than hidden.
                             opacity: playable || hasPlayable === false ? 1 : 0.55,
                           }}
                         >
-                          {/* Not `small`. This is the one hand on the table
+                          {/* Not `small` on a wide table. This is the one hand
                               nobody can help you read, every face in it is one
                               you have met once or twice, and at 52px it was the
                               smallest thing on screen — you could see that you
-                              were holding something purple and no more. */}
-                          <PlayingCard card={card} size="normal" glowing={offered} />
+                              were holding something purple and no more. A phone
+                              has no room for it either way, which is why a tap
+                              blows it up rather than playing it. */}
+                          <PlayingCard card={card} size={layout.gamblerCardSize} glowing={offered} />
                         </div>
                       )
                     })}
@@ -956,11 +1176,15 @@ export function GameBoard() {
                           key={`slot-${idx}`}
                           data-testid="gambler-slot"
                           className="relative"
-                          style={{ width: 30, height: 132, marginLeft: idx === 0 && game.gamblerHand.length === 0 ? 0 : 3 }}
+                          style={{
+                            width: layout.compact ? 20 : 30,
+                            height: layout.compact ? 76 : 132,
+                            marginLeft: idx === 0 && game.gamblerHand.length === 0 ? 0 : 3,
+                          }}
                         >
                           <RoughBox
-                            width={30}
-                            height={132}
+                            width={layout.compact ? 20 : 30}
+                            height={layout.compact ? 76 : 132}
                             stroke="var(--ink)"
                             strokeWidth={1}
                             roughness={2.2}
@@ -979,27 +1203,83 @@ export function GameBoard() {
         )
       })()}
 
-      {/* Scoreboard */}
-      <div
-        className="absolute left-[38px] bottom-9 z-[90] origin-bottom-left"
-        style={{ transform: `scale(${scoreboardScale(players.length)})` }}
-      >
-        <Scoreboard
-          players={players}
-          currentPlayerId={currentPlayer?.id || ''}
-          localPlayerId={localPlayerId}
-          worth={worthOf}
-          writtenOff={writtenOff}
-          total={totalOf}
-          target={game.state?.config.winCondition === 'first_to_score'
-            ? game.state.config.targetScore
-            : undefined}
-          rowRef={(playerId, element) => {
-            if (element) scoreRows.current.set(playerId, element)
-            else scoreRows.current.delete(playerId)
-          }}
-        />
-      </div>
+      {/* Scoreboard.
+          Pinned to the corner of a wide felt, where it has always been. On a
+          narrow one it is folded up into the pad it is drawn on and picked up
+          when somebody wants it: the sheet is 300px across and a phone is 390,
+          so left open it is the felt, and what a round is actually played on is
+          the hand in front of you and the number over every seat. */}
+      {layout.compact ? (
+        <>
+          <button
+            ref={scorePad}
+            data-testid="scores-toggle"
+            data-open={scoresOpen}
+            onClick={() => setScoresOpen((open) => !open)}
+            className="sketch-box absolute z-[95] rounded-[2px] px-3 py-1.5 display text-[16px] -rotate-2"
+            style={{
+              left: `calc(${layout.gutter}px + var(--safe-left))`,
+              bottom: `calc(22px + var(--safe-bottom))`,
+            }}
+          >
+            {scoresOpen ? 'put it down' : 'scores'}
+          </button>
+
+          {scoresOpen && (
+            <div
+              className="fixed inset-0 z-[300] flex flex-col items-center justify-center gap-5 overflow-y-auto p-4"
+              style={{ background: 'color-mix(in srgb, var(--felt) 82%, transparent)', backdropFilter: 'blur(10px)' }}
+              onClick={() => setScoresOpen(false)}
+              data-testid="scores-sheet"
+            >
+              <Scoreboard
+                players={players}
+                currentPlayerId={currentPlayer?.id || ''}
+                localPlayerId={localPlayerId}
+                worth={worthOf}
+                writtenOff={writtenOff}
+                total={totalOf}
+                target={game.state?.config.winCondition === 'first_to_score'
+                  ? game.state.config.targetScore
+                  : undefined}
+                rowRef={(playerId, element) => {
+                  if (element) scoreRows.current.set(playerId, element)
+                  else scoreRows.current.delete(playerId)
+                }}
+              />
+              {/* The felt has no corner to leave this in on a phone, and it is
+                  the same question — what are we playing? — as the one that
+                  brought the pad out. */}
+              {game.state && <TableNote config={game.state.config} />}
+              <small className="text-[var(--ink-soft)]">tap anywhere to put it down</small>
+            </div>
+          )}
+        </>
+      ) : (
+        <div
+          className="absolute left-[38px] bottom-9 z-[90] origin-bottom-left"
+          style={{
+            transform: `scale(${layout.scoreboardScale})`,
+            '--board-scale': layout.scoreboardScale,
+          } as React.CSSProperties}
+        >
+          <Scoreboard
+            players={players}
+            currentPlayerId={currentPlayer?.id || ''}
+            localPlayerId={localPlayerId}
+            worth={worthOf}
+            writtenOff={writtenOff}
+            total={totalOf}
+            target={game.state?.config.winCondition === 'first_to_score'
+              ? game.state.config.targetScore
+              : undefined}
+            rowRef={(playerId, element) => {
+              if (element) scoreRows.current.set(playerId, element)
+              else scoreRows.current.delete(playerId)
+            }}
+          />
+        </div>
+      )}
 
       {/* The round's points, going home one seat at a time. */}
       {award && (() => {
@@ -1017,8 +1297,9 @@ export function GameBoard() {
         )
       })()}
 
-      {/* What is being played, opposite the running score */}
-      {game.state && (
+      {/* What is being played, opposite the running score. On a narrow felt it
+          travels with the scoreboard into the pad, above. */}
+      {game.state && !layout.compact && (
         <div className="absolute right-[38px] bottom-9 z-[55]">
           <TableNote config={game.state.config} />
         </div>
@@ -1088,7 +1369,9 @@ export function GameBoard() {
             style={{
               left: cardStage.x,
               top: cardStage.y,
-              transform: `translate(-50%, -50%) rotate(${committed ? -7 : 0}deg) scale(${committed ? 2 : 1.8})`,
+              transform: `translate(-50%, -50%) rotate(${committed ? -7 : 0}deg) scale(${
+                layout.cardStageScale + (committed ? 0.2 : 0)
+              })`,
               transition: 'transform 260ms cubic-bezier(.3,.8,.4,1.3)',
             }}
           >
@@ -1127,7 +1410,7 @@ export function GameBoard() {
           waiting={animating}
           onPick={pickOffer}
           x={cardStage.x}
-          y={Math.min(cardStage.y - 40, h - 320)}
+          y={layout.sheetTop}
         />
       )}
 
@@ -1165,6 +1448,7 @@ export function GameBoard() {
             style={{
               left: seat.x,
               top: seat.y - 40,
+              '--smash-lift': `${smashLift(seat.y - 40)}px`,
               '--smash-dx': `${cardStage.x - seat.x}px`,
               '--smash-dy': `${cardStage.y - (seat.y - 40)}px`,
             } as React.CSSProperties}
@@ -1207,17 +1491,19 @@ export function GameBoard() {
 
       {/* Per-card animations */}
       {impact && (() => {
-        const pos = seatOfId(impact.targetId)
+        const pos = clampToFelt(seatOfId(impact.targetId), 160, 160)
         return <ImpactParticles x={pos.x} y={pos.y - 60} />
       })()}
 
+      {/* Sized to what each of these actually draws, so the bloom over the end
+          seat of a narrow table's row is a bloom rather than a half of one. */}
       {freezes.map((f) => {
-        const pos = seatOfId(f.playerId)
+        const pos = clampToFelt(seatOfId(f.playerId), 190, 210)
         return <FreezeBurst key={f.id} x={pos.x} y={pos.y} />
       })}
 
       {drawThrees.map((d) => {
-        const pos = seatOfId(d.playerId)
+        const pos = clampToFelt(seatOfId(d.playerId), 140, 140)
         return <DrawThreeStamp key={d.id} x={pos.x} y={pos.y - 20} />
       })}
 
@@ -1325,14 +1611,43 @@ export function GameBoard() {
         </SketchButton>
       </div>
 
-      {/* Inspection */}
-      {inspectedCard && (
-        <div onClick={() => setInspectedCard(null)} className="card-inspect-overlay" data-testid="card-inspect">
-          <div className="card-inspect-pop">
-            <PlayingCard card={inspectedCard} size="deck" />
+      {/* Inspection.
+          On a narrow table this is also where a card out of your own hidden
+          hand is played from — see the rack above. A card small enough to fit
+          on a phone is a card you cannot read, so the tap that would have
+          played it opens it up instead, and the decision is taken at a size the
+          description actually renders at. */}
+      {inspectedCard && (() => {
+        const playable = inspectedCard.kind === 'gambler'
+          && layout.compact
+          && game.canPlayGambler(inspectedCard.id)
+
+        return (
+          <div onClick={() => setInspectedCard(null)} className="card-inspect-overlay" data-testid="card-inspect">
+            <div className="card-inspect-pop">
+              <PlayingCard card={inspectedCard} size="deck" />
+            </div>
+            {playable && (
+              <div
+                className="absolute bottom-0 left-0 right-0 flex justify-center"
+                style={{ paddingBottom: `calc(36px + var(--safe-bottom))` }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <SketchButton
+                  variant="primary"
+                  testId="play-gambler"
+                  onClick={() => {
+                    game.playGambler(inspectedCard.id)
+                    setInspectedCard(null)
+                  }}
+                >
+                  play it
+                </SketchButton>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

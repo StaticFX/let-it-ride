@@ -186,7 +186,7 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
                 <button
                   key={entry.card.id}
                   onClick={() => setInspectedCard(entry.card)}
-                  className="relative bg-transparent border-none p-0 cursor-pointer transition-transform duration-100 hover:scale-110 hover:-rotate-2"
+                  className="relative bg-transparent border-none p-0 cursor-pointer transition-transform duration-100 [@media(hover:hover)]:hover:scale-110 [@media(hover:hover)]:hover:-rotate-2"
                 >
                   <PlayingCard card={entry.card} size="small" />
                   <span className="absolute -bottom-0.5 -right-0.5 z-10 display text-[10px] text-[var(--card-face)] bg-[var(--ink)] rounded-full px-1 leading-[14px] min-w-[16px] text-center">

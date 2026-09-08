@@ -27,14 +27,27 @@ function App() {
   // so the samples are fetched up front and merely decoded on first touch.
   // Waiting for the gesture to start the download made the very click that
   // unlocked audio the one click that never made a sound.
+  //
+  // Not `{ once: true }`, which is what this used to be. iOS suspends an
+  // AudioContext on every interruption it feels like — a phone call, a lock, a
+  // switch to another app — and nothing was ever calling `unlockAudio` again,
+  // so from the first of those the table was silent for the rest of the
+  // session, including the clock running out, which is the one sound here that
+  // carries information rather than character. `unlockAudio` is idempotent and
+  // costs a state check, so it is simply asked again on every way back in.
   useEffect(() => {
     prefetchAudio()
     const unlock = () => unlockAudio()
-    window.addEventListener('pointerdown', unlock, { once: true })
-    window.addEventListener('keydown', unlock, { once: true })
+    const onVisible = () => {
+      if (!document.hidden) unlockAudio()
+    }
+    window.addEventListener('pointerdown', unlock)
+    window.addEventListener('keydown', unlock)
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       window.removeEventListener('pointerdown', unlock)
       window.removeEventListener('keydown', unlock)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 

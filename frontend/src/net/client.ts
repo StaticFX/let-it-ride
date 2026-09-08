@@ -62,7 +62,53 @@ export function connect(roomCode: string, playerId: string, name: string): void 
   session = { roomCode, playerId, name }
   intentionalClose = false
   reconnectAttempt = 0
+  watchVisibility()
   open()
+}
+
+/**
+ * Tries again from the top of the ladder.
+ *
+ * The ladder is five attempts over about fifteen seconds and then permanent,
+ * which is right for a desktop that has genuinely lost the server and wrong for
+ * a phone, where fifteen seconds is a tunnel, a lift, or somebody answering a
+ * message. The seat is still held at the far end — [Rooms] keeps it for a
+ * player who comes back — so giving up is a decision about this browser and not
+ * about the table, and it should be undoable.
+ */
+export function retryConnection(): void {
+  if (!session || socket?.readyState === WebSocket.OPEN) return
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  intentionalClose = false
+  reconnectAttempt = 0
+  open()
+}
+
+/**
+ * A phone that comes back to the front of the queue tries again immediately.
+ *
+ * Backgrounding a tab on iOS suspends its socket outright, and the timers that
+ * would have retried along with it — so a player who switched apps for half a
+ * minute came back to a dead table with a "lost the connection" card over it
+ * and the ladder already spent. The moment the page is visible again is the
+ * only moment worth retrying on, and it is free.
+ *
+ * Installed once for the life of the page rather than per connection; there is
+ * only ever one socket, and it reads its state at the time it fires.
+ */
+let watchingVisibility = false
+function watchVisibility(): void {
+  if (watchingVisibility || typeof document === 'undefined') return
+  watchingVisibility = true
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !session || intentionalClose) return
+    if (useGameStore.getState().kicked) return
+    if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return
+    retryConnection()
+  })
 }
 
 function open(): void {

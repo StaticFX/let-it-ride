@@ -44,7 +44,10 @@ export function PointsFlight({ points, from, to, ms }: {
       <div
         data-testid="points-paid"
         className="fixed z-[214] pointer-events-none display text-[22px] font-bold text-[var(--accent)] points-toll whitespace-nowrap"
-        style={{ left: from.x, top: from.y - 88 }}
+        // Never off the top of the felt: a seat in the first row of a narrow
+        // table is barely a hundred pixels down, and what is being taken off
+        // somebody is worth seeing.
+        style={{ left: from.x, top: Math.max(from.y - 88, 56) }}
       >
         − {points}
       </div>
@@ -78,7 +81,7 @@ export function PointsFlight({ points, from, to, ms }: {
       <div
         data-testid="points-taken"
         className="fixed z-[214] pointer-events-none display text-[22px] font-bold text-[var(--passive)] points-take whitespace-nowrap"
-        style={{ left: to.x, top: to.y - 88, animationDelay: `${Math.round(ms * 0.55)}ms` }}
+        style={{ left: to.x, top: Math.max(to.y - 88, 56), animationDelay: `${Math.round(ms * 0.55)}ms` }}
       >
         + {points}
       </div>

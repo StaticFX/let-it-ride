@@ -156,8 +156,14 @@ export function DevPanel() {
         onClick={() => setOpen(!open)}
         data-testid="dev-toggle"
         // Out of the drawer's way while it is open, rather than on top of it.
-        className={`display fixed bottom-3 z-[80] cursor-pointer rounded border-2 border-dashed border-[var(--ink)] bg-[var(--card-face)] px-2 py-1 text-sm text-[var(--ink)] ${
-          open ? 'right-[calc(min(400px,94vw)+12px)]' : 'right-3'
+        // Inside the drawer when it is open rather than beside it: at 94vw
+        // the drawer leaves no room beside it at all, and the only way to shut
+        // the panel was a button whose left edge had walked off the screen.
+        // This is the whole of the testing panel's mobile story on purpose —
+        // it is behind LETITRIDE_TEST_HOOKS, opened with a backtick a phone
+        // does not have, and serves a desktop workflow.
+        className={`display fixed z-[80] cursor-pointer rounded border-2 border-dashed border-[var(--ink)] bg-[var(--card-face)] px-2 py-1 text-sm text-[var(--ink)] ${
+          open ? 'right-3 top-3' : 'right-3 bottom-3'
         }`}
       >
         {open ? 'dev ×' : 'dev'}
