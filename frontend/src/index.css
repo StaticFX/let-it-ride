@@ -862,7 +862,153 @@ textarea {
     animation-timing-function: cubic-bezier(.2, .9, .3, 1.4);
   }
   85% { transform: translate(-50%, calc(-50% - 22px)) rotate(-5deg) scale(0.78); }
-  100% { transform: translate(-50%, calc(-50% - 4px)) rotate(-9deg) scale(0.7); opacity: 0; }
+  100% { transform: translate(-50%, calc(-50% - 4px)) rotate(-9deg) scale(0.7); }
+}
+
+/* ─── ...and the rest of the round, watched on tape ───
+   What [BustedTape] draws once your own hand has finished scattering. Four
+   sheets over the table, none of which touch the layout underneath: the colour
+   going, the lines it comes back on, the grain in them, and a tracking band
+   rolling up through the lot every few seconds.
+
+   Every one of them animates a transform or an opacity and nothing else. This
+   is on screen for the whole of the rest of a round rather than for a second
+   and a half, so a repaint of the full viewport per frame — which is what
+   drifting a background-position would have cost — is the one thing it cannot
+   afford to do. The desaturation itself never animates after it arrives. */
+
+/* Nothing is animated on this element, and nothing may be.
+   `backdrop-filter` filters the picture behind the *backdrop root* it is in, and
+   an ancestor carrying an opacity below 1 — which an opacity animation carries
+   for its whole run, fill included — becomes one. The fade was written here
+   first, as one animation over the lot, and the drain underneath it then had
+   nothing behind it but its own siblings: the lines and the vignette arrived on
+   schedule over a table still in full colour, which looks enough like a tape
+   effect to be believed. So the fade sits on each sheet instead. */
+.busted-tape {
+  position: fixed;
+  inset: 0;
+  z-index: 380;
+  pointer-events: none;
+}
+
+/* The corners fall away, the way they do on a picture that is being played back
+   rather than lit. Light, because the felt is paper and this is a table going
+   grey, not a room going dark. */
+.busted-tape::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 46%, rgba(0, 0, 0, 0.17) 100%);
+  animation: bustedTapeIn 900ms ease-out both;
+}
+
+/* The colour going. See [BustedTape] for why this is a backdrop filter over the
+   board and not a filter on it.
+
+   Written unprefixed and *only* unprefixed. Lightningcss merges a property and
+   its own `-webkit-` alias into one declaration and keeps the alias, and
+   `-webkit-backdrop-filter` does nothing at all in Chromium — so a rule that
+   carefully spelled out both shipped as the one of the two that no Chrome
+   reads, and the table stayed in colour under a full set of scanlines. Adding
+   the prefix by hand is the toolchain's job and taking it away is the fix. */
+.busted-tape-drain {
+  position: absolute;
+  inset: 0;
+  backdrop-filter: grayscale(1) contrast(1.1) brightness(0.94);
+  animation: bustedTapeIn 900ms ease-out both;
+}
+
+/* Scanlines, and the only colour left anywhere: a cyan and a magenta line under
+   each dark one, at an alpha where they are a tint on the grey rather than two
+   more colours on the table. Inset past the edges so the drift never uncovers
+   one, and the strength is in the alphas rather than in an opacity of its own —
+   the fade needs somewhere to land. */
+.busted-tape-lines {
+  position: absolute;
+  inset: -8px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.12) 0px, rgba(0, 0, 0, 0.12) 1px,
+    rgba(110, 220, 255, 0.04) 1px, rgba(110, 220, 255, 0.04) 2px,
+    rgba(255, 115, 190, 0.036) 2px, rgba(255, 115, 190, 0.036) 3px
+  );
+  animation: bustedTapeIn 900ms ease-out both, bustedLines 1.8s linear infinite;
+}
+
+/* The grain in them. Held in steps rather than interpolated — static that slides
+   is smoke, and this has to sit still and then be somewhere else. The inset
+   clears the largest jump in the keyframes, so no corner is ever bare. */
+.busted-tape-lines::after {
+  content: '';
+  position: absolute;
+  inset: -32px;
+  opacity: 0.055;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: bustedGrain 880ms steps(1, end) infinite;
+}
+
+/* The tracking band. Rolls upward, which is the way a mistracked tape rolls, and
+   spends most of its cycle off the bottom of the screen — a band that came round
+   every second would be a strobe, and this is meant to be something you catch
+   out of the corner of your eye twice a round.
+
+   Dark, with the light edge trailing it. The obvious band is a bright one, and a
+   bright band on a table made of cream paper is nothing at all: at the alpha
+   this wants it did not exist on screen. What reads on a light picture is the
+   picture dipping, so the body of it is black at 0.14 and the white is a rim. */
+.busted-tape-track {
+  position: absolute;
+  left: -8%;
+  right: -8%;
+  top: 0;
+  height: 16vh;
+  opacity: 0;
+  filter: blur(2px);
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.045) 22%,
+    rgba(70, 180, 230, 0.1) 40%,
+    rgba(0, 0, 0, 0.14) 52%,
+    rgba(230, 80, 150, 0.1) 64%,
+    rgba(255, 255, 255, 0.16) 78%,
+    transparent 100%
+  );
+  animation: bustedTrack 9s linear infinite;
+}
+
+@keyframes bustedTapeIn {
+  0% { opacity: 0; }
+  16% { opacity: 0.85; }
+  24% { opacity: 0.2; }
+  40% { opacity: 1; }
+  48% { opacity: 0.55; }
+  100% { opacity: 1; }
+}
+
+/* One line's worth, so the loop is seamless. */
+@keyframes bustedLines {
+  from { transform: translateY(0); }
+  to { transform: translateY(3px); }
+}
+
+@keyframes bustedGrain {
+  0%   { transform: translate3d(0, 0, 0); }
+  12%  { transform: translate3d(-13px, 9px, 0); }
+  25%  { transform: translate3d(10px, -17px, 0); }
+  37%  { transform: translate3d(-21px, -6px, 0); }
+  50%  { transform: translate3d(16px, 14px, 0); }
+  62%  { transform: translate3d(-7px, 20px, 0); }
+  75%  { transform: translate3d(22px, -11px, 0); }
+  87%  { transform: translate3d(-15px, -19px, 0); }
+}
+
+@keyframes bustedTrack {
+  0%, 64% { transform: translateY(110vh); opacity: 0; }
+  67% { opacity: 0.75; }
+  95% { opacity: 0.75; }
+  100% { transform: translateY(-18vh); opacity: 0; }
 }
 
 /* ─── Action card: carried over the target, then brought down on it ───
@@ -1829,6 +1975,15 @@ textarea {
   .gambler-reveal,
   .gambler-reveal-card,
   .bust-card,
+  /* The tape arrives rather than being caught, its lines and its grain sit
+     still, and the band never rolls at all — every base state here is the
+     settled one on purpose, so turning the animation off leaves the picture
+     grey and legible instead of leaving it half drawn. */
+  .busted-tape::after,
+  .busted-tape-drain,
+  .busted-tape-lines,
+  .busted-tape-lines::after,
+  .busted-tape-track,
   .second-life,
   .second-life-wash,
   .second-life-echo,

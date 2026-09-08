@@ -19,6 +19,7 @@ import { SketchButton } from '../ui/Button'
 import { SoundToggle } from '../ui/SoundToggle'
 import { RoundIntro } from '../overlays/RoundIntro'
 import { RoundOutro } from '../overlays/RoundOutro'
+import { BustedTape } from '../overlays/BustedTape'
 import { ImpactParticles } from '../overlays/ImpactParticles'
 import { Lucky7Overlay } from '../overlays/Lucky7Overlay'
 import { SlotMachine } from '../overlays/SlotMachine'
@@ -381,6 +382,23 @@ export function GameBoard() {
   }
 
   const showButtons = isMyTurn && !isEliminated && !isPickingTarget
+  /**
+   * Whether the rest of this round is something you are only watching — see
+   * [BustedTape], which is the whole of what it looks like.
+   *
+   * Your own bust animation is allowed to finish first. The state says `bust`
+   * from the moment the event arrives, which is while the card that did it is
+   * still being carried up over the hand, and draining the colour there would
+   * answer the question the animation is in the middle of asking. So it waits
+   * for [bust] to clear, which is the beat after the hand has scattered — the
+   * colour goes as the last card leaves. Somebody *else* busting never holds it
+   * up, and a tab that reconnects into a round it is already out of gets it
+   * straight away, there being nothing left to watch.
+   *
+   * Going out by choice is not this. Staying is a decision that paid, and a
+   * seat that took it is not out of the game so much as done with the round.
+   */
+  const bustedOut = me?.status === 'bust' && bust?.playerId !== me.id
   const canInspect = !isPickingTarget
   // Somebody is on the clock, so every other seat can step back — a lit seat
   // only reads as lit if the ones around it are not.
@@ -1465,8 +1483,15 @@ export function GameBoard() {
           brought down on it. Anchored on the seat with the draw pile expressed
           as a delta, exactly as the smash above is — the card is coming from the
           deck rather than from the middle of the table, and that is the only
-          difference between the two. */}
-      {bust?.card && (() => {
+          difference between the two.
+
+          Dropped at the scatter, because the flight no longer fades out at the
+          end of itself: it holds its last frame, and the state that renders it
+          outlives that frame by the whole reveal beat. Left up it would be a
+          second copy of a card that is already lying in the fan underneath,
+          resting on the seat while the hand flies off around it. Going when the
+          hand goes is the one moment its leaving costs nothing to look at. */}
+      {bust?.card && bust.phase !== 'scatter' && (() => {
         const seat = seatOfId(bust.playerId)
         const anchorY = seat.y - 40
         return (
@@ -1600,6 +1625,11 @@ export function GameBoard() {
         if (!player) return null
         return <Lucky7Overlay cards={player.hand} startPos={seatOfId(flip7.playerId)} />
       })()}
+
+      {/* Out. Last thing over the felt and above everything on it, so what is
+          still going on out there is watched in black and white — and below the
+          pause menu and a card opened up to be read, which are still yours. */}
+      {bustedOut && <BustedTape />}
 
       {/* Action buttons */}
       <div className={`action-buttons ${showButtons ? 'visible' : 'hidden'}`} data-testid="action-buttons" data-visible={showButtons}>

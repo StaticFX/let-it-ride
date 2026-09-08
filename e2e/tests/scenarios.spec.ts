@@ -218,6 +218,19 @@ test.describe('busting', () => {
     if (summary.screen === 'board') {
       await expect(app.table.mySeat).toHaveAttribute('data-status', 'bust')
       await expect(page.locator('.bust-match-tag').first()).toBeVisible({ timeout: 5_000 })
+
+      // ...and once it has, the rest of the round is watched in black and white.
+      // The picture has to be *filtering*, not merely present: the whole of that
+      // effect is one `backdrop-filter`, and a rule that also spelled out the
+      // `-webkit-` alias shipped as the alias alone — which Chromium ignores
+      // entirely — so the scanlines arrived on schedule over a table still in
+      // full colour and everything else about it looked right.
+      const tape = page.getByTestId('busted-tape')
+      await expect(tape).toBeVisible({ timeout: 15_000 })
+      const drained = await tape
+        .locator('.busted-tape-drain')
+        .evaluate((el) => getComputedStyle(el).backdropFilter)
+      expect(drained, 'the table has to actually be desaturated').toContain('grayscale')
     }
 
     await expect(page.getByTestId('round-summary')).toBeVisible({ timeout: 60_000 })
