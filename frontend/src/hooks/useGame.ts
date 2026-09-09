@@ -701,9 +701,17 @@ export function useGame() {
    * What to print on a seat: what that player's cards are worth to them, which
    * is not always what they add up to — see the "antimatter" card. The server
    * works it out; an older one does not send it, and the plain total stands in.
+   *
+   * Null means *you are not being shown this* — see the "redacted" card. Told
+   * apart from nought on purpose, and typed so it cannot be quietly printed as
+   * one: a seat holding four cards and showing a zero is a lie, where a seat
+   * showing a question mark is the card doing exactly what it says.
    */
   const worthOf = useCallback(
-    (player: Player) => state?.handWorth?.[player.id] ?? player.handValue,
+    (player: Player): number | null => {
+      if ((state?.hiddenHandIds ?? []).includes(player.id)) return null
+      return state?.handWorth?.[player.id] ?? player.handValue
+    },
     [state],
   )
 
@@ -1175,6 +1183,12 @@ export function useGame() {
     [picksCards, advertisedCards],
   )
   const picksNeeded = picksCards ? pendingAction?.picks ?? 1 : 0
+  /**
+   * Whether each pick has to come off a different seat. The server's answer;
+   * a server too old to have one only ever asked for trades, which is what
+   * this rule was written for.
+   */
+  const oneCardPerSeat = pendingAction?.oneCardPerSeat ?? true
 
   /** Who is holding each card that may be picked. */
   const cardOwners = useMemo(() => {
@@ -1251,10 +1265,19 @@ export function useGame() {
       // Two cards off one seat would trade a hand with itself. The server
       // replaces such a pair rather than refusing it, but offering it at all
       // would let a player throw the card away without meaning to.
+      //
+      // Whether that rule is on is the *prompt's* to say, not this client's: a
+      // card that hands your own cards out takes every pick off one seat by
+      // definition — see the "circlejerk" card — and a rule kept here would
+      // refuse the second one for ever.
+      if (!oneCardPerSeat) return true
       const owner = cardOwners.get(cardId)
       return !(owner && cardsChosen.some((id) => cardOwners.get(id) === owner))
     },
-    [picksCards, pendingIsLocal, validCards, cardsChosen, picksNeeded, cardOwners, pendingIsShared, localPlayerId],
+    [
+      picksCards, pendingIsLocal, validCards, cardsChosen, picksNeeded,
+      cardOwners, oneCardPerSeat, pendingIsShared, localPlayerId,
+    ],
   )
 
   /**

@@ -101,6 +101,8 @@ const DEFERRED_PROMPTS: Record<string, string> = {
   gambler: 'your call!',
   redirect: 'keep it, or hand it on?',
   secondOpinion: 'keep it, or take another?',
+  give: 'give one to each side — left first',
+  handover: 'hand one over',
 }
 
 /**
@@ -115,6 +117,8 @@ const FIZZLE_REASONS: Record<string, string> = {
   suicideBomber: 'you are already armed',
   justOneMore: 'you already have one',
   unluckySeven: 'everybody has one already',
+  circlejerk: 'nothing of yours to give',
+  reverseCirclejerk: 'nobody next to you is holding anything',
 }
 
 export function GameBoard() {
@@ -706,7 +710,13 @@ export function GameBoard() {
           {isPickingTarget
             ? pendingIsLocal
               ? pendingIsDeferred
-                ? DEFERRED_PROMPTS[pendingPhase] ?? 'your call!'
+                // A deferred prompt says what it is, because nothing was drawn
+                // to explain it — and then counts, if it wants more than one
+                // card. Saying "give one to each side" over and over while the
+                // picks come in says nothing about how many are left.
+                ? `${DEFERRED_PROMPTS[pendingPhase] ?? 'your call!'}${
+                    picksCards && picksNeeded > 1 ? ` (${picksNeeded - cardsChosen.length} to go)` : ''
+                  }`
                 : picksCards
                   ? `pick ${picksNeeded - cardsChosen.length} more card${picksNeeded - cardsChosen.length === 1 ? '' : 's'}!`
                   : needsChoice ? 'your call!' : 'pick a target!'
@@ -810,7 +820,11 @@ export function GameBoard() {
             data-player-id={p.id}
             data-player-name={p.name}
             data-status={p.status}
-            data-hand-value={worthOf(p)}
+            // A "?" rather than a number when the hand is face down to you —
+            // see the "redacted" card, and [worthOf], which is the only thing
+            // that knows the difference between "nothing" and "not shown".
+            data-hand-value={worthOf(p) ?? '?'}
+            data-hand-hidden={worthOf(p) === null}
             data-hand-size={p.hand.length}
             data-passive-count={p.passives.length}
             data-gambler-count={game.gamblerCounts?.[p.id] ?? 0}
@@ -866,7 +880,7 @@ export function GameBoard() {
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`number text-[22px] leading-none ${p.status === 'bust' ? 'text-[var(--accent)]' : ''}`}>
-                      {worthOf(p)}
+                      {worthOf(p) ?? '?'}
                     </span>
                     {statusBadge(p)}
                     {timedOutIds.includes(p.id) && <span className="status-badge border border-[var(--ink-soft)]">timed out</span>}
@@ -1004,7 +1018,11 @@ export function GameBoard() {
                 data-player-id={me.id}
                 data-player-name={me.name}
                 data-status={me.status}
-                data-hand-value={worthOf(me)}
+                // Never actually hidden — you are the one person a "redacted"
+                // does not hide the hand from — but read the same way as every
+                // other seat rather than assumed, so the two cannot drift.
+                data-hand-value={worthOf(me) ?? '?'}
+                data-hand-hidden={worthOf(me) === null}
                 data-hand-size={me.hand.length}
                 data-passive-count={me.passives.length}
                 data-gambler-count={game.gamblerCounts?.[me.id] ?? 0}
@@ -1055,7 +1073,7 @@ export function GameBoard() {
                             me.status === 'bust' ? 'text-[var(--accent)]' : ''
                           }`}
                         >
-                          {worthOf(me)}
+                          {worthOf(me) ?? '?'}
                         </span>
                         {statusBadge(me)}
                       </div>

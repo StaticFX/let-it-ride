@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useCatalog } from '../../state/gameStore'
 import type { Card as CardType, DeckConfig, GameConfig, GameMode } from '../../game/types'
 import { CUSTOM_DECK_ID, modeOf } from '../../game/types'
@@ -324,7 +325,12 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
         </div>
       </div>
 
-      {inspectedCard && (
+      {/* Sent to the body rather than left where it was written. A full-screen
+          overlay nested six levels inside a form is one ancestor `transform`,
+          `filter` or `overflow` away from being clipped, or from covering the
+          settings page rather than the window. A portal is the only version of
+          this that cannot be broken from above. */}
+      {inspectedCard && createPortal(
         <div
           onClick={() => setInspectedCard(null)}
           className="fixed inset-0 z-[500] flex items-center justify-center cursor-pointer bg-[var(--felt)]/60 backdrop-blur-[16px] animate-[inspectFadeIn_200ms_ease-out]"
@@ -332,7 +338,8 @@ export function LobbyConfig({ config, onChange }: LobbyConfigProps) {
           <div className="scale-[2.8] pointer-events-none animate-[inspectCardPop_300ms_cubic-bezier(.2,.9,.3,1.3)_both]">
             <PlayingCard card={inspectedCard} size="deck" />
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

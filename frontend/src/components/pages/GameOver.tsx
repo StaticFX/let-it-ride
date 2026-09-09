@@ -2,6 +2,8 @@ import { useGameStore } from '../../state/gameStore'
 import { leaveGame, send } from '../../net/client'
 import { PlayingCard } from '../cards/PlayingCard'
 import { SketchButton } from '../ui/Button'
+import { TitleMark } from '../ui/TitleMark'
+import { PosterBurst } from '../ui/PosterBurst'
 
 export function GameOver() {
   const state = useGameStore((s) => s.state)
@@ -21,11 +23,14 @@ export function GameOver() {
       data-winner-id={state.gameWinnerId ?? ''}
       data-winner-name={winner?.name ?? ''}
     >
-      <div className="max-w-[460px] w-full text-center">
+      <PosterBurst />
+      <div className="poster-content max-w-[460px] w-full text-center">
         <small>game over</small>
-        <h1 className="text-5xl mb-1 animate-[swayMore_3s_ease-in-out_infinite]">
-          {isLocalWinner ? 'you win!' : <><span className="text-[var(--accent)]">{winner?.name}</span> wins!</>}
-        </h1>
+        <div className="mb-1 flex justify-center">
+          {isLocalWinner
+            ? <TitleMark small="you" big="win!" scale={0.62} />
+            : <TitleMark small={winner?.name ?? 'nobody'} big="wins!" scale={0.55} />}
+        </div>
         {winner && (
           <p className="text-lg text-muted mb-8">
             final score: <span className="number text-3xl">{winner.score}</span>

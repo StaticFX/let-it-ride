@@ -4,6 +4,8 @@ import { send } from '../../net/client'
 import { PlayingCard } from '../cards/PlayingCard'
 import { Scoreboard } from '../game/Scoreboard'
 import { SketchButton } from '../ui/Button'
+import { TitleMark } from '../ui/TitleMark'
+import { PosterBurst } from '../ui/PosterBurst'
 import { useCountdown } from '../../hooks/useCountdown'
 
 /**
@@ -46,16 +48,15 @@ export function RoundSummary() {
       data-winner-id={roundWinnerId ?? ''}
       data-flip7-id={flip7PlayerId ?? ''}
     >
-      <div className="content-width">
+      <PosterBurst />
+      <div className="poster-content content-width">
         <div className="text-center mb-8">
           <small>round {String(round).padStart(2, '0')} complete</small>
-          {winner ? (
-            <h1 className="text-[42px] animate-[swayMore_3s_ease-in-out_infinite]">
-              <span className="text-[var(--accent)]">{winner.name}</span> wins!
-            </h1>
-          ) : (
-            <h1 className="text-[42px] text-[var(--accent)]">everyone busted!</h1>
-          )}
+          <div className="flex justify-center">
+            {winner
+              ? <TitleMark small={winner.name} big="wins!" scale={0.5} />
+              : <TitleMark small="everyone" big="busted!" scale={0.5} />}
+          </div>
           {flip7PlayerId && (
             <p className="text-muted mt-1">
               <span className="display text-xl text-[var(--accent)]">

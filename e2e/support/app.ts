@@ -138,6 +138,26 @@ export class App {
     await this.page.getByTestId('join-submit').click()
   }
 
+  /**
+   * Walks in the way somebody who was sent a link does — no title card, no
+   * name yet, and the code already in the box.
+   */
+  async followInvite(link: string): Promise<void> {
+    await this.page.goto(link)
+    await expect(this.page.getByTestId('join-screen')).toBeVisible({ timeout: 30_000 })
+  }
+
+  /**
+   * The address the waiting room is offering to hand out. Read off the anchor
+   * rather than out of the clipboard, which a test cannot reach without
+   * permissions the app never asks for — and it is the anchor that a long press
+   * copies anyway.
+   */
+  async inviteLink(): Promise<string> {
+    const href = await this.page.getByTestId('invite-link').getAttribute('href')
+    return href!
+  }
+
   private async waitForWaitingRoom(): Promise<string> {
     await expect(this.page.getByTestId('waiting-room')).toBeVisible({ timeout: 30_000 })
     return this.roomCode()

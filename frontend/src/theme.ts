@@ -6,6 +6,7 @@ export const theme = {
   cardBack: '#f0e9d4',
   actionAccent: '#b04432',
   passiveAccent: '#4a6852',
+  frost: '#3d7a9e',
   fontDisplay: '"Kalam", cursive',
   fontBody: '"Patrick Hand", cursive',
   fontNumber: '"Caveat", cursive',

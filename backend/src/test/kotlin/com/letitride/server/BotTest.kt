@@ -2,7 +2,11 @@ package com.letitride.server
 
 import com.letitride.engine.ANTIMATTER
 import com.letitride.engine.ALL_IN_ID
+import com.letitride.engine.CIRCLEJERK_ID
 import com.letitride.engine.DISCORDIA
+import com.letitride.engine.PHASE_GIVE
+import com.letitride.engine.PHASE_HANDOVER
+import com.letitride.engine.REVERSE_CIRCLEJERK_ID
 import com.letitride.engine.DOUBLE_POINTS
 import com.letitride.engine.GameState
 import com.letitride.engine.PLUS_TEN
@@ -128,6 +132,54 @@ class BotTest {
         val picks = botCardPicks(state, "bot", pending, testRng())
 
         assertEquals(listOf("bot-7"), picks)
+    }
+
+    @Test
+    fun `a card being given away is the worst one it is holding, not the middle`() {
+        // Both circlejerks ask for cards that *leave*, which is the opposite of
+        // a bet: the bot's own hand is the only thing on offer, and the way to
+        // play it is to be rid of the thing it least wants.
+        val hand = listOf(num(2, id = "bot-2"), num(7, id = "bot-7"), num(12, id = "bot-12"))
+        val state = table(
+            hands = mapOf("bot" to hand, "them" to listOf(num(5, id = "them-5"))),
+            passives = mapOf("bot" to listOf(passive(DISCORDIA.id, id = "the-discordia"))),
+        )
+        val pending = PendingAction(
+            cardDefId = CIRCLEJERK_ID,
+            playerId = "bot",
+            card = action(CIRCLEJERK_ID),
+            validTargets = listOf("bot"),
+            kind = PickKind.CARD,
+            validCards = hand.map { it.id } + "the-discordia",
+            picks = 2,
+            oneCardPerSeat = false,
+            phase = PHASE_GIVE,
+        )
+
+        val picks = botCardPicks(state, "bot", pending, testRng())
+
+        assertEquals("the-discordia", picks[0], "somebody else's problem now")
+        assertEquals("bot-2", picks[1], "and then the least it is worth losing")
+    }
+
+    @Test
+    fun `and so is one it is being asked to hand over`() {
+        val hand = listOf(num(3, id = "bot-3"), num(11, id = "bot-11"))
+        val state = table(hands = mapOf("bot" to hand, "them" to listOf(num(5, id = "them-5"))))
+        val pending = PendingAction(
+            cardDefId = REVERSE_CIRCLEJERK_ID,
+            playerId = "them",
+            card = action(REVERSE_CIRCLEJERK_ID),
+            validTargets = listOf("them"),
+            kind = PickKind.CARD,
+            validCards = hand.map { it.id },
+            responders = listOf("bot"),
+            phase = PHASE_HANDOVER,
+        )
+
+        val picks = botCardPicks(state, "bot", pending, testRng())
+
+        assertEquals("bot-3", picks.first(), "you asked, so you get the cheap one")
     }
 
     // ─── What a seat is worth attacking ───

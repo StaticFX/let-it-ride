@@ -164,6 +164,7 @@ class Ctx(state: GameState, val rng: Rng) {
         kind: PickKind = PickKind.PLAYER,
         cards: List<String> = emptyList(),
         picks: Int = 1,
+        oneCardPerSeat: Boolean = true,
         offers: List<Offer> = emptyList(),
     ) {
         if (targets.isEmpty() && options.isEmpty() && cards.isEmpty() && offers.isEmpty()) return
@@ -186,6 +187,7 @@ class Ctx(state: GameState, val rng: Rng) {
                 kind = kind,
                 validCards = cards,
                 picks = picks,
+                oneCardPerSeat = oneCardPerSeat,
                 phase = phase,
                 responders = responders,
                 offers = offers,
@@ -417,6 +419,39 @@ class Ctx(state: GameState, val rng: Rng) {
         }
         update(toId) { p ->
             if (isNumber) withHand(p, p.hand + card) else p.copy(passives = p.passives + card)
+        }
+        emit(GameEvent.Steal(fromId, toId, card))
+        return card
+    }
+
+    /**
+     * Moves one named card from one seat to another — hand or modifier row
+     * alike, and it lands in whichever of the two it belongs in.
+     *
+     * [stealRandom] is this with the choosing done by the dice, and [swapCards]
+     * is two of these crossing. What is different about a card that is *handed
+     * over* is only who picked it — see the two circlejerks, where one of them
+     * is the giver's choice and the other is the taker's — so the event is the
+     * same one a steal sends: a card crossing the table is a card crossing the
+     * table, and the client draws it the same way whoever asked for it.
+     *
+     * Returns the card, or null when nobody was holding it. The caller re-checks
+     * whoever received it: a hand that took on a card can be holding a duplicate
+     * now, which is half the reason to play either card.
+     */
+    fun handOver(fromId: String, toId: String, cardId: String): Card? {
+        if (fromId == toId) return null
+        val from = player(fromId) ?: return null
+        player(toId) ?: return null
+        val card = (from.hand + from.passives).firstOrNull { it.id == cardId } ?: return null
+        update(fromId) { p ->
+            withHand(
+                p.copy(passives = p.passives.filterNot { it.id == card.id }),
+                p.hand.filterNot { it.id == card.id },
+            )
+        }
+        update(toId) { p ->
+            if (card.kind == CardKind.NUMBER) withHand(p, p.hand + card) else p.copy(passives = p.passives + card)
         }
         emit(GameEvent.Steal(fromId, toId, card))
         return card
@@ -1086,6 +1121,29 @@ object Engine {
      * "cancelled" for the one player it was not cancelled for.
      */
     fun bustStillCounts(player: Player): Boolean = negatesHand(player)
+
+    /**
+     * Whether this player's hand is face down to everybody but themselves — see
+     * the "redacted" card.
+     *
+     * The single place that question is answered, and it has to stay that way:
+     * three things read it and all three have to agree — the projection that
+     * blanks the cards (`Player.hiddenFrom`), the map that says what each hand
+     * is worth, and `Room.redactFor`, which cuts the face out of every event
+     * that would otherwise show one. A leak here has no symptom.
+     *
+     * The modifier row is deliberately not covered. The card doing the hiding
+     * lies in it, and a table that could not see *that* would only see a bug —
+     * "you cannot read my hand" is a bluff worth having, and "you cannot see
+     * why" is not a rule anybody could play against.
+     *
+     * Only while their round is still running, too. A hand that has gone out is
+     * scored in front of everybody, and a bust has to be able to show the card
+     * that did it: the seat turns its cards over at exactly the moment every
+     * other seat does.
+     */
+    fun handIsHidden(player: Player): Boolean =
+        player.status == PlayerStatus.ACTIVE && player.passives.any { it.defId == REDACTED.id }
 
     /**
      * Whether a card in front of this player forbids them to stop — see
@@ -2069,7 +2127,13 @@ object Engine {
 
         val cards =
             if (!def.picksCards) emptyList()
-            else legalPicks(ctx, def.cardTargets(ctx.state, fromId).toSet(), def.picks, requestedCards)
+            else legalPicks(
+                ctx,
+                def.cardTargets(ctx.state, fromId).toSet(),
+                def.picks,
+                requestedCards,
+                pending.oneCardPerSeat,
+            )
         if (def.picksCards && cards.size < def.picks) {
             fizzle(ctx, def, pending.card, fromId)
             afterAction(ctx)
@@ -2153,6 +2217,7 @@ object Engine {
         offered: Set<String>,
         picks: Int,
         requested: List<String>,
+        oneCardPerSeat: Boolean = true,
     ): List<Card> {
         val picked = mutableListOf<Card>()
         val owners = mutableSetOf<String>()
@@ -2161,7 +2226,7 @@ object Engine {
             if (cardId !in offered) return false
             if (picked.any { it.id == cardId }) return false
             val owner = ctx.ownerOf(cardId) ?: return false
-            if (owner.id in owners) return false
+            if (oneCardPerSeat && owner.id in owners) return false
             val card = (owner.hand + owner.passives).firstOrNull { it.id == cardId } ?: return false
             picked += card
             owners += owner.id

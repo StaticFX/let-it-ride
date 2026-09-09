@@ -165,10 +165,14 @@ label {
   min-height: 100dvh;
 }
 
+/* A panel, printed. The shadow is a hard offset rather than a blur because
+   everything else on these screens is — a card, a button and a panel all
+   catching the same light from the same corner is most of what makes the front
+   of house look assembled rather than arranged. */
 .sketch-box {
   background: var(--card-face);
-  border: 2px solid var(--ink);
-  box-shadow: 4px 4px 0 0 var(--ink);
+  border: 2.5px solid var(--ink);
+  box-shadow: 5px 5px 0 0 var(--ink);
 }
 
 .sketch-box-winner {
@@ -383,6 +387,10 @@ textarea {
     --button-pad: 9px 18px;
     --button-min-width: 92px;
     --button-font-size: 20px;
+    --button-block-pad: 11px 20px;
+    --button-block-font-size: 23px;
+    /* A wordmark set for a 1280px poster is two thirds of a phone's height. */
+    --mark-shrink: 0.62;
   }
 
   .action-buttons {
@@ -422,12 +430,6 @@ textarea {
   font-size: 24px;
   color: var(--ink);
   outline: none;
-}
-
-.divider-line {
-  flex: 1;
-  height: 1px;
-  background: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 /* Your turn: the table edges warm up, so the prompt is not only in the corner.
@@ -1958,7 +1960,237 @@ textarea {
   filter: grayscale(0.7);
 }
 
+/* ─── The front of house ───
+ *
+ * Everything from the title card to the scoreboard at the end is printed
+ * rather than laid out: a burst behind the words, a wordmark with a shadow you
+ * could trip over, and a column of buttons in three colours. It is the same
+ * paper, the same ink and the same three accents the table is drawn in — what
+ * changed is the *weight*, because a front door that whispers in the same tone
+ * of voice as a form field is a front door nobody remembers.
+ *
+ * The felt is deliberately left alone. A game screen has to be read while
+ * something is happening on it; a menu only has to be arrived at.
+ */
+
+/* Fixed to the window — see PosterBurst.tsx for why — so everything printed
+   over it has to say which side of it it is on. */
+.poster-burst {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.poster-burst-wheel {
+  position: absolute;
+  left: 50%;
+  /* Above the middle, so the rays converge behind the wordmark rather than
+     behind whatever happens to be halfway down the page. */
+  top: 34%;
+  animation: burstTurn 150s linear infinite;
+}
+
+@keyframes burstTurn {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.poster-content {
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── The wordmark ───
+   Two copies of every line: the one underneath carries the outline and the
+   extrude, the one on top carries only the fill. TitleMark.tsx says why. */
+.title-mark {
+  --mark-scale: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 0.9;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: markSway 5.5s ease-in-out infinite;
+}
+
+.title-mark-line {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.title-mark-shell {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--ink);
+  -webkit-text-stroke: 0.062em var(--ink);
+  /* Six copies rather than a blur: what is under the letters is a solid block
+     the word is standing on, and a soft shadow under a hard outline reads as a
+     print error. Every offset is in `em` so one `--mark-scale` moves the whole
+     lockup — a heading at half size with a wordmark's extrude on it looks
+     broken in a way that is hard to name and impossible to miss. */
+  text-shadow:
+    0.014em 0.016em 0 var(--ink),
+    0.028em 0.032em 0 var(--ink),
+    0.042em 0.048em 0 var(--ink),
+    0.056em 0.064em 0 var(--ink),
+    0.070em 0.080em 0 var(--ink),
+    0.084em 0.096em 0 var(--ink);
+}
+
+.title-mark-face {
+  position: relative;
+}
+
+.title-mark-small {
+  font-size: calc(40px * var(--mark-scale) * var(--mark-shrink, 1));
+  /* Pushed left rather than centred over the big line. Centred, the two words
+     stack their ascenders into each other — "let it" put the `t` straight
+     through the `d` of "ride" — and the lockup reads as one crowded word. */
+  transform: translateX(-0.9em) rotate(-3.2deg);
+}
+
+.title-mark-small .title-mark-face {
+  color: var(--card-face);
+}
+
+.title-mark-big {
+  font-size: calc(92px * var(--mark-scale) * var(--mark-shrink, 1));
+  /* Leaned into the line above rather than stacked under it. */
+  margin-top: -0.13em;
+  /* ...and given back the room underneath that a line-height of 0.9 took away.
+     The box a line of type occupies stops well above the extrude and above the
+     tail of a `g`, so a lockup ending in one — "devin's game" — had the room
+     code printed through its descender. */
+  padding-bottom: 0.18em;
+  transform: rotate(1.2deg);
+}
+
+/* ...unless there is no line above, in which case there is nothing to lean
+   into and the negative margin would only pull the mark into its own heading. */
+.title-mark-line:first-child {
+  margin-top: 0;
+}
+
+.title-mark-big .title-mark-face {
+  color: var(--accent);
+}
+
+
+@keyframes markSway {
+  0%, 100% { transform: rotate(-0.7deg); }
+  50% { transform: rotate(0.7deg); }
+}
+
+/* ─── A menu ───
+   Dealt out rather than stacked: four tilts, cycling, so a column of buttons
+   is a hand somebody put down and not a tower leaning one degree to the left.
+   The buttons themselves know nothing about this — they read `--btn-tilt` and
+   fall back to their own angle anywhere else in the game. */
+.menu-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.menu-stack > .sketch-btn:nth-child(4n+1) { --btn-tilt: -0.9deg; }
+.menu-stack > .sketch-btn:nth-child(4n+2) { --btn-tilt: 0.7deg; }
+.menu-stack > .sketch-btn:nth-child(4n+3) { --btn-tilt: -0.4deg; }
+.menu-stack > .sketch-btn:nth-child(4n+4) { --btn-tilt: 1deg; }
+
+/* ─── The cursor's own marks ───
+   Four crisp corners against a table drawn entirely in wobbly ink, which is
+   the point: they read as something laid *over* the paper rather than as one
+   more thing printed on it. Driven by `data-hovered`, which the button only
+   ever sets for a mouse, so there is no `:hover` here for a phone to latch
+   after a tap — and carried on `:focus-visible` as well, because arriving by
+   keyboard should not be the badly lit version of arriving by cursor. */
+.btn-brackets {
+  position: absolute;
+  inset: -8px;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 130ms ease, transform 130ms cubic-bezier(.2, .9, .3, 1.4);
+  z-index: 3;
+}
+
+.sketch-btn[data-hovered='true'] .btn-brackets,
+.sketch-btn:focus-visible .btn-brackets {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.btn-brackets i {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 3px solid var(--ink);
+}
+
+.btn-brackets i:nth-child(1) { top: 0; left: 0; border-right: none; border-bottom: none; }
+.btn-brackets i:nth-child(2) { top: 0; right: 0; border-left: none; border-bottom: none; }
+.btn-brackets i:nth-child(3) { bottom: 0; left: 0; border-right: none; border-top: none; }
+.btn-brackets i:nth-child(4) { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+/* The brackets *are* the focus ring. The browser's own would sit on top of them
+   saying the same thing a second time, in a rectangle nothing else on the page
+   is drawn with. */
+.sketch-btn:focus-visible {
+  outline: none;
+}
+
+/* ─── The prop in the corner ───
+   The deck, drawn at the size the game actually thinks about it, bleeding off
+   the bottom corner. It is behind the burst's foreground and in front of
+   nothing: `pointer-events` are off and it is `aria-hidden`, so it is scenery
+   in every sense.
+
+   Each card is turned by a wrapper rather than by its own `style`, because
+   `CardBack` sways on a keyframe and an animation beats an inline transform —
+   which is why the three cards on the old title card were dealt at three
+   angles and arrived in a neat vertical pile. */
+.title-prop {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  display: flex;
+  transform-origin: 100% 100%;
+  transform: translate(10%, 9%) scale(1.4) rotate(-15deg);
+  /* Line art at this size is a great deal of ink for scenery. Held back far
+     enough to sit behind the menu rather than argue with it, and no further —
+     a prop you have to look for is a prop nobody looks at. */
+  opacity: 0.9;
+}
+
+.title-prop > * {
+  margin-left: -34px;
+}
+
+.title-prop > *:first-child {
+  margin-left: 0;
+}
+
+/* Under about a thousand pixels there is no corner to spare — the menu column
+   would be standing on it. */
+@media (max-width: 1023px) {
+  .title-prop {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .poster-burst-wheel,
+  .title-mark,
   .tension-deal,
   .coin-flip,
   .coin-toss,

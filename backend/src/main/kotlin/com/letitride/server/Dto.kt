@@ -59,6 +59,13 @@ data class PendingActionView(
     val validCards: List<String> = emptyList(),
     /** How many picks are owed before the card resolves. */
     val picks: Int = 1,
+    /**
+     * Whether each pick has to come off a different seat — see
+     * [com.letitride.engine.PendingAction.oneCardPerSeat]. True for a card that
+     * trades two; false for one that gives cards of your own away, where every
+     * pick is necessarily yours.
+     */
+    val oneCardPerSeat: Boolean = true,
     /** What is for sale, when [kind] is `catalog`. Priced by the server. */
     val offers: List<com.letitride.engine.Offer> = emptyList(),
     /**
@@ -129,8 +136,22 @@ data class GameStateView(
      * total the seat has always shown, except that a card can turn it over —
      * see the "antimatter" card. `Player.handValue` is the physical sum and is
      * what the bust threshold counts; this is what the player wants to know.
+     *
+     * A seat in [hiddenHandIds] is simply not in here. A total is the one number
+     * that gives a hidden hand away entirely.
      */
     val handWorth: Map<String, Int> = emptyMap(),
+    /**
+     * Seats whose hand this viewer is not being shown — see the "redacted" card.
+     *
+     * Their cards are still in the player list, still countable and still
+     * pickable, but every one of them arrives face down (`Card.hidden`). This
+     * list is what lets the seat say *why*: a total it cannot print, rather than
+     * a total of nothing. Never contains the viewer's own seat, and on the
+     * public view — a caller with nobody in particular in mind — contains every
+     * hidden hand there is.
+     */
+    val hiddenHandIds: List<String> = emptyList(),
     /**
      * Seats a card forbids to go out — see the "antimatter" card. Not the same
      * as a seat that has simply drawn nothing yet, which is the opening rule and
@@ -249,6 +270,19 @@ data class GameStateView(
  * field added from here has to be thought about in those terms. Null gets the
  * fully public view — a test, or a caller with nobody in particular in mind.
  */
+/**
+ * This seat as [viewerId] is entitled to see it — see the "redacted" card.
+ *
+ * The cards stay, with their faces cut off: the count is public (you can see
+ * how many cards somebody is holding across any table), a card still has to be
+ * animated into the hand and picked out of it by a swap, and the id is what all
+ * of that is keyed on. What goes is anything anybody could read, and the total,
+ * which is the same thing said in one number.
+ */
+private fun Player.hiddenFrom(viewerId: String?): Player =
+    if (id == viewerId || !Engine.handIsHidden(this)) this
+    else copy(hand = hand.map { it.faceDown() }, handValue = 0)
+
 fun GameState.toView(
     viewerId: String?,
     roomCode: String,
@@ -267,7 +301,7 @@ fun GameState.toView(
     hostId = hostId,
     phase = phase,
     round = round,
-    players = players,
+    players = players.map { it.hiddenFrom(viewerId) },
     turnIndex = turnIndex,
     roundStartPlayer = roundStartPlayer,
     config = config,
@@ -285,6 +319,7 @@ fun GameState.toView(
             kind = it.kind,
             validCards = it.validCards,
             picks = it.picks,
+            oneCardPerSeat = it.oneCardPerSeat,
             offers = it.offers,
             phase = it.phase,
             responders = it.respondents,
@@ -295,7 +330,9 @@ fun GameState.toView(
     pendingOutcomes = pendingOutcomes,
     forcedDraws = forcedDraws,
     dealQueue = dealQueue,
-    handWorth = players.associate { it.id to Engine.handWorth(it) },
+    handWorth = players.filterNot { it.id != viewerId && Engine.handIsHidden(it) }
+        .associate { it.id to Engine.handWorth(it) },
+    hiddenHandIds = players.filter { it.id != viewerId && Engine.handIsHidden(it) }.map { it.id },
     cannotStayIds = players.filter { Engine.mayNotStop(it) }.map { it.id },
     bustStillCountsIds = players.filter { Engine.bustStillCounts(it) }.map { it.id },
     roundWinnerId = roundWinnerId,

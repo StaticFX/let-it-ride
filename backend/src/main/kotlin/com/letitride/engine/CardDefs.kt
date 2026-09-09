@@ -1084,6 +1084,168 @@ val ALL_IN = ActionCardDef(
 }
 
 // ═══════════════════════════════════════════════
+// Cards that go round the table
+// ═══════════════════════════════════════════════
+
+/** Their own ids, so the second half can raise a prompt against the first. */
+const val CIRCLEJERK_ID = "circlejerk"
+const val REVERSE_CIRCLEJERK_ID = "reverseCirclejerk"
+
+/**
+ * The seats either side of [playerId], in the order the turn goes round: the
+ * one on their left first.
+ *
+ * "Left" is the next seat in the player list, which is the next seat to play
+ * and the first of the `others` the client seats round its arc — so the order
+ * this returns is the order the table reads from that player outwards, and a
+ * card handed out in it lands where everybody watching expects.
+ *
+ * At a table of two the two neighbours are the same person, and there is one of
+ * them. Whatever became of a neighbour's round they are still a neighbour: a
+ * banked hand is points somebody can be given a duplicate for, and a busted one
+ * is somewhere to put a card nobody wants — see [TargetRule.reachesFinished],
+ * which is the same argument about the same kind of card.
+ */
+internal fun neighboursOf(state: GameState, playerId: String): List<String> {
+    val players = state.players
+    val seat = players.indexOfFirst { it.id == playerId }
+    if (seat < 0 || players.size < 2) return emptyList()
+    val left = players[(seat + 1) % players.size].id
+    val right = players[(seat + players.size - 1) % players.size].id
+    return if (left == right) listOf(left) else listOf(left, right)
+}
+
+/** Everything [playerId] has in front of them, hand and modifier row alike. */
+private fun holdings(state: GameState, playerId: String): List<Card> =
+    state.player(playerId)?.let { it.hand + it.passives }.orEmpty()
+
+/**
+ * One of your cards to each of the players either side of you, and you say
+ * which.
+ *
+ * A giving card, which is the thing this deck did not have: everything else
+ * that moves a card between seats either takes one or trades one, so the only
+ * way to be rid of a discordia was to make somebody agree to the swap or to
+ * spin the whole table. This hands two of them out at once and asks nothing in
+ * return, which makes it the most generous card in the game and the nastiest,
+ * depending entirely on what you choose to be generous with.
+ *
+ * The picks go round in the order [neighboursOf] returns them — the seat on
+ * your left first — because the wire carries a list of cards and not a list of
+ * pairs, and a card that asked "and who gets this one?" for every pick would be
+ * two prompts to answer one question. The description says which way it goes,
+ * so the choice is still a choice.
+ */
+val CIRCLEJERK = ActionCardDef(
+    id = CIRCLEJERK_ID,
+    name = "circlejerk",
+    description = "give the players either side of you one of your cards each — you pick, left first",
+    sigil = "↤↦",
+    // Nothing is aimed: the neighbours are whoever is sitting there, and the
+    // only decision is which cards leave. So it resolves on its drawer and the
+    // prompt it raises does the asking.
+    targetRule = TargetRule.SELF,
+    price = 20,
+) { ctx, play ->
+    if (play.phase == PHASE_PLAY) {
+        val neighbours = neighboursOf(ctx.state, play.from.id)
+        val mine = holdings(ctx.state, play.from.id)
+        // Nothing to give, or nobody to give it to — the opening deal, mostly.
+        if (neighbours.isEmpty() || mine.isEmpty()) {
+            ctx.wasted(CIRCLEJERK_ID, play.from.id)
+            return@ActionCardDef
+        }
+        ctx.raisePrompt(
+            defId = CIRCLEJERK_ID,
+            playerId = play.from.id,
+            phase = PHASE_GIVE,
+            targets = listOf(play.from.id),
+            kind = PickKind.CARD,
+            cards = mine.map { it.id },
+            // One card per neighbour, or as many as are actually in front of
+            // you: a player holding a single card gives that one card away
+            // rather than being told the whole thing fizzled.
+            picks = minOf(neighbours.size, mine.size),
+            // Every pick is off the same seat — the drawer's own — which is the
+            // one card in the game the usual rule would refuse outright.
+            oneCardPerSeat = false,
+        )
+        return@ActionCardDef
+    }
+
+    val neighbours = neighboursOf(ctx.state, play.from.id)
+    val holding = holdings(ctx.state, play.from.id).map { it.id }
+    // Re-read rather than trusted, and short answers filled in from what is
+    // actually in front of them — the same contract `legalPicks` keeps for the
+    // cards that go through it.
+    val given = (play.picked.filter { it in holding } + holding).distinct().take(neighbours.size)
+    for ((index, cardId) in given.withIndex()) ctx.handOver(play.from.id, neighbours[index], cardId)
+    // A neighbour who is already out can be handed a duplicate, and a banked
+    // hand holding two of the same card is a bust however quietly it came by
+    // them. That is most of the reason to play this on the seat next to you.
+    for (id in neighbours) ctx.resolveBustAfterGain(id, finishedToo = true)
+}
+
+/**
+ * ...and the same card pointing the other way: a card from each neighbour, and
+ * *they* say which.
+ *
+ * Which is what makes it a different card rather than the same one in reverse.
+ * You are taking two cards you did not choose from two people who would rather
+ * be rid of something, so the hand you end up with is the hand they decided you
+ * should have — and it is your own hand that has to survive both of them
+ * arriving at once.
+ *
+ * Both neighbours are asked together, the way an "all in" asks the table: an
+ * answer given in reply to somebody else's is not the same decision.
+ */
+val REVERSE_CIRCLEJERK = ActionCardDef(
+    id = REVERSE_CIRCLEJERK_ID,
+    name = "reverse circlejerk",
+    description = "the players either side of you each hand you a card — they pick which",
+    sigil = "↦↤",
+    targetRule = TargetRule.SELF,
+    price = 25,
+) { ctx, play ->
+    if (play.phase == PHASE_PLAY) {
+        val givers = neighboursOf(ctx.state, play.from.id)
+            .filter { holdings(ctx.state, it).isNotEmpty() }
+        if (givers.isEmpty()) {
+            ctx.wasted(REVERSE_CIRCLEJERK_ID, play.from.id)
+            return@ActionCardDef
+        }
+        ctx.raisePrompt(
+            defId = REVERSE_CIRCLEJERK_ID,
+            playerId = play.from.id,
+            phase = PHASE_HANDOVER,
+            targets = listOf(play.from.id),
+            responders = givers,
+            kind = PickKind.CARD,
+            // Everybody's, because the wire carries one list — each giver is
+            // only offered their own, which is the client's reading of a prompt
+            // that asks more than one player at once.
+            cards = givers.flatMap { id -> holdings(ctx.state, id).map { it.id } },
+        )
+        return@ActionCardDef
+    }
+
+    for (giverId in neighboursOf(ctx.state, play.from.id)) {
+        val holding = holdings(ctx.state, giverId)
+        if (holding.isEmpty()) continue
+        // A pick that is not theirs to give — a clock that ran out, a hand that
+        // changed under them — falls back to one that is, so nobody is left out
+        // of it for not having answered tidily.
+        val wanted = play.answers[giverId]?.cards?.firstOrNull()
+        val card = holding.firstOrNull { it.id == wanted } ?: holding.first()
+        ctx.handOver(giverId, play.from.id, card.id)
+    }
+    // Two cards arriving at once, from two people who chose them. Checked after
+    // both have landed rather than between them: one bust, whichever of them
+    // did it.
+    ctx.resolveBustAfterGain(play.from.id)
+}
+
+// ═══════════════════════════════════════════════
 // Passive cards
 // ═══════════════════════════════════════════════
 
@@ -1118,6 +1280,37 @@ val DOUBLE_POINTS = PassiveCardDef(
     accent = "#8a6a2f",
     seal = SealShape.HEXAGON,
     price = 30,
+)
+
+/**
+ * Your hand is yours to know. Nobody else at the table may look at it for as
+ * long as you are still in the round.
+ *
+ * The one card in the classic game that changes what a *viewer* is told rather
+ * than what the engine does, which is why the rule it needs is a single
+ * predicate — `Engine.handIsHidden` — read by the projection, by the map of
+ * what each hand is worth, and by `Room.redactFor`. Everything else about it is
+ * an ordinary modifier: it is dealt, it lies in the row in front of you, and it
+ * can be stolen, swapped or spun away, at which point the hand it was hiding is
+ * face up again and somebody else's is not.
+ *
+ * It scores nothing on purpose. What it is worth is that nobody can count how
+ * close you are to the flip, or read whether the card that just landed on you
+ * was the one that busted you — which is worth more in the last round of a game
+ * than any bonus on this list.
+ *
+ * The card itself stays face up. A hand hidden for no visible reason is a bug
+ * as far as anybody watching is concerned; hidden by something they can see and
+ * could take off you is a card.
+ */
+val REDACTED = PassiveCardDef(
+    id = "redacted",
+    name = "redacted",
+    description = "nobody but you can see your hand while you are still in the round",
+    sigil = "▬",
+    accent = "#3a4249",
+    seal = SealShape.SHIELD,
+    price = 25,
 )
 
 /** What being aimed at costs the player carrying [DISCORDIA]. */
@@ -1242,11 +1435,11 @@ object Catalog {
         FREEZE, DRAW_THREE, STRIKE, STEAL, HEX, SWAP, SWAP_CARDS, SLOTS,
         COIN_FLIP, SPIN_TABLE, ASSASSINATION, DONT_CARE,
         JUST_ONE_MORE, UNLUCKY_SEVEN, SUICIDE_BOMBER, ANTI_FLIP,
-        COMEBACK, ALL_IN, MUTATE, AUCTION,
+        COMEBACK, ALL_IN, CIRCLEJERK, REVERSE_CIRCLEJERK, MUTATE, AUCTION,
     ).associateBy { it.id }
 
     val passives: Map<String, PassiveCardDef> = listOf(
-        SECOND_LIFE, ARMOR, DOUBLE_POINTS, DISCORDIA, ANTIMATTER,
+        SECOND_LIFE, ARMOR, DOUBLE_POINTS, DISCORDIA, ANTIMATTER, REDACTED,
         PLUS_TWO, PLUS_FOUR, PLUS_SIX, PLUS_EIGHT, PLUS_TEN,
         // The effect cards. Never dealt — minted by whatever causes them — but
         // they are cards on the table like any other, so the client has to be

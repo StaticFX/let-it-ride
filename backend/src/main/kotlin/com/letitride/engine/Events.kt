@@ -87,6 +87,15 @@ sealed class GameEvent {
     @SerialName("discard")
     data class Discard(val playerId: String, val card: Card) : GameEvent()
 
+    /**
+     * One card crossed the table from [fromPlayerId] to [toPlayerId].
+     *
+     * Named for the card that first sent one, and it now covers every way a
+     * single card changes seats — a steal takes one at random, a circlejerk
+     * hands one over, a reverse circlejerk asks for one. Who chose it is the
+     * difference between those cards and no difference at all to the table
+     * watching it fly, which is what this event is for.
+     */
     @Serializable
     @SerialName("steal")
     data class Steal(val fromPlayerId: String, val toPlayerId: String, val card: Card) : GameEvent()

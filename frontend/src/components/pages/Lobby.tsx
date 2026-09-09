@@ -12,9 +12,13 @@ import { RulesPage } from '../rules/RulesPage'
 import { Countdown } from '../overlays/Countdown'
 import { SoundToggle } from '../ui/SoundToggle'
 import { SketchInput } from '../ui/SketchInput'
+import { TitleMark } from '../ui/TitleMark'
+import { PosterBurst } from '../ui/PosterBurst'
 
 const NAME_KEY = 'let-it-ride:name'
 const DEFAULT_BOTS = 3
+/** What an invite link carries. Query rather than path — see [inviteUrl]. */
+const INVITE_PARAM = 'room'
 
 type Screen = 'choose' | 'join' | 'room' | 'settings'
 
@@ -29,7 +33,7 @@ function newPlayerId(): string {
 }
 
 /**
- * Gets the room code to somebody else, by whichever of the three doors is open.
+ * Gets something to somebody else, by whichever of the three doors is open.
  *
  * The clipboard is only offered on a secure origin, and a homelab box on plain
  * http over a LAN address is not one — which is the documented way this thing
@@ -39,10 +43,12 @@ function newPlayerId(): string {
  *
  * The share sheet is the phone's own answer to this and needs no secure
  * context; the selection is the last resort, and is what the `select-all` on
- * the code itself has always been for. What comes back says which of them
- * happened, because "copied!" is a lie if the sheet was cancelled.
+ * the code itself has always been for — and, for the link, what the anchor is
+ * for, because a browser will always hand you the address of an `<a>` even when
+ * it will not let a script near the clipboard. What comes back says which of
+ * them happened, because "copied!" is a lie if the sheet was cancelled.
  */
-async function shareRoomCode(text: string): Promise<'copied' | 'shared' | 'none'> {
+async function handOut(text: string, sheet: ShareData): Promise<'copied' | 'shared' | 'none'> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text)
@@ -53,7 +59,7 @@ async function shareRoomCode(text: string): Promise<'copied' | 'shared' | 'none'
   }
   try {
     if (navigator.share) {
-      await navigator.share({ text })
+      await navigator.share(sheet)
       return 'shared'
     }
   } catch {
@@ -61,6 +67,59 @@ async function shareRoomCode(text: string): Promise<'copied' | 'shared' | 'none'
   }
   return 'none'
 }
+
+/**
+ * The address that arrives at a table, which is the room code with a door in
+ * front of it.
+ *
+ * A query parameter and not a path segment. `/WXYZ` is the prettier link, but
+ * it only resolves because the static handler falls everything it does not
+ * recognise through to the SPA shell — so it is a link whose correctness lives
+ * in the server's routing and in whatever proxy somebody has put in front of
+ * it. `?room=WXYZ` is the same page either way, and the same page under the
+ * Vite dev server, which is the one thing a link you are asking a stranger to
+ * click should be.
+ *
+ * The rest of the address bar is dropped rather than carried: an invite is
+ * where the game is, not where the host happened to be standing.
+ */
+function inviteUrl(code: string): string {
+  const url = new URL(window.location.href)
+  url.search = ''
+  url.hash = ''
+  url.searchParams.set(INVITE_PARAM, code)
+  return url.toString()
+}
+
+/**
+ * Reads the code somebody arrived with, and takes it back out of the address
+ * bar as it does.
+ *
+ * At module load rather than in a state initialiser, because this has a side
+ * effect and StrictMode calls an initialiser twice. Once is what it must be:
+ * the parameter is removed as it is read, so the bar stops advertising a table
+ * the moment the code has been handed over. Left there it would be a bookmark
+ * that works for ten minutes, and a reload after the game had moved on would
+ * drop somebody back on a join screen for a room that no longer exists.
+ */
+function takeInviteCode(): string {
+  const url = new URL(window.location.href)
+  const code = (url.searchParams.get(INVITE_PARAM) ?? '').trim().toUpperCase().slice(0, 4)
+  if (!code) return ''
+  url.searchParams.delete(INVITE_PARAM)
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  return code
+}
+
+/**
+ * The code somebody arrived under — spent, and not merely read.
+ *
+ * The lobby is unmounted for the length of a game, so a value that survived one
+ * would hand a player who came in by link and then walked out the join screen,
+ * with the code of the table they had just left already in it, instead of the
+ * front door. [Lobby] clears it the moment a seat is taken.
+ */
+let invitedTo = takeInviteCode()
 
 export function Lobby() {
   const state = useGameStore((s) => s.state)
@@ -70,10 +129,14 @@ export function Lobby() {
   const error = useGameStore((s) => s.error)
   const catalog = useGameStore((s) => s.catalog)
 
-  const [screen, setScreen] = useState<Screen>('choose')
+  // A link goes straight to the join screen with its code already in the box;
+  // the name is the only thing left to fill in, which is why that screen asks
+  // for one. Nothing is joined automatically — walking in under a name you
+  // cannot see is not an entrance anybody asked for.
+  const [screen, setScreen] = useState<Screen>(invitedTo ? 'join' : 'choose')
   const [playerName, setPlayerName] = useState(() => localStorage.getItem(NAME_KEY) ?? '')
-  const [joinCode, setJoinCode] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [joinCode, setJoinCode] = useState(invitedTo)
+  const [shared, setShared] = useState<'code' | 'link' | null>(null)
   const [showRules, setShowRules] = useState(false)
   const [showDeckCards, setShowDeckCards] = useState(false)
   const [countdown, setCountdown] = useState(false)
@@ -111,6 +174,8 @@ export function Lobby() {
   useEffect(() => {
     if (inSession) {
       wasInSession.current = true
+      // Sitting down anywhere spends the invite — see [invitedTo].
+      invitedTo = ''
     } else if (wasInSession.current) {
       wasInSession.current = false
       setScreen('choose')
@@ -192,8 +257,11 @@ export function Lobby() {
   if (view === 'settings' && config) {
     return (
       <div className="page-shell justify-start" data-testid="settings-screen" data-host={isHost}>
-        <div className="content-width">
-          <h1 className="text-4xl mb-1 text-center sway-slow">~ settings ~</h1>
+        <PosterBurst />
+        <div className="poster-content content-width">
+          <div className="mb-2 flex justify-center">
+            <TitleMark big="settings" scale={0.46} />
+          </div>
           <p className="text-muted text-center mb-6">
             {isHost ? 'pick your deck, win condition & house rules' : 'the host decides these'}
           </p>
@@ -210,13 +278,22 @@ export function Lobby() {
   if (view === 'choose' && connection !== 'connected' && connection !== 'connecting') {
     return (
       <div className="page-shell justify-center" data-testid="title-screen">
-        <div className="max-w-[400px] w-full text-center">
-          <div className="flex justify-center mb-4">
-            <CardBack size="deck" style={{ transform: 'rotate(-12deg)', opacity: 0.6 }} />
-            <CardBack size="deck" style={{ transform: 'rotate(3deg)', marginLeft: -40, opacity: 0.8 }} />
-            <CardBack size="deck" style={{ transform: 'rotate(12deg)', marginLeft: -40 }} />
+        <PosterBurst />
+
+        {/* The deck, at the size the game actually thinks about it. Scenery, and
+            the first thing on any of these screens that is not a control — see
+            `.title-prop`, which also says why each card needs a wrapper of its
+            own to be turned by. */}
+        <div className="title-prop" aria-hidden="true">
+          <div style={{ transform: 'rotate(-11deg)', opacity: 0.5 }}><CardBack size="deck" /></div>
+          <div style={{ transform: 'rotate(0deg)', opacity: 0.75 }}><CardBack size="deck" /></div>
+          <div style={{ transform: 'rotate(11deg)' }}><CardBack size="deck" /></div>
+        </div>
+
+        <div className="poster-content max-w-[400px] w-full text-center">
+          <div className="mb-7 flex justify-center">
+            <TitleMark small="let it" big="ride" scale={1.3} />
           </div>
-          <h1 className="text-[52px] mb-1 sway-slow">let it ride</h1>
 
           <div className="text-left mb-6">
             <label>what's your name?</label>
@@ -233,30 +310,32 @@ export function Lobby() {
 
           {(localError || error) && <p className="text-[var(--accent)] mb-4" data-testid="lobby-error">{localError ?? error}</p>}
 
-          <div className="flex flex-wrap justify-center gap-3.5 mb-4">
-            <SketchButton variant="primary" testId="host-game" onClick={() => host()} disabled={!playerName.trim() || busy}>
+          {/* One column rather than two rows with an "or" ruled between them.
+              Four ways in is a menu, and a menu is a thing you read down — the
+              old pairing said these were two kinds of choice when they are
+              four of the same kind, and it put the one most people want
+              (bots, no friends needed) below a divider that read as a footnote. */}
+          <div className="menu-stack">
+            <SketchButton block variant="primary" testId="host-game" onClick={() => host()} disabled={!playerName.trim() || busy}>
               host a game
             </SketchButton>
-            <SketchButton variant="ghost" testId="join-game" onClick={() => setScreen('join')} disabled={!playerName.trim()}>
+            <SketchButton block variant="secondary" testId="join-game" onClick={() => setScreen('join')} disabled={!playerName.trim()}>
               join a game
             </SketchButton>
-          </div>
-
-          <div className="flex items-center gap-3 my-4">
-            <div className="divider-line" />
-            <small>or</small>
-            <div className="divider-line" />
-          </div>
-
-          <div className="flex flex-wrap justify-center gap-3.5">
-            <SketchButton variant="ghost" testId="play-vs-bots" onClick={() => host(DEFAULT_BOTS)} disabled={!playerName.trim() || busy}>
+            <SketchButton block variant="tertiary" testId="play-vs-bots" onClick={() => host(DEFAULT_BOTS)} disabled={!playerName.trim() || busy}>
               play vs bots
             </SketchButton>
-            <SketchButton variant="ghost" testId="open-rules" onClick={() => setShowRules(true)}>rules</SketchButton>
+            <SketchButton block variant="ghost" testId="open-rules" onClick={() => setShowRules(true)}>rules</SketchButton>
           </div>
 
-          <div className="mt-6 flex justify-center">
-            <SoundToggle />
+          {/* Framed, like the little square buttons along the bottom of an
+              arcade menu. Loose on the page it was the one glyph on the screen
+              nobody had drawn — a colour emoji floating under four hand-inked
+              boxes reads as something the browser put there. */}
+          <div className="mt-7 flex justify-center">
+            <div className="sketch-box rounded -rotate-1 px-2 py-1">
+              <SoundToggle />
+            </div>
           </div>
         </div>
       </div>
@@ -267,23 +346,64 @@ export function Lobby() {
   if (view === 'join' && connection !== 'connected' && connection !== 'connecting') {
     return (
       <div className="page-shell justify-center" data-testid="join-screen">
-        <div className="max-w-[400px] w-full text-center">
-          <h1 className="text-4xl mb-2">join a game</h1>
-          <p className="text-muted mb-6">ask the host for the code</p>
-          <SketchInput
-            type="text"
-            data-testid="join-code-input"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            onKeyDown={(e) => e.key === 'Enter' && join()}
-            placeholder="_ _ _ _"
-            maxLength={4}
-            className="text-center text-4xl tracking-[0.5em] font-bold mb-4"
-          />
+        <PosterBurst />
+        <div className="poster-content max-w-[400px] w-full text-center">
+          <div className="mb-3 flex justify-center">
+            <TitleMark small="join a" big="game" scale={0.62} />
+          </div>
+          {/* Derived rather than remembered, so it can only ever say what is
+              true: the box still holds the code that was in the link. Clear it
+              and type another and this is a screen you came to the ordinary
+              way again, which is exactly what it goes back to saying. */}
+          <p className="text-muted mb-6">
+            {invitedTo && joinCode === invitedTo
+              ? "you've been invited — just say who you are"
+              : 'ask the host for the code'}
+          </p>
+
+          {/* The name is asked for again here, and not only carried over from
+              the title card, because a link is a way into this screen that
+              never went past it: somebody following one has typed nothing
+              anywhere. It is the same field and the same key, so anyone who did
+              come the long way finds their name already in it. */}
+          <div className="text-left mb-4">
+            <label>what's your name?</label>
+            <SketchInput
+              type="text"
+              data-testid="name-input"
+              value={playerName}
+              onChange={(e) => rememberName(e.target.value)}
+              placeholder="scribble it here…"
+              maxLength={16}
+              className="mt-1"
+            />
+          </div>
+
+          <div className="text-left mb-4">
+            <label>room code</label>
+            <SketchInput
+              type="text"
+              data-testid="join-code-input"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === 'Enter' && join()}
+              placeholder="_ _ _ _"
+              maxLength={4}
+              className="text-center text-4xl tracking-[0.5em] font-bold mt-1"
+            />
+          </div>
+
           {(localError || error) && <p className="text-[var(--accent)] mb-4" data-testid="lobby-error">{localError ?? error}</p>}
-          <div className="flex gap-3.5">
+          <div className="flex justify-center gap-3.5">
             <SketchButton variant="ghost" testId="join-back" onClick={() => { setScreen('choose'); setLocalError(null) }}>← back</SketchButton>
-            <SketchButton variant="primary" testId="join-submit" onClick={join} disabled={busy}>join!</SketchButton>
+            <SketchButton
+              variant="primary"
+              testId="join-submit"
+              onClick={join}
+              disabled={busy || !playerName.trim() || joinCode.trim().length < 4}
+            >
+              join!
+            </SketchButton>
           </div>
         </div>
       </div>
@@ -294,7 +414,8 @@ export function Lobby() {
   if (connection === 'connecting' || !state || !config) {
     return (
       <div className="page-shell justify-center" data-testid="connecting-screen">
-        <div className="text-center">
+        <PosterBurst />
+        <div className="poster-content text-center">
           <h2 className="mb-3 sway-mid">connecting…</h2>
           <p className="text-muted mb-6">finding the table</p>
           <SketchButton variant="ghost" testId="connect-cancel" onClick={leave}>cancel</SketchButton>
@@ -304,6 +425,17 @@ export function Lobby() {
   }
 
   // ── Waiting room ──
+  const invite = roomCode ? inviteUrl(roomCode) : ''
+
+  // Only a copy leaves a mark. A share sheet has already told the host what it
+  // did, and one that was cancelled did nothing at all.
+  async function hand(what: 'code' | 'link', text: string, sheet: ShareData) {
+    if ((await handOut(text, sheet)) === 'copied') {
+      setShared(what)
+      setTimeout(() => setShared(null), 2000)
+    }
+  }
+
   const winLabel = config.winCondition === 'first_to_score'
     ? `first to ${config.targetScore}`
     : `best of ${config.totalRounds} rounds`
@@ -312,30 +444,66 @@ export function Lobby() {
   const missing = Math.max(0, minPlayers - players.length)
 
   return (
-    <div className="page-shell justify-start" data-testid="waiting-room" data-host={isHost}>
+    <>
+      {/* Outside the shell rather than inside it. Three-two-one across the whole
+          window is not part of the waiting room — it is what replaces it — and
+          a `fixed` overlay written as a child of a page that scrolls is one
+          ancestor `transform` or `filter` away from being anchored to that page
+          instead of to the window. */}
       {countdown && <Countdown onDone={startGame} />}
 
-      <div className="max-w-[460px] w-full">
+    <div className="page-shell justify-start" data-testid="waiting-room" data-host={isHost}>
+      <PosterBurst />
+
+      <div className="poster-content max-w-[460px] w-full">
         <div className="text-center mb-8">
-          <h1 className="sway-slow">{playerName ? `${playerName}'s game` : 'let it ride'}</h1>
+          {/* Whose table this is, set the way the front door was. The name is
+              somebody's to type, so it goes on the small line where a long one
+              costs a lockup rather than a layout. */}
+          <div className="flex justify-center">
+            <TitleMark
+              small={playerName ? `${playerName}'s` : 'let it'}
+              big={playerName ? 'game' : 'ride'}
+              scale={0.5}
+            />
+          </div>
           {roomCode && (
-            <button
-              onClick={async () => {
-                if ((await shareRoomCode(roomCode)) === 'copied') {
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 2000)
-                }
-              }}
-              className="mt-3 bg-transparent border-none cursor-pointer block mx-auto"
-            >
-              <label>room code: </label>
-              <span data-testid="room-code" className="display text-4xl tracking-[0.25em] room-code-border pb-1 select-all">{roomCode}</span>
-              {/* Four letters somebody has to read out or send on. What the tap
-                  actually does depends on where the game is being served from —
-                  see [shareRoomCode] — so the caption only promises the one
-                  thing that is always true. */}
-              <small className="block mt-2">{copied ? 'copied!' : 'tap to share it with your friends'}</small>
-            </button>
+            <>
+              <button
+                onClick={() => hand('code', roomCode, { text: roomCode })}
+                className="mt-3 bg-transparent border-none cursor-pointer block mx-auto"
+              >
+                <label>room code: </label>
+                <span data-testid="room-code" className="display text-4xl tracking-[0.25em] room-code-border pb-1 select-all">{roomCode}</span>
+                {/* Four letters somebody has to read out or send on. What the tap
+                    actually does depends on where the game is being served from —
+                    see [handOut] — so the caption only promises the one thing
+                    that is always true. */}
+                <small className="block mt-2">{shared === 'code' ? 'copied!' : 'tap to share it with your friends'}</small>
+              </button>
+
+              {/* An anchor, and a real `href`, for a link that is never
+                  followed here: reading out four letters is the thing you do in
+                  a room, and pasting an address is the thing you do everywhere
+                  else, so the second one has to be a link the browser itself
+                  recognises. That is what gives a long press its "copy link
+                  address" and a right click its menu — the last way through
+                  when the clipboard is barred and there is no share sheet,
+                  which is exactly the plain-http LAN box this gets played on.
+                  The click is ours because a tap should share it, not navigate
+                  the host away from their own table. */}
+              <a
+                href={invite}
+                data-testid="invite-link"
+                onClick={(e) => {
+                  e.preventDefault()
+                  hand('link', invite, { title: 'let it ride', text: `come and play — room ${roomCode}`, url: invite })
+                }}
+                className="tap-target mt-1 display text-base text-[var(--accent)] no-underline -rotate-1"
+              >
+                {shared === 'link' ? 'link copied!' : 'or send them a link →'}
+              </a>
+            </>
           )}
         </div>
 
@@ -469,5 +637,6 @@ export function Lobby() {
         </div>
       </div>
     </div>
+    </>
   )
 }

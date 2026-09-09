@@ -132,15 +132,24 @@ object DeckPresets {
      * One antimatter, which is the harshest card in the game and is here on
      * purpose: this is the house deck and the house plays for keeps. Taking it
      * back out is one line if a table finds it too much.
+     *
+     * The two circlejerks are here for the antimatter's sake as much as their
+     * own. A curse is only a card if it can be got rid of, and until these the
+     * only ways were a swap somebody had to be pointed at or a spin that moved
+     * the whole table; handing one to the seat next to you is the cheapest of
+     * them and the meanest. One redacted, which is a bluff rather than a bonus —
+     * it is worth most in a deck that already rewards counting what everybody
+     * else is holding.
      */
     val LET_IT_RIDE = DeckPreset(
         id = "letitride",
         name = "Let It Ride",
-        description = "0-13 number cards, freeze & draw 3, swaps, passives",
+        description = "0-13 number cards, freeze & draw 3, swaps, circlejerks, passives",
         deck = DeckConfig(
             numberCards = flip7Numbers(13),
-            actionCards = times(DRAW_THREE.id, 3) + times(FREEZE.id, 3) + times(SWAP_CARDS.id, 2),
-            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id, DISCORDIA.id, ANTIMATTER.id) +
+            actionCards = times(DRAW_THREE.id, 3) + times(FREEZE.id, 3) + times(SWAP_CARDS.id, 2) +
+                times(CIRCLEJERK.id, 2) + REVERSE_CIRCLEJERK.id,
+            passiveCards = listOf(SECOND_LIFE.id, DOUBLE_POINTS.id, DISCORDIA.id, ANTIMATTER.id, REDACTED.id) +
                 times(PLUS_TEN.id, 2) + times(PLUS_FOUR.id, 5),
         ),
     )
@@ -222,10 +231,11 @@ object DeckPresets {
                 times(SPIN_TABLE.id, 2) + listOf(ASSASSINATION.id, DONT_CARE.id) +
                 times(UNLUCKY_SEVEN.id, 2) + times(JUST_ONE_MORE.id, 2) +
                 times(SUICIDE_BOMBER.id, 2) + times(COMEBACK.id, 2) + times(ALL_IN.id, 2) +
+                times(CIRCLEJERK.id, 2) + times(REVERSE_CIRCLEJERK.id, 2) +
                 times(MUTATE.id, 2),
             passiveCards = times(ARMOR.id, 2) + times(SECOND_LIFE.id, 2) +
                 listOf(DOUBLE_POINTS.id) + times(DISCORDIA.id, 2) + times(ANTIMATTER.id, 2) +
-                times(PLUS_TEN.id, 3) + times(PLUS_FOUR.id, 5),
+                times(REDACTED.id, 2) + times(PLUS_TEN.id, 3) + times(PLUS_FOUR.id, 5),
         ),
     )
 

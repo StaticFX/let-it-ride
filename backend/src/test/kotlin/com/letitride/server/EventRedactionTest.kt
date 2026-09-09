@@ -27,14 +27,16 @@ class EventRedactionTest {
      * animation, and an event nobody may see is an event nobody can animate.
      */
     private val public = setOf(
-        "Draw", "PassiveGained", "Bust", "Discard", "Steal", "CardsSwapped",
-        "SecondChance", "Slots", "Bought",
+        // A modifier lies face up in the row in front of a seat, whoever is
+        // sitting there and whatever they are hiding in their hand.
+        "PassiveGained",
+        // A bust is the end of somebody's round, and a seat whose round is over
+        // shows its cards — including the "redacted" that was hiding them a
+        // moment ago. `Engine.handIsHidden` stops being true in the same breath.
+        "Bust",
         // Playing a gambler card is exactly how the table finds out what you
         // were carrying. Half the point of holding it was that they did not.
         "GamblerPlayed",
-        // The table watched this one come off the deck before anybody decided
-        // whose it was — that is what makes handing it on a decision.
-        "Redirected",
         // All three of these are about a card that is already face up: it was
         // turned over when it was played, which is the price of playing one.
         // A card going *home* is going back somewhere nobody can see, but the
@@ -50,8 +52,25 @@ class EventRedactionTest {
         "ShopOpened", "AuctionClosed",
     )
 
-    /** Events the redactor cuts down before they go out. Keep in step with `Room.redactFor`. */
-    private val redacted = setOf("GamblerDrawn")
+    /**
+     * Events the redactor cuts down before they go out. Keep in step with
+     * `Room.redactFor`.
+     *
+     * Two different cuts. `GamblerDrawn` loses its card entirely — nobody but
+     * the drawer is told there was one. The rest keep the card and lose its
+     * *face*, because a hidden hand is still a hand the table watches cards fly
+     * into and counts when they land, and every one of them is only cut when it
+     * is going into — or coming out of — a hand behind a "redacted".
+     *
+     * `AllIn` is deliberately not here. A bet is a card its owner turned face
+     * down and the whole table turned face up together, which is the card doing
+     * what it says rather than a leak.
+     */
+    private val redacted = setOf(
+        "GamblerDrawn",
+        "Draw", "Steal", "Redirected", "Bought", "Slots", "CardsSwapped",
+        "Discard", "SecondChance",
+    )
 
     @Test
     fun `every event carrying a card is either public or redacted`() {

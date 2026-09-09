@@ -19,6 +19,17 @@ export interface Card {
   value: number
   defId?: string
   suit?: string
+  /**
+   * A card you are not being shown — see the "redacted" card, and
+   * `GameStateView.hiddenHandIds`.
+   *
+   * The id and the kind are all that arrive; the label, the value, the suit and
+   * the definition have been cut out by the server. Draw a back for it wherever
+   * it turns up — `PlayingCard` does that once, for every one of them — and
+   * never read anything else off it. Older servers omit it and nothing is
+   * hidden.
+   */
+  hidden?: boolean
 }
 
 // ─── Players ───
@@ -251,6 +262,14 @@ export interface PendingActionView {
   validCards?: string[]
   /** How many picks are owed before the card resolves. */
   picks?: number
+  /**
+   * Whether each pick has to come off a different seat. True for a card that
+   * trades two — two picks on one hand is a hand that has not changed — and
+   * false for one that gives cards of your own away, where every pick is
+   * necessarily yours. Older servers omit it, and every card that picked cards
+   * was a trade.
+   */
+  oneCardPerSeat?: boolean
   /** What is for sale, when `kind` is `catalog`. */
   offers?: Offer[]
   /**
@@ -345,6 +364,16 @@ export interface GameStateView {
    * hand; this is what to print. Older servers omit it.
    */
   handWorth?: Record<string, number>
+  /**
+   * Seats whose hand you are not being shown — see the "redacted" card.
+   *
+   * Their cards are still in the player list and still countable, but every one
+   * of them arrives face down (`Card.hidden`) and the seat is absent from
+   * `handWorth`: a total is the one number that gives a hand away entirely. This
+   * is what lets the seat print a "?" rather than a nought. Never your own seat,
+   * and older servers omit it.
+   */
+  hiddenHandIds?: string[]
   roundWinnerId?: string
   gameWinnerId?: string
   flip7PlayerId?: string
@@ -446,6 +475,11 @@ export type GameEvent =
   | { type: 'stay'; playerId: string }
   | { type: 'skip'; playerId: string }
   | { type: 'discard'; playerId: string; card: Card }
+  /**
+   * One card crossed the table from one seat to another. Named for the card
+   * that first sent one; a circlejerk hands one over and a reverse circlejerk
+   * asks for one, and none of that is any different to watch.
+   */
   | { type: 'steal'; fromPlayerId: string; toPlayerId: string; card: Card }
   | { type: 'swap'; fromPlayerId: string; toPlayerId: string }
   /**

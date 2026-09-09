@@ -14,6 +14,8 @@ import com.letitride.engine.GameMode
 import com.letitride.engine.GamePhase
 import com.letitride.engine.GameState
 import com.letitride.engine.LobbyRules
+import com.letitride.engine.PHASE_GIVE
+import com.letitride.engine.PHASE_HANDOVER
 import com.letitride.engine.forcedRulesFor
 import com.letitride.engine.Card
 import com.letitride.engine.MAX_PLAYERS
@@ -231,6 +233,115 @@ private val BOT_NAMES =
 class Connection(val playerId: String, val outbound: Channel<String>)
 
 /**
+ * Trims a batch of events for one viewer, against the state they arrived with.
+ *
+ * The single place an event is cut down for who is reading it, and it should
+ * stay that way — a second one would be a second place to forget. Everything
+ * else in the game is public by design: the table watches what happens and
+ * replays it as animation, and an event nobody may see is an event nobody can
+ * animate.
+ *
+ * Two things are hidden, and they hide differently. A gambler card going into a
+ * tray is cut out altogether — nobody but its owner is told which card it even
+ * was. A card going into, or coming out of, a hand behind a "redacted" keeps its
+ * id and loses its *face*, because the table still has to watch it fly and count
+ * it when it lands; `Card.faceDown` is that cut.
+ *
+ * [state] is the state *after* the transition, which is what turns a busted
+ * seat's cards face up in the same push as the card that busted them:
+ * `Engine.handIsHidden` stops being true in the same breath as the bust.
+ *
+ * A free function rather than a method on [Room] because it is pure — a batch, a
+ * reader and a table in, a batch out — and because the one thing worth testing
+ * about it is exactly that. `EventRedactionTest` walks the sealed hierarchy and
+ * fails when an event carrying a card is neither listed as public nor handled
+ * here, which is what stops the next hidden thing being added without a line in
+ * this function.
+ */
+internal fun redactFor(events: List<GameEvent>, viewerId: String, state: GameState): List<GameEvent> {
+    val hidden = state.players
+        .filter { it.id != viewerId && Engine.handIsHidden(it) }
+        .map { it.id }
+        .toSet()
+    if (hidden.isEmpty() && events.none { it is GameEvent.GamblerDrawn }) return events
+
+    // Only a number card lands in a hand. A modifier goes to the row in front of
+    // the seat and a spent action card to the discard pile, both of which are
+    // public and neither of which this card claims to cover.
+    fun into(playerId: String, card: Card) = playerId in hidden && card.kind == CardKind.NUMBER
+
+    return events.map { event ->
+        when (event) {
+            // Nobody but the drawer is told which card, only that one went into
+            // a hand nobody can see.
+            is GameEvent.GamblerDrawn ->
+                if (event.playerId != viewerId) event.copy(card = null) else event
+
+            // Arriving in a hidden hand: the flight is public, the face is not.
+            // The same question four times, read off where each card is *going*
+            // rather than where it came from — a card leaving one is lying face
+            // up in front of somebody else by the time this goes out, and
+            // cutting it there would make that seat's own hand unreadable.
+            is GameEvent.Draw ->
+                if (into(event.playerId, event.card)) event.copy(card = event.card.faceDown()) else event
+
+            is GameEvent.Steal ->
+                if (into(event.toPlayerId, event.card)) event.copy(card = event.card.faceDown()) else event
+
+            is GameEvent.Redirected ->
+                if (into(event.toPlayerId, event.card)) event.copy(card = event.card.faceDown()) else event
+
+            // ...and the one bought straight into it, whose price stays public
+            // because a score that moves has to be accountable.
+            is GameEvent.Bought ->
+                if (into(event.playerId, event.card)) event.copy(card = event.card.faceDown()) else event
+
+            // The card the reels are about to land on, which is this seat's next
+            // card announced a beat early.
+            is GameEvent.Slots -> {
+                val card = event.card
+                if (card != null && into(event.playerId, card)) event.copy(card = card.faceDown()) else event
+            }
+
+            // Two cards, each read by where it is going.
+            is GameEvent.CardsSwapped -> event.copy(
+                firstCard = if (into(event.secondPlayerId, event.firstCard)) {
+                    event.firstCard.faceDown()
+                } else {
+                    event.firstCard
+                },
+                secondCard = if (into(event.firstPlayerId, event.secondCard)) {
+                    event.secondCard.faceDown()
+                } else {
+                    event.secondCard
+                },
+            )
+
+            // Leaving one, and the only two that can while their owner is still
+            // in the round. The discard pile is a *count* on the wire, so this
+            // event is the only look anybody would get at a card that was in a
+            // hidden hand a moment ago — and knowing what has gone narrows what
+            // is left, which is the thing the card sells.
+            is GameEvent.Discard ->
+                if (event.playerId in hidden) event.copy(card = event.card.faceDown()) else event
+
+            // Both halves of a save, or neither: the two cards match by
+            // definition, so cutting one and not the other names it anyway. The
+            // card spent to stop it stays — it came off the modifier row, which
+            // everybody can see.
+            is GameEvent.SecondChance ->
+                if (event.playerId in hidden) {
+                    event.copy(card = event.card.faceDown(), matched = event.matched?.faceDown())
+                } else {
+                    event
+                }
+
+            else -> event
+        }
+    }
+}
+
+/**
  * A batch of events one client is still animating.
  *
  * The room deliberately does not know what the animation is or how long it
@@ -416,15 +527,19 @@ internal fun tollFrom(player: Player): Int =
 /**
  * Which cards a bot points a card-picking prompt at.
  *
- * A prompt that asks the whole table at once is asking each of them for one
- * of their own — an "all in" bet — and it is the highest and the lowest bet
- * that pay for it, so the bot bets from the middle of its hand.
+ * A circlejerk either way is asking which of its own cards to *give away*, so
+ * the bot leads with the worst thing it is holding — which is how a discordia
+ * or an antimatter finds a new home — and fills the rest in behind it.
+ *
+ * A prompt that asks the whole table at once is otherwise asking each of them
+ * for one of their own — an "all in" bet — and it is the highest and the lowest
+ * bet that pay for it, so the bot bets from the middle of its hand.
  *
  * A prompt that asks one player for two is a trade, and the bot plays it as
- * one: lead with the worst thing it is holding, which is how a discordia or
- * an antimatter finds a new home, and take the best thing somebody else has
- * that will not collide with a card it already holds. The engine keeps the
- * pick legal either way; this only decides which legal pick it is.
+ * one: lead with the worst thing it is holding, and take the best thing
+ * somebody else has that will not collide with a card it already holds. The
+ * engine keeps the pick legal either way; this only decides which legal pick it
+ * is.
  */
 internal fun botCardPicks(
     snapshot: GameState,
@@ -435,6 +550,13 @@ internal fun botCardPicks(
     val offered = pending.validCards.toSet()
     val bot = snapshot.player(botId) ?: return rng.shuffled(pending.validCards)
     val mine = (bot.hand + bot.passives).filter { it.id in offered }
+
+    if (pending.phase == PHASE_GIVE || pending.phase == PHASE_HANDOVER) {
+        // These cards are leaving, so they go worst first — a bet is the only
+        // other prompt that asks for your own cards and there the card stays.
+        val worst = mine.sortedBy { cardWorth(it) }.map { it.id }
+        return worst + rng.shuffled(pending.validCards.filterNot { it in worst })
+    }
 
     if (pending.respondents.size > 1) {
         // Everybody is being asked at once: this is a bet, and the ends of
@@ -1329,7 +1451,7 @@ class Room(
      */
     private suspend fun broadcast(events: List<GameEvent>) {
         for ((playerId, connection) in connections) {
-            val message = ServerMessage.State(view(playerId), redactFor(events, playerId))
+            val message = ServerMessage.State(view(playerId), redactFor(events, playerId, state))
             connection.outbound.trySend(json.encodeToString(ServerMessage.serializer(), message))
         }
     }
@@ -1338,27 +1460,6 @@ class Room(
         val connection = connections[playerId] ?: return
         val message = mutex.withLock { ServerMessage.State(view(playerId), emptyList()) }
         connection.outbound.trySend(json.encodeToString(ServerMessage.serializer(), message))
-    }
-
-    /**
-     * Trims a batch of events for one viewer.
-     *
-     * The single place an event is cut down for who is reading it, and it should
-     * stay that way — a second one would be a second place to forget. Everything
-     * else in the game is public by design: the table watches what happens and
-     * replays it as animation, and an event nobody may see is an event nobody
-     * can animate.
-     *
-     * `EventRedactionTest` walks the sealed hierarchy and fails when an event
-     * carrying a card is neither listed as public nor handled here, which is
-     * what stops the next hidden thing being added without a line in this
-     * function.
-     */
-    private fun redactFor(events: List<GameEvent>, viewerId: String): List<GameEvent> {
-        if (events.none { it is GameEvent.GamblerDrawn }) return events
-        return events.map {
-            if (it is GameEvent.GamblerDrawn && it.playerId != viewerId) it.copy(card = null) else it
-        }
     }
 
     private suspend fun send(connection: Connection, message: ServerMessage) {

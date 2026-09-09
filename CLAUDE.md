@@ -54,6 +54,19 @@ the one place an *event* is cut down for who is reading it, and
 somebody having said who may see it. A leak here has no symptom, which is why
 there are three guards and not one.
 
+**...and the ordinary hand can be hidden too.** "Redacted" is a plain modifier
+in the classic game that turns the same machinery on a hand of number cards, so
+the per-viewer projection is no longer only rolling rules' business.
+`Engine.handIsHidden` is the single predicate — read by `Player.hiddenFrom`,
+which blanks the cards, by `handWorth`, which leaves the seat out rather than
+sending a nought, and by `redactFor`. The cut is different from the gambler
+hand's: a hidden card keeps its id and loses its *face* (`Card.faceDown`),
+because the table still has to count it, watch it fly in and be able to point a
+swap at it — the client draws a back for anything carrying `hidden`, in
+`PlayingCard` and nowhere else. It lasts only while its holder's round is
+running: a seat that has gone out is scored in front of everybody, and a bust has
+to be able to show the card that did it.
+
 **`engine/` is pure.** No I/O, no coroutines, no clock, no `Math.random`. One
 entry point — `Engine.transition(state, action, rng)` — returning a new state and
 the events it produced. Card effects talk to the game only through `Ctx`, and
@@ -325,6 +338,19 @@ the server you just deployed.
 **Anything a client should not be able to do** — put it behind `testHooksEnabled()`
 and add the negative test. `DevModeTest` is the pattern: a room without the flag
 ignores the message entirely.
+
+**Anything on a screen you arrive at rather than play on** — the title card, the
+join screen, the waiting room, settings, the round summary and the game over —
+is *printed*, and the felt is not. Those screens get `PosterBurst` behind them,
+a `TitleMark` instead of an `<h1>`, and buttons with a colour in them; the table
+keeps the quiet paper it always had, because a game screen has to be read while
+something is happening on it and a menu only has to be arrived at. There is one
+palette and it is the cream one — the weight changed, not the colours, and a
+second dark theme is not hiding behind any of this. Three fills and a way out is
+the whole button vocabulary (`primary`, `secondary`, `tertiary`, `ghost`): a
+screen with two primaries on it has not decided what it is for. The wordmark is
+sized by one `scale` and everything inside it is in `em`, so a heading is the
+same lockup at half size and never the same lockup with a wildly heavy outline.
 
 ## Frontend conventions
 

@@ -46,9 +46,34 @@ data class Card(
     val value: Int,
     val defId: String? = null,
     val suit: String? = null,
+    /**
+     * A card the reader of this copy is not being shown — see the "redacted"
+     * card, and [faceDown].
+     *
+     * Never true in the engine's own state. It is set by the projection in
+     * `GameState.toView` and by `Room.redactFor`, both of which build a *copy*
+     * of a card for one viewer, and it is the one thing the client needs in
+     * order to draw a back instead of a face wherever a card can turn up. A
+     * flag rather than a null card because the id still has to travel: the
+     * table has to be able to count the hand, animate the card into it and
+     * pick it out of a swap without ever reading it.
+     */
+    val hidden: Boolean = false,
 ) {
     /** Minted mid-round (e.g. by double-or-nothing); never returns to the deck. */
     val isEphemeral: Boolean get() = id.startsWith("tmp-")
+
+    /**
+     * The same card with its face cut off: an id, a kind, and nothing anybody
+     * could read.
+     *
+     * Everything that identifies the *card* goes — the label, the value, the
+     * suit and the definition — because any one of them names it. What is left
+     * is what the table is entitled to know: that a card is there, and where it
+     * went.
+     */
+    fun faceDown(): Card =
+        copy(label = "", value = 0, defId = null, suit = null, hidden = true)
 }
 
 // ─── Players ───
@@ -217,6 +242,17 @@ const val PHASE_BET = "bet"
 const val PHASE_BUY = "buy"
 
 /**
+ * Somebody is choosing which of their own cards their neighbours are getting —
+ * see the "circlejerk" card. Its own phase rather than [PHASE_PLAY] because the
+ * cards being pointed at are the drawer's own, which is the one prompt in the
+ * game where picking is giving something away rather than taking it.
+ */
+const val PHASE_GIVE = "give"
+
+/** ...and the other way round: each neighbour is choosing what to hand over. */
+const val PHASE_HANDOVER = "handover"
+
+/**
  * A gambler card has been played out of a hidden hand and wants a target, an
  * answer, or a handful of cards.
  *
@@ -314,6 +350,20 @@ data class PendingAction(
     val validCards: List<String> = emptyList(),
     /** How many picks are owed before the card resolves. Swapping wants two. */
     val picks: Int = 1,
+    /**
+     * Whether each pick has to come off a different seat.
+     *
+     * True for a card that *trades*: two picks on one hand is a hand that has
+     * not changed, and offering that pair at all would let a player throw the
+     * card away without meaning to. False for a card that gives cards of your
+     * own away — see the "circlejerk" card, where every pick is necessarily
+     * yours and the rule would refuse the second one.
+     *
+     * On the prompt rather than on the card because it is what the *client* is
+     * answering: it lights the cards that may still be picked, and a rule it
+     * keeps its own copy of is a rule that will one day disagree with this one.
+     */
+    val oneCardPerSeat: Boolean = true,
     /** Why the table is stopped — see [PHASE_PLAY]. */
     val phase: String = PHASE_PLAY,
     /** What is for sale, when [kind] is [PickKind.CATALOG]. */

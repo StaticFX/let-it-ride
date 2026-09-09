@@ -254,6 +254,88 @@ export function RoughSeal({
   )
 }
 
+// --- RoughSunburst ---
+interface RoughSunburstProps {
+  size: number
+  /** Wedges, not slices: nine rays is nine filled wedges and nine gaps. */
+  rays?: number
+  fill?: string
+  roughness?: number
+  style?: CSSProperties
+}
+
+/**
+ * The burst behind a title on a poster.
+ *
+ * Drawn rather than painted with a conic gradient, because the whole point of
+ * it here is that a hand went round the page: the wedges are cut at slightly
+ * uneven angles, they do not all reach the same distance, and rough.js wobbles
+ * every edge — so what comes out is a burst somebody ruled rather than a wheel.
+ *
+ * It never boils. A shape this size redrawn three times a second is a great
+ * deal of SVG for something sitting behind the game, and worse, a background
+ * that shimmers pulls the eye off the words it exists to push forward. The slow
+ * turn it does have is a CSS rotation on the wrapper, which costs nothing.
+ *
+ * The jitter is a hash of the wedge's own index rather than `Math.random`, so
+ * the burst is the same burst on every render and React can re-run this as
+ * often as it likes without the background reshuffling itself under the title.
+ */
+export function RoughSunburst({
+  size, rays = 9,
+  fill = 'rgba(31, 28, 20, 0.045)',
+  roughness = 1.5, style = {},
+}: RoughSunburstProps) {
+  const svgRef = useRef<SVGSVGElement>(null)
+
+  useEffect(() => {
+    if (!svgRef.current || size <= 0) return
+    const c = size / 2
+    // Well past the corner: the burst is cropped by whatever is holding it, and
+    // a ray that stops short of the edge reads as a triangle rather than a ray.
+    const outer = size * 0.78
+    // A hair of daylight at the middle, so nine wedges do not converge into one
+    // muddy blot under the title.
+    const inner = size * 0.03
+    const step = (Math.PI * 2) / rays
+
+    // Deterministic, cheap, and quite enough disorder for nine wedges.
+    const wobble = (i: number, salt: number) => {
+      const n = Math.sin((i + 1) * 12.9898 + salt * 78.233) * 43758.5453
+      return n - Math.floor(n) - 0.5
+    }
+
+    drawInto(svgRef.current, (rc) => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      for (let i = 0; i < rays; i++) {
+        const a0 = i * step + wobble(i, 1) * step * 0.3
+        const a1 = a0 + step * (0.42 + wobble(i, 2) * 0.18)
+        const reach = outer * (0.9 + wobble(i, 3) * 0.2)
+        const at = (a: number, r: number) => `${c + Math.cos(a) * r} ${c + Math.sin(a) * r}`
+        const d = [
+          `M ${at(a0, inner)}`,
+          `L ${at(a0, reach)}`,
+          `L ${at(a1, reach)}`,
+          `L ${at(a1, inner)}`,
+          'Z',
+        ].join(' ')
+        g.appendChild(rc.path(d, rcOpts({
+          stroke: 'none', roughness, seed: (i * 977) & 0xffff,
+          fill, fillStyle: 'solid',
+        })))
+      }
+      return g
+    })
+  }, [size, rays, fill, roughness])
+
+  return (
+    <svg ref={svgRef} width={size} height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', overflow: 'visible', ...style }}
+    />
+  )
+}
+
 // --- RoughSquiggle ---
 interface RoughSquiggleProps {
   width: number

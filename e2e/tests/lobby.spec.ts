@@ -94,6 +94,46 @@ test.describe('joining', () => {
     await expect(page.getByTestId('waiting-room')).toBeVisible()
     expect(await app.roomCode()).toBe(room.roomCode)
   })
+
+  test('the link the waiting room hands out seats whoever follows it', async ({ app, openPlayer }) => {
+    const code = await app.host('devin')
+    const link = await app.inviteLink()
+    expect(link).toContain(`room=${code}`)
+
+    const guest = await openPlayer()
+    await guest.app.followInvite(link)
+    // The whole point of the link: the code is already in, and the only thing
+    // left to say is who you are.
+    await expect(guest.page.getByTestId('join-code-input')).toHaveValue(code)
+    await guest.app.enterName('mara')
+    await guest.page.getByTestId('join-submit').click()
+
+    await expect(guest.page.getByTestId('waiting-room')).toBeVisible()
+    expect(await guest.app.roomCode()).toBe(code)
+    await expect(app.players).toHaveCount(2)
+  })
+
+  test('an invite is read once and then leaves the address bar', async ({ app, api, page }) => {
+    const room = await api.createRoom('someone')
+    await app.followInvite(`/?room=${room.roomCode.toLowerCase()}`)
+
+    await expect(page.getByTestId('join-code-input')).toHaveValue(room.roomCode)
+    // A link that stays in the bar is a bookmark that works for ten minutes.
+    expect(page.url()).not.toContain('room=')
+  })
+
+  test('a link still asks who you are before it lets you sit down', async ({ app, api, page }) => {
+    const room = await api.createRoom('someone')
+    await app.followInvite(`/?room=${room.roomCode}`)
+
+    // Nobody following a link has been past the title card, so the name is
+    // asked for here or not at all.
+    await expect(page.getByTestId('join-submit')).toBeDisabled()
+    await app.enterName('mara')
+    await expect(page.getByTestId('join-submit')).toBeEnabled()
+    await page.getByTestId('join-submit').click()
+    await expect(page.getByTestId('waiting-room')).toBeVisible()
+  })
 })
 
 test.describe('table settings', () => {

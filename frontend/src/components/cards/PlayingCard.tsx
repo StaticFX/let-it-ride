@@ -7,6 +7,7 @@ import {
 } from "../../state/gameStore";
 import { theme } from "../../theme";
 import { RoughBox, RoughSeal, RoughSquiggle } from "../ui/RoughShapes";
+import { CardBack } from "./CardBack";
 import { cardHash } from "./dealtCards";
 
 interface PlayingCardProps {
@@ -39,11 +40,18 @@ const SUIT_GLYPHS: Record<string, string> = {
 export function PlayingCard({
   card,
   size = "normal",
-  faceDown = false,
+  faceDown: faceDownProp = false,
   dimmed = false,
   glowing = false,
   style = {},
 }: PlayingCardProps) {
+  // A card the server did not send a face for — see the "redacted" card. It is
+  // read here and nowhere else on purpose: a hidden card can turn up in a hand,
+  // in a flight across the table, on the slot machine's reels or in the middle
+  // of a save being torn in half, and every one of those draws its card through
+  // this component. One line here covers all of them; a check at each of those
+  // call sites would be four places to forget.
+  const faceDown = faceDownProp || !!card.hidden;
   const dims = DIMS[size];
   const sw = theme.strokeWidth;
   const ink = theme.ink;
@@ -103,73 +111,22 @@ export function PlayingCard({
     />
   );
 
-  // Face down
+  // Face down — the house back, drawn by the thing that draws the house back.
+  // It used to be a second copy of it here, which is how it came to be a
+  // slightly different card from the one on top of the draw pile.
+  //
+  // The sway is the card's own rather than [CardBack]'s fixed one: a hand of
+  // five hidden cards all breathing in step reads as one object, and the point
+  // of drawing them as cards at all is that you can count them.
   if (faceDown) {
     return (
-      <div style={baseStyle}>
-        <div
-          style={{
-            position: "absolute",
-            inset: sw,
-            background: theme.cardBack,
-            borderRadius: 3,
-            zIndex: 0,
-          }}
-        />
-        <RoughBox
-          width={dims.w}
-          height={dims.h}
-          stroke={ink}
-          strokeWidth={sw}
-          roughness={1.8}
-        />
-        <div
-          style={{
-            position: "absolute",
-            inset: 10,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 2,
-          }}
-        >
-          <svg
-            width="70%"
-            height="70%"
-            viewBox="0 0 100 100"
-            preserveAspectRatio="none"
-            style={{ position: "absolute" }}
-          >
-            <g
-              stroke={ink}
-              strokeWidth={sw * 0.55}
-              strokeLinecap="round"
-              fill="none"
-              opacity="0.8"
-            >
-              <line x1="22" y1="22" x2="78" y2="78" />
-              <line x1="78" y1="22" x2="22" y2="78" />
-              <line x1="50" y1="16" x2="50" y2="84" />
-              <line x1="16" y1="50" x2="84" y2="50" />
-            </g>
-          </svg>
-          <div
-            style={{
-              fontFamily: theme.fontDisplay,
-              fontSize: dims.fs * 0.95,
-              color: ink,
-              fontWeight: 700,
-              background: theme.cardBack,
-              padding: "2px 6px",
-              position: "relative",
-              zIndex: 2,
-              letterSpacing: "0.04em",
-            }}
-          >
-            Leck ei
-          </div>
-        </div>
-      </div>
+      <CardBack
+        size={size === "large" ? "deck" : size}
+        style={{
+          animation: `sway ${swayDur}s ease-in-out ${swayDelay}s infinite`,
+          ...style,
+        }}
+      />
     );
   }
 

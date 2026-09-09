@@ -12,8 +12,11 @@ interface ScoreboardProps {
    * What a player's cards are worth to them, which is not always what they add
    * up to — see the "antimatter" card. Handed in rather than read off the
    * player, because the answer is the server's.
+   *
+   * Null when this seat's hand is face down to you — see the "redacted" card.
+   * Told apart from nought, which is a seat with nothing.
    */
-  worth: (player: Player) => number
+  worth: (player: Player) => number | null
   /**
    * Whether a seat's round is over *and* worth nothing, which is what the strike
    * through a number means here. Not the same question as "did they bust" — an
@@ -281,7 +284,9 @@ export function Scoreboard({
                   color: isBusted ? theme.actionAccent : theme.inkSoft,
                   textAlign: 'right', lineHeight: 1,
                   textDecoration: isDead ? 'line-through' : 'none',
-                }}>{worth(p) || '–'}</div>
+                  // A dash is a seat with nothing in front of it; a question
+                  // mark is a seat you are not allowed to look at.
+                }}>{worth(p) === null ? '?' : worth(p) || '–'}</div>
                 {/* Total score */}
                 {/* Keyed on the number, so a total that changes is remounted
                     and lands rather than simply reading differently — which is
