@@ -36,6 +36,11 @@ class EffectCardTest {
     private fun holds(state: GameState, id: String, defId: String): Boolean =
         state.player(id)!!.passives.any { it.defId == defId }
 
+    /** Takes [id] out of the round the way a card would have. */
+    private fun out(state: GameState, id: String, status: PlayerStatus): GameState = state.copy(
+        players = state.players.map { if (it.id == id) it.copy(status = status) else it },
+    )
+
     // ─── just one more ───
 
     @Test
@@ -157,6 +162,21 @@ class EffectCardTest {
         assertNotNull(targets)
         assertFalse("b" in targets, "b already has one — pointing at them does nothing")
         assertTrue("a" in targets && "c" in targets)
+    }
+
+    @Test
+    fun `the last player standing has to wear an unlucky 7 himself`() {
+        // Everyone else is a wreck, and a wreck is not a seat this card can do
+        // anything to — so the only row left to hang it on is his own. The
+        // pick is still his to make; there is simply one seat on the list.
+        var dealt = startedAndDealt(players = listOf("a", "b", "c"), rest = listOf(action(UNLUCKY_SEVEN.id)))
+        dealt = out(out(dealt, "b", PlayerStatus.BUST), "c", PlayerStatus.BUST)
+
+        var state = t(dealt, GameAction.Hit("a"))
+        assertEquals(listOf("a"), state.pendingAction?.validTargets)
+
+        state = t(state, GameAction.PlayAction("a", "a", UNLUCKY_SEVEN.id))
+        assertTrue(holds(state, "a", MUST_FLIP.id))
     }
 
     @Test

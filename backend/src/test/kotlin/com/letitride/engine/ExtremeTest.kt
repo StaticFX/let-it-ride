@@ -88,6 +88,44 @@ class ExtremeTest {
     }
 
     @Test
+    fun `an unlucky 7 is not offered a hand that has already busted`() {
+        // The rule widens who may be aimed at; it does not make a card about
+        // what a round *pays* mean anything against a round that pays nothing.
+        // A banked hand and a wreck are both "finished" and this is the card
+        // that tells them apart — see `ActionCardDef.skipBusted`.
+        val dealt = startedAndDealt(
+            config = config(rules = extreme),
+            players = listOf("a", "b", "c"),
+            openingCards = listOf(num(1), num(9), num(5)),
+            rest = listOf(action(UNLUCKY_SEVEN.id)),
+        )
+        var state = withStatus(dealt, "b", PlayerStatus.BUST)
+        state = withStatus(state, "c", PlayerStatus.STAYED)
+        state = t(state, GameAction.Hit("a"))
+
+        val targets = state.pendingAction!!.validTargets
+        assertFalse("b" in targets, "a busted round cannot be made to score less than nothing")
+        assertTrue("c" in targets, "a banked one still has points to lose")
+    }
+
+    @Test
+    fun `and with nothing but wrecks left the drawer has to wear it`() {
+        // What the rule above is really for: without it the last player
+        // standing had a busted seat to drop every unlucky 7 on, and never had
+        // to take one himself.
+        val dealt = startedAndDealt(
+            config = config(rules = extreme),
+            players = listOf("a", "b"),
+            openingCards = listOf(num(1), num(9)),
+            rest = listOf(action(UNLUCKY_SEVEN.id)),
+        )
+        var state = withStatus(dealt, "b", PlayerStatus.BUST)
+        state = t(state, GameAction.Hit("a"))
+
+        assertEquals(listOf("a"), state.pendingAction!!.validTargets)
+    }
+
+    @Test
     fun `cards held by a seat that is out can be swapped for`() {
         val dealt = startedAndDealt(
             config = config(rules = extreme),

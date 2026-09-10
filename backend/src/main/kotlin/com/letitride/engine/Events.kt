@@ -309,7 +309,11 @@ sealed class GameEvent {
 
     /**
      * "Comeback": both throws at once, because neither could see the other's
-     * until now. [challengerWon] settles it — a draw is neither.
+     * until now. [challengerWon] settles it, and two of the same is a draw —
+     * which sends them both back for another throw rather than ending
+     * anything. Nothing on the wire says so: the two throws being equal says
+     * it already, and a second way of saying the same thing is a second thing
+     * that can disagree.
      */
     @Serializable
     @SerialName("throws")

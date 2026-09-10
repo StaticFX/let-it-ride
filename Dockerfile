@@ -53,6 +53,12 @@ RUN apk add --no-cache wget && addgroup -S letitride && adduser -S letitride -G 
 WORKDIR /app
 COPY --from=backend /app/backend/build/libs/let-it-ride.jar app.jar
 
+# Where the accounts database goes, when there is one — see LETITRIDE_DB.
+# Created here, owned by the user the server runs as, so that a fresh named
+# volume mounted over it inherits that ownership and SQLite can actually write.
+# Empty and untouched on the ordinary stateless deployment.
+RUN mkdir -p /data && chown letitride:letitride /data
+
 USER letitride
 
 ENV PORT=8080 \

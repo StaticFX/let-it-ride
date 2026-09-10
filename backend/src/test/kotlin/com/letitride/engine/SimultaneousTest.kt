@@ -88,14 +88,36 @@ class SimultaneousTest {
     }
 
     @Test
-    fun `a draw is a draw`() {
+    fun `a draw sends them both back to throw again`() {
         var state = t(trailing(), GameAction.Hit("a"))
         state = t(state, GameAction.PlayAction("a", "a", COMEBACK_ID, choice = THROW_ROCK))
-        val result = tr(state, GameAction.PlayAction("c", "a", COMEBACK_ID, choice = THROW_ROCK))
+        val drawn = tr(state, GameAction.PlayAction("c", "a", COMEBACK_ID, choice = THROW_ROCK))
 
-        assertEquals(5, result.state.player("a")!!.score)
-        assertFalse(result.events.filterIsInstance<GameEvent.Throws>().single().challengerWon)
-        assertNull(result.state.pendingAction, "a draw settles it rather than going round again")
+        assertFalse(drawn.events.filterIsInstance<GameEvent.Throws>().single().challengerWon)
+        assertNull(drawn.state.pendingAction, "the throws are read before anything is asked of them")
+        assertEquals(1, drawn.state.pendingOutcomes.size)
+
+        // ...and once the table has watched them, the same question again.
+        state = settle(drawn.state)
+        val again = state.pendingAction
+        assertNotNull(again)
+        assertEquals(PHASE_THROW, again.phase)
+        assertEquals(setOf("a", "c"), again.respondents.toSet(), "the same two, nobody else")
+        assertEquals(5, state.player("a")!!.score, "nothing has moved on a draw")
+    }
+
+    @Test
+    fun `and the throw after a draw settles it like any other`() {
+        var state = t(trailing(), GameAction.Hit("a"))
+        state = t(state, GameAction.PlayAction("a", "a", COMEBACK_ID, choice = THROW_ROCK))
+        state = settle(t(state, GameAction.PlayAction("c", "a", COMEBACK_ID, choice = THROW_ROCK)))
+
+        state = t(state, GameAction.PlayAction("a", "a", COMEBACK_ID, choice = THROW_PAPER))
+        state = settle(t(state, GameAction.PlayAction("c", "a", COMEBACK_ID, choice = THROW_ROCK)))
+
+        assertNull(state.pendingAction)
+        assertEquals(90, state.player("a")!!.score, "the second throw traded the scores")
+        assertEquals(5, state.player("c")!!.score)
     }
 
     @Test

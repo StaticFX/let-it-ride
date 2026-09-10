@@ -533,6 +533,13 @@ sealed class ServerMessage {
 // REST payloads
 // ═══════════════════════════════════════════
 
+/**
+ * How much of a name fits on a seat. Applied wherever one arrives — the create
+ * call, the socket's query, and the name an identity provider hands over — so
+ * that a table can never be shown a name the felt has no room to draw.
+ */
+const val MAX_NAME_LENGTH = 16
+
 @Serializable
 data class CreateRoomRequest(
     val name: String,

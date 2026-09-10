@@ -541,7 +541,11 @@ export type GameEvent =
   | { type: 'antiFlip'; playerId: string; targetPlayerId: string; points: number }
   /**
    * "Comeback": both throws at once, because neither could see the other's
-   * until now. `challengerWon` settles it — a draw is neither.
+   * until now. `challengerWon` settles it, and two of the same is a draw —
+   * which sends them both back for another throw rather than ending anything.
+   * The server says so by asking again; the two throws being equal is how this
+   * event says it, and there is deliberately no second field that could
+   * disagree.
    */
   | {
       type: 'throws'
@@ -849,4 +853,66 @@ export interface Catalog {
    * the hooks on.
    */
   testHooks?: boolean
+}
+
+// ─── Accounts ───
+//
+// All of this is optional in the strongest sense: a server with no identity
+// provider configured answers `enabled: false` and nothing below ever arrives.
+// Guests play the same game.
+
+export interface Account {
+  /** A short public handle. Not the identity provider's own id for somebody. */
+  id: string
+  name: string
+  username?: string
+  picture?: string
+}
+
+export interface AuthView {
+  /** Whether this server can sign anybody in at all. */
+  enabled: boolean
+  /** What to put on the button — the operator's name for their provider. */
+  provider: string
+  /** Absent when nobody is signed in, which is the ordinary case. */
+  account?: Account
+}
+
+/** A card and how often it turned up. `card` is a label or a definition id. */
+export interface CardTally {
+  card: string
+  kind: CardKind
+  count: number
+}
+
+export interface PlayerStats {
+  account: Account
+  games: number
+  wins: number
+  /** Games with somebody else at the table — the only ones the leaderboard counts. */
+  rankedGames: number
+  rankedWins: number
+  /** Already worked out by the server; nothing here divides anything. */
+  winRate: number
+  averageScore: number
+  bestScore: number
+  rounds: number
+  busts: number
+  stays: number
+  flip7s: number
+  bustRate: number
+  cardsDrawn: number
+  bestRound: number
+  mostDrawn: CardTally[]
+  mostBustedTo: CardTally[]
+  mostPlayed: CardTally[]
+}
+
+export interface LeaderboardRow {
+  account: Account
+  games: number
+  wins: number
+  winRate: number
+  averageScore: number
+  bestScore: number
 }

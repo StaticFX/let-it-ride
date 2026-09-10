@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { play } from '../../audio/sfx'
+
 interface RoundIntroProps {
   round: number
   startingPlayerName: string
@@ -16,6 +18,14 @@ const FADE_OUT_MS = 500
  */
 export function RoundIntro({ round, startingPlayerName, untilMs }: RoundIntroProps) {
   const [phase, setPhase] = useState<'in' | 'hold' | 'out'>('in')
+
+  // The card going up *is* the round beginning — the server deals nothing until
+  // it comes down — so the sting belongs here rather than to an event. Keyed on
+  // the round so a re-render cannot play it twice, and silent on all but one
+  // day of the year, which the audio module decides and this does not.
+  useEffect(() => {
+    play('roundBegan')
+  }, [round])
 
   useEffect(() => {
     const settle = window.setTimeout(() => setPhase('hold'), 80)

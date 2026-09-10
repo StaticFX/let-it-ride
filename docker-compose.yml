@@ -1,4 +1,5 @@
-# Let It Ride — single stateless container, no database, no volumes.
+# Let It Ride — a single container. Stateless out of the box; add the two
+# blocks marked "accounts" below if you want people's records kept.
 #
 #   docker compose up -d
 #
@@ -19,9 +20,43 @@ services:
       # The JVM sizes its heap from the container limit below, not the host.
       JAVA_OPTS: -XX:MaxRAMPercentage=75.0
 
-    # Rooms are held in memory and vanish with the container. That is the whole
-    # storage story — so the filesystem can stay read-only.
+      # ── accounts (optional) ────────────────────────────────────────────
+      # Uncomment all of this together. Either half alone does nothing: an
+      # account with nowhere to write is not an account, and a database with
+      # no way to prove who you are has nothing to put in it. The server says
+      # so in its log and stays off rather than half-working, and everybody
+      # plays as a guest exactly as before.
+      #
+      # LETITRIDE_DB: /data/letitride.db
+      # LETITRIDE_OIDC_ISSUER: https://id.example.com
+      # LETITRIDE_OIDC_CLIENT_ID: let-it-ride
+      # LETITRIDE_OIDC_CLIENT_SECRET: the-secret-from-your-provider
+      # # What the sign-in button says.
+      # LETITRIDE_OIDC_NAME: PocketID
+      # # Any passphrase. Without one a random key is used and everybody is
+      # # signed out the next time this container restarts.
+      # LETITRIDE_SESSION_SECRET: something-long-and-yours
+      # # Only needed if your proxy does not set X-Forwarded-Proto/Host. This
+      # # must match the callback URL registered at the provider exactly, and
+      # # a mismatch is the one failure here with no useful error at either end.
+      # LETITRIDE_OIDC_REDIRECT_URI: https://cards.example.com/api/auth/callback
+
+    # Rooms are held in memory and vanish with the container. Without the
+    # accounts block above that is the whole storage story, and the filesystem
+    # can stay read-only.
+    #
+    # The volume below is the exception, and read_only stays on either way: a
+    # read-only root filesystem does not make a mounted volume read-only, so
+    # SQLite gets somewhere to keep its database and its write-ahead log and
+    # nothing else on the box is writable.
     read_only: true
+    # A named volume rather than a bind mount, because the server does not run
+    # as root: Docker gives a fresh named volume the ownership of the image's
+    # own /data, which is already the right user. `./data:/data` works too but
+    # you have to chown it yourself first, and the symptom if you forget is a
+    # line in the log and a game that plays on without accounts.
+    # volumes:
+    #   - letitride-data:/data
     tmpfs:
       - /tmp
 
@@ -41,6 +76,11 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+
+# Uncomment along with the volume above. One SQLite file; backing it up is
+# `docker compose stop && cp` and nothing more.
+# volumes:
+#   letitride-data:
 
 # ─────────────────────────────────────────────────────────────
 # Building from this checkout instead of pulling a published image:

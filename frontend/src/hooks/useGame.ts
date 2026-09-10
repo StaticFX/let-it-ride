@@ -830,9 +830,14 @@ export function useGame() {
           break
         case 'throws': {
           const winner = event.challengerWon ? event.challengerId : null
+          // Two of the same settles nothing and the server is already asking
+          // them again, so this says "again" rather than "no comeback" — the
+          // prompt to throw arrives right behind it, and a caption that read
+          // like an ending would make the next question look like a bug.
+          const drew = event.challengerThrow === event.leaderThrow
           pushAnimation({
             type: 'showdown',
-            title: event.challengerWon ? 'comeback!' : 'no comeback',
+            title: event.challengerWon ? 'comeback!' : drew ? 'again!' : 'no comeback',
             sides: [
               {
                 name: nameOf(event.challengerId),
@@ -847,8 +852,8 @@ export function useGame() {
             ],
             footnote: event.challengerWon
               ? 'the scores change hands'
-              : event.challengerThrow === event.leaderThrow
-                ? 'a draw — nothing moves'
+              : drew
+                ? 'a draw — throw again'
                 : 'the leader holds on',
           }, delay)
           break

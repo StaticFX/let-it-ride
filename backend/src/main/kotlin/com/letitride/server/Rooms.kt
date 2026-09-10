@@ -1,5 +1,7 @@
 package com.letitride.server
 
+import com.letitride.account.RoomTally
+import com.letitride.account.StatsRecorder
 import com.letitride.engine.CUSTOM_DECK_ID
 import com.letitride.engine.CardKind
 import com.letitride.engine.Catalog
@@ -607,12 +609,30 @@ class Room(
      * server's own environment.
      */
     private val dev: Boolean = false,
+    /**
+     * Where finished games are written down, or null on a server keeping no
+     * history — which is every server until somebody configures one. Nothing
+     * about how the table plays depends on it.
+     */
+    private val recorder: StatsRecorder? = null,
 ) {
     private val rng = Rng(seed)
     private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob(parentScope.coroutineContext[Job]))
 
     private val connections = ConcurrentHashMap<String, Connection>()
+
+    /**
+     * Who at this table is signed in, and what they have done since the last
+     * round was written down.
+     *
+     * Always present and almost always empty: a table of guests seats nobody in
+     * it, so every call on it is a map lookup that finds nothing. That is
+     * cheaper than asking whether stats are on at each of the half-dozen places
+     * that would otherwise have to, and it keeps the recording in one place
+     * instead of scattered through the room.
+     */
+    private val tally = RoomTally(code)
 
     var state: GameState = Engine.newGame(defaultGameConfig())
         private set
@@ -668,15 +688,28 @@ class Room(
         state.phase == GamePhase.LOBBY && state.players.size < MAX_PLAYERS
     }
 
-    /** Registers a socket. Returns false when the room cannot take the player. */
-    suspend fun attach(playerId: String, name: String, connection: Connection): Boolean {
+    /**
+     * Registers a socket. Returns false when the room cannot take the player.
+     *
+     * [accountId] is who the *server* worked out this is, from the session
+     * cookie on the handshake and never from anything the client said — a seat
+     * identity is a claim, and a claim is not something anybody's history
+     * should be written against. Null is a guest, which is most people, and
+     * changes nothing about the seat.
+     */
+    suspend fun attach(playerId: String, name: String, connection: Connection, accountId: String? = null): Boolean {
         val events: List<GameEvent>
         mutex.withLock {
             val existing = state.player(playerId)
             if (existing == null) {
                 if (state.phase != GamePhase.LOBBY || state.players.size >= MAX_PLAYERS) return false
+                if (accountId != null) tally.seat(playerId, accountId)
                 events = applyLocked(GameAction.AddPlayer(playerId, name))
             } else {
+                // Coming back to a seat re-states the link rather than assuming
+                // it survived: a room outlives a socket, but a tab that has
+                // signed out and back in is a different account on the same id.
+                if (accountId != null) tally.seat(playerId, accountId) else tally.unseat(playerId)
                 events = applyLocked(GameAction.SetConnected(playerId, true))
             }
             connections[playerId] = connection
@@ -700,6 +733,12 @@ class Room(
             // In the lobby this drops the seat; mid-game the engine folds the
             // player instead so seat indices and scores survive.
             events = applyLocked(GameAction.RemovePlayer(playerId))
+            // ...and the account link follows the seat, not the socket. A
+            // player who has genuinely left the table has no result coming;
+            // one who has folded mid-game still has a score to be placed on,
+            // and losing their link here would quietly wipe the game they were
+            // in the middle of.
+            if (state.player(playerId) == null) tally.unseat(playerId)
             if (hostId == playerId) {
                 hostId = state.players.firstOrNull { connections.containsKey(it.id) && !it.isBot }?.id
             }
@@ -838,7 +877,9 @@ class Room(
                     if (target != null) sendRaw(target, ServerMessage.Kicked)
                     connections.remove(message.playerId)
                     target?.outbound?.close()
-                    applyLocked(GameAction.RemovePlayer(message.playerId))
+                    val dropped = applyLocked(GameAction.RemovePlayer(message.playerId))
+                    if (state.player(message.playerId) == null) tally.unseat(message.playerId)
+                    dropped
                 }
 
                 ClientMessage.AddBot -> {
@@ -1288,8 +1329,45 @@ class Room(
         if (action is GameAction.StartGame && before.phase != state.phase) state = stackDeck(state)
         val events = markFirstSight(result.events)
         markRoundBoundaries(before, result.state, events)
+        record(before, events)
         openGate(action, before, events)
         return events
+    }
+
+    /**
+     * Hands the batch to whoever is keeping score.
+     *
+     * Here rather than in `broadcast` because these are the room's own events,
+     * before `redactFor` has cut them down for anybody: a gambler card drawn
+     * into a hidden hand is a card *you* drew, and the version of that event
+     * every other seat is sent has had the card taken out of it. Recording off
+     * a redacted stream would give a player a history with holes in it exactly
+     * where the interesting cards were.
+     *
+     * Nothing here can fail the transition. [StatsRecorder] takes the work and
+     * returns, and a room with no recorder does not even build the tally.
+     */
+    private fun record(before: GameState, events: List<GameEvent>) {
+        val recorder = recorder ?: return
+        if (!tally.hasAccounts()) return
+
+        // A game begins when the table leaves the lobby, which is also the one
+        // moment "play again" is distinguishable from "more of the same game".
+        if (before.phase == GamePhase.LOBBY && state.phase != GamePhase.LOBBY) {
+            tally.begin(java.util.UUID.randomUUID().toString())
+        }
+
+        tally.absorb(events)
+
+        // A round is written down as it is scored — see [RoomTally], which is
+        // where the reasoning about walking out mid-game lives.
+        for (event in events) {
+            if (event is GameEvent.RoundScored) tally.closeRound(event).forEach(recorder::round)
+        }
+
+        if (before.phase != GamePhase.GAME_END && state.phase == GamePhase.GAME_END) {
+            tally.finish(state).forEach(recorder::game)
+        }
     }
 
     /**
@@ -1477,7 +1555,12 @@ class Room(
 
 private const val ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-class RoomRegistry(private val json: Json, private val scope: CoroutineScope) {
+class RoomRegistry(
+    private val json: Json,
+    private val scope: CoroutineScope,
+    /** Passed to every room it opens; null on a server keeping no history. */
+    private val recorder: StatsRecorder? = null,
+) {
     private val rooms = ConcurrentHashMap<String, Room>()
     private val random = Random.Default
 
@@ -1501,7 +1584,7 @@ class RoomRegistry(private val json: Json, private val scope: CoroutineScope) {
     fun create(seed: Long? = null, stack: List<String> = emptyList(), dev: Boolean = false): Room {
         var code = generateCode()
         while (rooms.containsKey(code)) code = generateCode()
-        val room = Room(code, seed ?: random.nextLong(), json, scope, stack, dev)
+        val room = Room(code, seed ?: random.nextLong(), json, scope, stack, dev, recorder)
         rooms[code] = room
         return room
     }

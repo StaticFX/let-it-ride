@@ -26,6 +26,7 @@ export type SoundName =
   | 'freeze'
   | 'flip7'
   | 'goOut'
+  | 'roundBegan'
   | 'roundEnded'
   | 'timerRunningOut'
   | 'click'
@@ -36,8 +37,12 @@ export type SoundName =
  * you hear often enough for a single sample to start sounding like a machine —
  * pitch alone was carrying all of that variation, and two takes do it better
  * than any amount of resampling.
+ *
+ * An empty list is a sound the table has no take for today, which is not the
+ * same as a sound that failed to load: nothing is fetched for it and asking for
+ * it is answered with silence — see [SPECIAL_EDITION] and [play].
  */
-const SOURCES: Record<SoundName, string | string[]> = {
+const ORDINARY: Record<SoundName, string | string[]> = {
   draw: '/sounds/draw-card.m4a',
   /** An action card came off the deck. */
   actionCard: '/sounds/action-card.m4a',
@@ -47,13 +52,69 @@ const SOURCES: Record<SoundName, string | string[]> = {
   freeze: '/sounds/freeze.m4a',
   flip7: '/sounds/flip7.m4a',
   goOut: '/sounds/go-out.m4a',
+  /** Only the 10th of September has one of these. */
+  roundBegan: [],
   roundEnded: '/sounds/round-ended.m4a',
   timerRunningOut: '/sounds/timer-less-than-10s.wav',
   click: ['/sounds/button-clicks/Click_1.wav', '/sounds/button-clicks/Click_2.wav'],
   keystroke: '/sounds/keystroke.m4a',
 }
 
-const NAMES = Object.keys(SOURCES) as SoundName[]
+const NAMES = Object.keys(ORDINARY) as SoundName[]
+
+/**
+ * Whether today is the 10th of September, asked of the machine the game is
+ * being played on.
+ *
+ * The browser's own date rather than the server's: a table played across
+ * timezones on the night is two different days at once and both of them are
+ * true where they are being read, and there is no reason for a joke to be
+ * pedantic about it. Months count from zero, so September is 8.
+ */
+function isSpecialEdition(today: Date): boolean {
+  return today.getMonth() === 8 && today.getDate() === 10
+}
+
+/**
+ * The day's own takes: a file, and the gain that puts it where the sound it
+ * replaces already sat.
+ *
+ * The gain travels with the file rather than with the name because that is what
+ * a gain *is* here — normalisation of one recording, see [GAIN]. The day's flip
+ * 7 measures RMS 0.106 against the ordinary one's 0.566, so leaving it on the
+ * ordinary card's gain would play it at a fifth of the level and the whole joke
+ * would be somebody asking why the sound is broken.
+ *
+ * `roundBegan` has no ordinary take at all. That is deliberate rather than an
+ * omission: the round already begins with a title card, and 364 days a year it
+ * begins quietly.
+ */
+const SPECIAL_EDITION: Partial<Record<SoundName, { url: string; gain: number }>> = {
+  // RMS 0.106, peak 0.57 — brought to the same 0.12 the ordinary flip 7 is
+  // trimmed to, which leaves it comfortably clear of clipping.
+  flip7: { url: '/sounds/special_edition_09_10/flip7.m4a', gain: 1.12 },
+  // RMS 0.150, peak 1.0 — level with the round-end sting it is the answer to.
+  roundBegan: { url: '/sounds/special_edition_09_10/round_begin.m4a', gain: 0.72 },
+}
+
+/**
+ * Which take of each sound this page is playing, decided once when the module
+ * loads.
+ *
+ * Once, because everything downstream is fixed by then: [prefetchAudio] fetches
+ * this list and [decodeAll] decodes it, both long before the first sound is
+ * asked for. A tab left open across midnight keeps the day it opened in, which
+ * is the right answer anyway — the table you are sitting at does not change
+ * records halfway through a round.
+ */
+const overrides: Partial<Record<SoundName, { url: string; gain: number }>> =
+  isSpecialEdition(new Date()) ? SPECIAL_EDITION : {}
+
+const SOURCES: Record<SoundName, string | string[]> = { ...ORDINARY }
+for (const name of NAMES) {
+  const take = overrides[name]
+  if (take) SOURCES[name] = take.url
+}
 
 function variantsOf(name: SoundName): string[] {
   const source = SOURCES[name]
@@ -93,10 +154,19 @@ const GAIN: Record<SoundName, number> = {
   freeze: 1.4,
   flip7: 0.21,
   goOut: 2.19,
+  // Nothing plays it on an ordinary day; the day that does brings its own.
+  roundBegan: 1,
   roundEnded: 3.11,
   timerRunningOut: 0.25,
   click: 0.27,
   keystroke: 2.76,
+}
+
+// ...and the day's own takes over the top, for the same reason the sources are
+// swapped above: a gain measured off one recording says nothing about another.
+for (const name of NAMES) {
+  const take = overrides[name]
+  if (take) GAIN[name] = take.gain
 }
 
 /**
@@ -119,6 +189,9 @@ const PITCH_SPREAD: Record<SoundName, number> = {
   freeze: 0.07,
   flip7: 0,
   goOut: 0.08,
+  // A round opening and a round closing are both full stops, and the only two
+  // sounds in the game you hear at exactly the same moment every round.
+  roundBegan: 0,
   roundEnded: 0,
   // A tune rather than a knock: resampling this one would be audible as
   // something being played wrong, not as the same thing said twice.
@@ -322,6 +395,10 @@ function flushQueued(): void {
 
 export function play(name: SoundName): void {
   if (muted || volume === 0) return
+  // A sound with no take today — see [SPECIAL_EDITION]. Answered with silence
+  // here rather than further down, where it would join the queue of requests
+  // waiting for buffers that are never going to arrive.
+  if (variantsOf(name).length === 0) return
   const ctx = audioContext()
   if (!ctx) return
 

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGameStore, findRule } from '../../state/gameStore'
+import { useAuthStore } from '../../state/authStore'
 import { connect, createRoom, leaveGame, lookupRoom, send } from '../../net/client'
+import { loginHref, takeAuthError } from '../../net/auth'
+import { Stats } from './Stats'
 import type { GameConfig } from '../../game/types'
 import { modeOf } from '../../game/types'
 import { CardBack } from '../cards/CardBack'
@@ -20,7 +23,7 @@ const DEFAULT_BOTS = 3
 /** What an invite link carries. Query rather than path — see [inviteUrl]. */
 const INVITE_PARAM = 'room'
 
-type Screen = 'choose' | 'join' | 'room' | 'settings'
+type Screen = 'choose' | 'join' | 'room' | 'settings' | 'stats'
 
 /**
  * `crypto.randomUUID` only exists on secure origins, and a homelab box on plain
@@ -121,6 +124,17 @@ function takeInviteCode(): string {
  */
 let invitedTo = takeInviteCode()
 
+/**
+ * What a sign-in that went wrong came back saying, read once and taken out of
+ * the address bar as it goes.
+ *
+ * Same reasoning as the invite code above, and the same shape: this is a
+ * message about one attempt, and a reload should not turn it into a message
+ * about nothing. Read at module load rather than in a state initialiser
+ * because it has a side effect and StrictMode runs an initialiser twice.
+ */
+let arrivedWithAuthError = takeAuthError()
+
 export function Lobby() {
   const state = useGameStore((s) => s.state)
   const isHost = useGameStore((s) => s.isHost)
@@ -134,15 +148,34 @@ export function Lobby() {
   // for one. Nothing is joined automatically — walking in under a name you
   // cannot see is not an entrance anybody asked for.
   const [screen, setScreen] = useState<Screen>(invitedTo ? 'join' : 'choose')
-  const [playerName, setPlayerName] = useState(() => localStorage.getItem(NAME_KEY) ?? '')
+  const [typedName, setTypedName] = useState(() => localStorage.getItem(NAME_KEY) ?? '')
   const [joinCode, setJoinCode] = useState(invitedTo)
   const [shared, setShared] = useState<'code' | 'link' | null>(null)
   const [showRules, setShowRules] = useState(false)
   const [showDeckCards, setShowDeckCards] = useState(false)
   const [countdown, setCountdown] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [localError, setLocalError] = useState<string | null>(null)
+  const [localError, setLocalError] = useState<string | null>(state ? null : arrivedWithAuthError)
   const botsWanted = useRef(0)
+
+  const authEnabled = useAuthStore((s) => s.enabled)
+  const provider = useAuthStore((s) => s.provider)
+  const account = useAuthStore((s) => s.account)
+
+  /**
+   * The name that actually goes on the seat.
+   *
+   * An account's, when there is one, and not editable — which is the whole of
+   * what signing in buys at the felt: the name in front of you is one somebody
+   * proved. The server enforces exactly this and ignores whatever the socket
+   * sends, so this is the client agreeing with the server rather than the
+   * client deciding; a tab that lied about it would simply be renamed on
+   * arrival.
+   *
+   * The typed name is left alone underneath rather than overwritten. Signing
+   * out puts a guest back where they were instead of on an empty field.
+   */
+  const playerName = account?.name ?? typedName
 
   const players = state?.players ?? []
   const config = state?.config
@@ -164,12 +197,19 @@ export function Lobby() {
   const inSession = connection === 'connected' || connection === 'connecting'
   const view: Screen = inSession
     ? screen === 'settings' ? 'settings' : 'room'
-    : screen === 'join' ? 'join' : 'choose'
+    : screen === 'stats' ? 'stats' : screen === 'join' ? 'join' : 'choose'
 
   // Leaving lands on the front door however you go: the pause menu and the
   // disconnect overlay both call `leaveGame()` without going through `leave()`,
   // and somebody who came in by code would otherwise be handed back the join
   // screen by a button that said "back to menu".
+  // Spent on the way in, like the invite code. The lobby is unmounted for the
+  // length of a game, and a message about one sign-in attempt must not be
+  // waiting on the front door when somebody walks back out of a table.
+  useEffect(() => {
+    arrivedWithAuthError = null
+  }, [])
+
   const wasInSession = useRef(false)
   useEffect(() => {
     if (inSession) {
@@ -191,7 +231,7 @@ export function Lobby() {
   }, [connection, isHost, players.length])
 
   const rememberName = useCallback((name: string) => {
-    setPlayerName(name)
+    setTypedName(name)
     localStorage.setItem(NAME_KEY, name)
   }, [])
 
@@ -247,6 +287,14 @@ export function Lobby() {
     send({ type: 'START_GAME' })
   }, [])
 
+  // ── The record ──
+  // Out of session only, like the front door itself. It reads from its own
+  // store and its own routes and knows nothing about a table, so it needs
+  // nothing from here but the way back.
+  if (view === 'stats') {
+    return <Stats onClose={() => setScreen('choose')} />
+  }
+
   // Once there is a room, its own flip target answers for the house rules the
   // host has switched on; before that there is only the catalog's default.
   if (showRules) {
@@ -295,18 +343,32 @@ export function Lobby() {
             <TitleMark small="let it" big="ride" scale={1.3} />
           </div>
 
-          <div className="text-left mb-6">
-            <label>what's your name?</label>
-            <SketchInput
-              type="text"
-              data-testid="name-input"
-              value={playerName}
-              onChange={(e) => rememberName(e.target.value)}
-              placeholder="scribble it here…"
-              maxLength={16}
-              className="mt-1"
-            />
-          </div>
+          {/* A name you typed, or a name somebody proved. The signed-in case
+              is not the input with `disabled` on it: a greyed-out field asks
+              to be edited and then refuses, when what is actually true is
+              that this is no longer a question. */}
+          {account ? (
+            <div className="text-left mb-6" data-testid="signed-in-as">
+              <label>you're signed in as</label>
+              <div className="sketch-box rounded mt-1 flex items-center justify-between px-3 py-2">
+                <span className="display text-2xl truncate">{account.name}</span>
+                <small className="text-muted shrink-0 ml-2">{provider}</small>
+              </div>
+            </div>
+          ) : (
+            <div className="text-left mb-6">
+              <label>what's your name?</label>
+              <SketchInput
+                type="text"
+                data-testid="name-input"
+                value={typedName}
+                onChange={(e) => rememberName(e.target.value)}
+                placeholder="scribble it here…"
+                maxLength={16}
+                className="mt-1"
+              />
+            </div>
+          )}
 
           {(localError || error) && <p className="text-[var(--accent)] mb-4" data-testid="lobby-error">{localError ?? error}</p>}
 
@@ -327,6 +389,24 @@ export function Lobby() {
             </SketchButton>
             <SketchButton block variant="ghost" testId="open-rules" onClick={() => setShowRules(true)}>rules</SketchButton>
           </div>
+
+          {/* Underneath the menu and not in it. Four ways into a game is the
+              menu; signing in is not a fifth way in — it is a thing you can do
+              about the four, and a table that keeps no records must not have a
+              gap where it would be. */}
+          {authEnabled && (
+            <div className="mt-5 flex justify-center gap-3.5">
+              {account ? (
+                <SketchButton variant="ghost" testId="open-stats" onClick={() => setScreen('stats')}>
+                  my record
+                </SketchButton>
+              ) : (
+                <a href={loginHref()} data-testid="sign-in">
+                  <SketchButton variant="ghost">sign in with {provider}</SketchButton>
+                </a>
+              )}
+            </div>
+          )}
 
           {/* Framed, like the little square buttons along the bottom of an
               arcade menu. Loose on the page it was the one glyph on the screen
@@ -365,19 +445,30 @@ export function Lobby() {
               the title card, because a link is a way into this screen that
               never went past it: somebody following one has typed nothing
               anywhere. It is the same field and the same key, so anyone who did
-              come the long way finds their name already in it. */}
-          <div className="text-left mb-4">
-            <label>what's your name?</label>
-            <SketchInput
-              type="text"
-              data-testid="name-input"
-              value={playerName}
-              onChange={(e) => rememberName(e.target.value)}
-              placeholder="scribble it here…"
-              maxLength={16}
-              className="mt-1"
-            />
-          </div>
+              come the long way finds their name already in it — and somebody
+              signed in is not asked at all, here for the same reason as there. */}
+          {account ? (
+            <div className="text-left mb-4" data-testid="signed-in-as">
+              <label>you're signed in as</label>
+              <div className="sketch-box rounded mt-1 flex items-center justify-between px-3 py-2">
+                <span className="display text-2xl truncate">{account.name}</span>
+                <small className="text-muted shrink-0 ml-2">{provider}</small>
+              </div>
+            </div>
+          ) : (
+            <div className="text-left mb-4">
+              <label>what's your name?</label>
+              <SketchInput
+                type="text"
+                data-testid="name-input"
+                value={typedName}
+                onChange={(e) => rememberName(e.target.value)}
+                placeholder="scribble it here…"
+                maxLength={16}
+                className="mt-1"
+              />
+            </div>
+          )}
 
           <div className="text-left mb-4">
             <label>room code</label>

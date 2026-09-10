@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGameStore } from './state/gameStore'
 import { fetchCatalog } from './net/client'
+import { fetchAuth } from './net/auth'
 import { Lobby } from './components/pages/Lobby'
 import { GameBoard } from './components/game/GameBoard'
 import { RoundSummary } from './components/pages/RoundSummary'
@@ -21,6 +22,12 @@ function App() {
 
   useEffect(() => {
     fetchCatalog().catch(() => setCatalogError('could not reach the table — is the server up?'))
+    // Deliberately not awaited alongside the catalog, and deliberately unable
+    // to fail. The catalog is what the game is made of and nothing can be drawn
+    // without it; who you are is a decoration on the front door, and a server
+    // with no accounts — which is most of them — has to reach the same first
+    // screen at the same speed as one with them.
+    void fetchAuth()
   }, [])
 
   // Downloading does not need a gesture — only starting the AudioContext does —

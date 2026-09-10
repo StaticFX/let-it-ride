@@ -136,6 +136,23 @@ data class ActionCardDef(
      */
     val skipHolding: String? = null,
     /**
+     * Whether a seat that has *busted* is pointless to aim at, whatever the
+     * rule would otherwise offer.
+     *
+     * The same thought as [skipHolding], asked about a round instead of a
+     * modifier row. A card that takes away what a round pays has nothing to
+     * take from a round that already pays nothing: an unlucky 7 hung on a
+     * busted hand is a curse spent on the one seat it cannot touch. A banked
+     * hand is the opposite case and stays on the list — it is still owed
+     * points, and taking them off it is exactly what "extreme" widened the rule
+     * for.
+     *
+     * It matters most when there is nobody else. With this off, the last player
+     * standing could always dodge a card meant for a live round by dropping it
+     * on a wreck; with it on the only seat left is his own, and he takes it.
+     */
+    val skipBusted: Boolean = false,
+    /**
      * What the drawer is asked to point at. A card that points at cards names
      * them with [cardTargets] instead of [targetRule], and resolves on the
      * drawer's own seat.
@@ -180,12 +197,13 @@ data class ActionCardDef(
      * waiting for a pick it will never get.
      */
     fun validTargets(state: GameState, fromId: String): List<String> =
-        targetsFor(targetRule, state, fromId, skipHolding)
+        targetsFor(targetRule, state, fromId, skipHolding, skipBusted)
 }
 
 /**
  * Everyone a card played by [fromId] under [rule] could meaningfully be pointed
- * at right now, minus anybody already holding [skipHolding].
+ * at right now, minus anybody already holding [skipHolding] and — if the card
+ * has nothing to say to a wreck — anybody who has busted.
  *
  * A free function rather than a method because two kinds of card ask the same
  * question — an action card off the deck and a gambler card out of a hidden
@@ -197,6 +215,7 @@ internal fun targetsFor(
     state: GameState,
     fromId: String,
     skipHolding: String? = null,
+    skipBusted: Boolean = false,
 ): List<String> {
     // Two ways a seat that is out is still worth pointing at. The card's own —
     // what it takes is lying in front of them and stays worth having wherever
@@ -219,8 +238,15 @@ internal fun targetsFor(
 
         TargetRule.ANY_PLAYER -> state.players.map { it.id }
     }
-    val held = skipHolding ?: return byRule
-    return byRule.filterNot { id ->
+    // ...and one seat a card can name its own reason for not wanting, on top of
+    // whatever the rule and the house between them have offered. A wreck is
+    // reachable in the same breath as a banked hand — both are "finished" — and
+    // for a card about what a round is worth those two are nothing alike.
+    val live = if (!skipBusted) byRule else byRule.filterNot {
+        state.player(it)?.status == PlayerStatus.BUST
+    }
+    val held = skipHolding ?: return live
+    return live.filterNot { id ->
         state.player(id)?.passives?.any { it.defId == held } == true
     }
 }
@@ -842,11 +868,19 @@ val UNLUCKY_SEVEN = ActionCardDef(
     description = "target scores nothing this round unless they flip out",
     sigil = "7?",
     skipHolding = MUST_FLIP.id,
+    // A busted round is already worth nothing and can never flip out, so
+    // there is nothing here to void — and the one busted hand that still
+    // scores, an antimatter one, scores *below* nothing, where voiding it
+    // would be a favour rather than a curse. See [ActionCardDef.skipBusted]:
+    // this is the card the last player standing would otherwise throw at a
+    // wreck rather than wear himself.
+    skipBusted = true,
     price = 30,
 ) { ctx, play ->
     // No status check: a hand banked without the flip is exactly what this is
-    // for under "extreme", and with the rule off no finished seat is ever
-    // offered in the first place.
+    // for under "extreme", and no seat this card can do nothing to — finished
+    // with the rule off, busted with it on — is ever offered in the first
+    // place.
     ctx.grantEffect(play.target.id, MUST_FLIP.id)
 }
 
@@ -926,6 +960,7 @@ const val ALL_IN_ID = "allIn"
 /** How a comeback came out, carried from the throw to the settling. */
 const val COMEBACK_WON = "won"
 const val COMEBACK_LOST = "lost"
+const val COMEBACK_DREW = "drew"
 
 const val THROW_ROCK = "rock"
 const val THROW_PAPER = "paper"
@@ -955,9 +990,31 @@ private fun extremeOfScore(state: GameState, lowest: Boolean): String? {
 }
 
 /**
+ * Both players throw at once, and neither sees the other's hand until they are
+ * turned over together.
+ *
+ * The same call is made twice — once when the card is played and once for every
+ * draw after it — because two rocks settle nothing and a duel that ends in a
+ * shrug is not a duel. Nothing has to be remembered between throws: it is the
+ * same two players answering the same question, so the prompt is simply raised
+ * again.
+ */
+private fun askForThrows(ctx: Ctx, challenger: String, leader: String) {
+    ctx.raisePrompt(
+        defId = COMEBACK_ID,
+        playerId = challenger,
+        phase = PHASE_THROW,
+        targets = listOf(challenger),
+        options = listOf(THROW_ROCK, THROW_PAPER, THROW_SCISSORS),
+        responders = listOf(challenger, leader),
+    )
+}
+
+/**
  * Only the player at the bottom of the scoreboard may use this, and only
  * against the one at the top: they throw at the same time, and winning trades
- * the two scores outright.
+ * the two scores outright. A draw is thrown again, and again, until one of them
+ * beats the other.
  *
  * Drawn by anybody else it fizzles and is replaced. The alternative — keeping
  * it out of the deck unless the trailing player is drawing — would make what is
@@ -984,22 +1041,20 @@ val COMEBACK = ActionCardDef(
             ctx.wasted(COMEBACK_ID, play.from.id)
             return@ActionCardDef
         }
-        ctx.raisePrompt(
-            defId = COMEBACK_ID,
-            playerId = last,
-            phase = PHASE_THROW,
-            targets = listOf(last),
-            options = listOf(THROW_ROCK, THROW_PAPER, THROW_SCISSORS),
-            responders = listOf(last, leader),
-        )
+        askForThrows(ctx, last, leader)
         return@ActionCardDef
     }
 
     if (play.phase == PHASE_OUTCOME) {
-        // Both throws have been turned over and read. Only now do the scores
-        // move: watching your own total change while the hands are still being
-        // shown is being told the answer over the top of the question.
-        if (play.result == COMEBACK_WON) ctx.swapScores(play.from.id, play.target.id)
+        // Both throws have been turned over and read. Only now does anything
+        // happen: watching your own total change while the hands are still
+        // being shown is being told the answer over the top of the question —
+        // and the next throw is a question of its own, so it is asked here for
+        // the same reason rather than in the same breath as the last one.
+        when (play.result) {
+            COMEBACK_WON -> ctx.swapScores(play.from.id, play.target.id)
+            COMEBACK_DREW -> askForThrows(ctx, play.from.id, play.target.id)
+        }
         return@ActionCardDef
     }
 
@@ -1007,11 +1062,17 @@ val COMEBACK = ActionCardDef(
     val leader = play.answers.keys.firstOrNull { it != challenger } ?: return@ActionCardDef
     val mine = play.answers[challenger]?.choice ?: THROW_ROCK
     val theirs = play.answers[leader]?.choice ?: THROW_ROCK
-    val won = BEATS[mine] == theirs
-    ctx.emit(GameEvent.Throws(challenger, mine, leader, theirs, won))
-    // A draw is a draw. Throwing again would need the table to remember how
-    // many times it already had, and "you both threw rock" is a fine ending.
-    ctx.land(COMEBACK_ID, challenger, leader, result = if (won) COMEBACK_WON else COMEBACK_LOST)
+    val outcome = when {
+        // Two rocks decide nothing, and the card is the one shot the player at
+        // the bottom of the table gets. It goes round again — read as an
+        // outcome like a win or a loss, so the throws that drew are watched and
+        // understood before the table is asked to throw over the top of them.
+        mine == theirs -> COMEBACK_DREW
+        BEATS[mine] == theirs -> COMEBACK_WON
+        else -> COMEBACK_LOST
+    }
+    ctx.emit(GameEvent.Throws(challenger, mine, leader, theirs, outcome == COMEBACK_WON))
+    ctx.land(COMEBACK_ID, challenger, leader, result = outcome)
 }
 
 /** How much of the round the two ends of an "all in" keep. */

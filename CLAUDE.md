@@ -2,14 +2,16 @@
 
 A Flip 7-style push-your-luck card game. A Kotlin/Ktor backend holds the rules and
 serves the React frontend out of the same jar, so the whole thing deploys as one
-container on one port. Rooms live in memory; there is no database.
+container on one port. Rooms live in memory. There is a database, but only if an
+operator asks for one — see `account/`, which is off by default and which the
+game plays a complete round of without.
 
 `README.md` is the tour. This file is what to know before changing anything.
 
 ## Commands
 
 ```sh
-./gradlew :backend:test                # the engine — 447 tests, ~45s
+./gradlew :backend:test                # the engine — 546 tests, ~45s
 ./gradlew :backend:run                 # rules on :8080
 ./gradlew :backend:runDev              # ...with the testing mode on
 bun --cwd frontend run dev             # UI on :5173, proxying /api and /ws
@@ -115,8 +117,15 @@ takes the rest of your round and a seat that is out has no rest of its round to
 take, so `ANY_ACTIVE` does not reach one: a card offered against nothing is a
 card spent for nothing, which is what `fizzle` and `skipHolding` exist to
 prevent. "Extreme" is the blanket on top: under it *every* card may be pointed at
-a finished seat, including the ones that can do nothing to one. `targetsFor` is
-the single place both are read, and the client only renders the list it is sent.
+a finished seat, including the ones that can do nothing to one. And one card
+buys its way back out of that blanket, because "finished" covers two things that
+are nothing alike: a banked hand is still owed points and an unlucky 7 takes
+them, while a busted one is owed nothing at all, so the same card thrown at a
+wreck is spent on the one seat it cannot touch — and the last player standing
+would always have a wreck to throw it at rather than wear it himself.
+`ActionCardDef.skipBusted` is how a card says that about itself. `targetsFor` is
+the single place all of it is read, and the client only renders the list it is
+sent.
 
 **A card that is its own animation announces itself and settles later.** A coin
 turning over and a bottle slowing down are not decoration on a result — they
@@ -222,6 +231,30 @@ drive the DOM with `tap()` and not `click()`, because a click dispatches
 `mouseenter` even in a touch context and would pass against exactly the
 hover-only code they exist to catch.
 
+**An account is a name and a memory, and never a privilege.** Signing in is
+optional at both ends — off unless an operator configures *both* a database and
+an identity provider, and a guest at a configured table still plays the whole
+game. Nothing on that path may ever gate a seat, a card, a room, a rule or a
+screen you play on; what it buys is a name nobody else can take and a page that
+remembers. The one thing it does change at the felt is that the name is no
+longer typed: `Application.kt` reads the account off the session cookie and
+ignores what the socket's query said, because a seat identity is a claim and a
+claim is not something anybody's history should be written against. If you find
+yourself asking "and what do signed-in players get", the answer is meant to be
+"the same game".
+
+**...and what is recorded is read off the events, not computed a second time.**
+`account/Tally.kt` is fed the room's own batch from inside `applyLocked`, which
+is the single funnel every transition goes through — so if the table saw it, it
+counts, and there is no second definition of "a bust" waiting to drift from the
+engine's. It is the *unredacted* batch on purpose: a gambler card drawn into a
+hidden hand is a card you drew, and recording off what the other seats were sent
+would give somebody a history with holes in it exactly where the interesting
+cards were. Two moments are written and they are deliberately different — a
+round when it is scored, a game only when it finishes — which is the whole
+answer to walking out when you are losing. The engine knows none of this and
+must not start to; `Ctx` has no primitive for it and does not need one.
+
 **Test hooks gate anything that reveals or chooses cards.** `LETITRIDE_TEST_HOOKS=1`
 turns on the pinnable seed, the stacked deck, the pacing knob and the testing
 panel. Everything behind it must be inert without it — the room drops the message,
@@ -244,10 +277,17 @@ backend/src/main/kotlin/com/letitride/
     Rooms.kt        in-memory rooms, the pacing clock, the animation gate, bots
     Dto.kt          the wire types; GameState.toView projects one player's view
     DevMode.kt      the local testing mode — inert without the hooks
+  account/          optional; inert unless the environment configures it
+    Oidc.kt         signing in, driven by the provider's discovery document
+    Accounts.kt     the session cookie, /api/auth and /api/stats
+    Store.kt        one SQLite file, and every query read back out of it
+    Tally.kt        room events → rows, and the writer that keeps them off the mutex
 frontend/src/
   game/types.ts     mirrors the wire types; decides nothing
   net/client.ts     REST + WebSocket, with reconnect
+  net/auth.ts       sign-in and stats; every failure means "no account"
   state/gameStore.ts a mirror of server state, nothing more
+  state/authStore.ts who is signed in — apart from the game, because it outlives rooms
   hooks/useGame.ts  events → animations, and the ack that releases the table
   hooks/useViewport.ts  the window, and whether it has a cursor
   components/game/tableLayout.ts  where the felt puts things, in both its shapes
@@ -335,9 +375,23 @@ the client simply acks it.
 "older servers omit it" for a reason: a tab that has not reloaded is talking to
 the server you just deployed.
 
+**A new statistic** — a name in `Counter` and a `bump` (or a `raise`, for a
+high-water mark) in `StatsRecorder.apply`, then a field on `PlayerStats` and a
+line in `Stats.tsx`. Deliberately a key in a table and not a column: a number
+worth keeping is a new key rather than a migration, the same reason a card that
+does something new is a card rather than a flag on `Player`. Read it off the
+event stream in `RoomTally.absorb` — never off `GameState`, which is a snapshot
+and would count the same thing twice on a re-broadcast. And nothing is worked
+out on the client: a rate the frontend divided would be a second definition of
+what a game is, sitting next to the one in SQL, and the two drift the first time
+an abandoned table is counted differently at each end.
+
 **Anything a client should not be able to do** — put it behind `testHooksEnabled()`
 and add the negative test. `DevModeTest` is the pattern: a room without the flag
-ignores the message entirely.
+ignores the message entirely. The account routes take the same shape for a
+different reason: `AccountRoutesTest` asserts that a server configured for none
+of it still answers every one of them, honestly, because a 404 is
+indistinguishable from an older server and the front door would have to guess.
 
 **Anything on a screen you arrive at rather than play on** — the title card, the
 join screen, the waiting room, settings, the round summary and the game over —

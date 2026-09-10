@@ -38,10 +38,54 @@ docker run -d --name let-it-ride --restart unless-stopped \
 ```
 
 Then open `http://<host>:8080`. Nothing to configure; `PORT` and `JAVA_OPTS` are
-the only knobs, and there are no volumes because there is nothing to persist.
+the only knobs, and there are no volumes because there is nothing to persist —
+unless you want the accounts below, which are the one thing that does.
 
 Behind a reverse proxy, make sure `/ws` is allowed to upgrade — the compose file
 has snippets for Traefik, Caddy and nginx.
+
+### Accounts (optional)
+
+Sign in with any OpenID Connect provider — [PocketID](https://pocket-id.org) is
+what this was written against — and the server keeps a record of your games: win
+rate, average score, the cards you keep drawing, the cards you keep busting to,
+and a leaderboard across everybody who plays there.
+
+**It is entirely optional, at both ends.** A server configured for none of this
+is the server that shipped before it existed: no button on the front door, no
+database, no volume. And on a server that *is* configured, guests still play the
+whole game — an account buys you a name nobody else can take and a page that
+remembers, and nothing else. No seat, card, room or rule is gated on having one.
+
+Both halves are needed and either alone does nothing:
+
+| variable | what it is |
+| --- | --- |
+| `LETITRIDE_DB` | where to keep the file, e.g. `/data/letitride.db` |
+| `LETITRIDE_OIDC_ISSUER` | your provider's base URL — its discovery document is read from here |
+| `LETITRIDE_OIDC_CLIENT_ID` | the client you registered |
+| `LETITRIDE_OIDC_CLIENT_SECRET` | its secret |
+| `LETITRIDE_OIDC_NAME` | what the button says, e.g. `PocketID`. Optional |
+| `LETITRIDE_SESSION_SECRET` | any passphrase. Without one, a restart signs everybody out |
+| `LETITRIDE_OIDC_REDIRECT_URI` | only if your proxy does not set `X-Forwarded-*` |
+| `LETITRIDE_SECURE_COOKIES` | force `Secure` on the session cookie. Implied by an https redirect URI |
+
+At the provider, register a client with the callback
+`https://<your-host>/api/auth/callback` — the same address, exactly, that the
+server will send. That mismatch is the one failure in this whole path that
+produces no useful message at either end, which is what `LETITRIDE_OIDC_REDIRECT_URI`
+is for when a proxy makes it hard to guess.
+
+`GET /api/health` reports `"accounts":true` once both halves are up.
+
+Two things about what gets recorded are deliberate and worth knowing:
+
+- **A round is written down when it is scored; a game only when it finishes.**
+  So walking out of a table you are losing still costs you the rounds you played
+  and the cards you drew, and buys you nothing at all.
+- **The leaderboard only counts games with somebody else in them.** Beating three
+  bots is a real game and stays in your own history; it is not a result to rank
+  strangers by.
 
 Images are built for `linux/amd64` and `linux/arm64` and pushed by
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) once the backend tests and
@@ -111,6 +155,11 @@ backend/
       Rooms.kt   in-memory rooms, the pacing clock, and the bots
       Dto.kt     the wire types (the client's view redacts the deck)
       DevMode.kt the local testing mode — off unless the env asks for it
+    account/     optional — off unless the env asks for it
+      Oidc.kt      signing in, driven by the provider's discovery document
+      Accounts.kt  the session cookie and the /api/auth + /api/stats routes
+      Store.kt     the one SQLite file, and everything read back out of it
+      Tally.kt     table events → rows; the engine knows none of this
     Application.kt
   src/test/kotlin/     253 tests, including full games under every preset
 frontend/

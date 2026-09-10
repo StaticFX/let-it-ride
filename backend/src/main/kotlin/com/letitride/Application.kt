@@ -1,10 +1,12 @@
 package com.letitride
 
+import com.letitride.account.installAccounts
 import com.letitride.server.ApiError
 import com.letitride.server.ClientMessage
 import com.letitride.server.Connection
 import com.letitride.server.CreateRoomRequest
 import com.letitride.server.CreateRoomResponse
+import com.letitride.server.MAX_NAME_LENGTH
 import com.letitride.server.RoomInfoResponse
 import com.letitride.server.RoomRegistry
 import com.letitride.server.ServerMessage
@@ -23,6 +25,7 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.compression.Compression
 import io.ktor.server.plugins.compression.gzip
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.forwardedheaders.XForwardedHeaders
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
@@ -44,8 +47,6 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlin.time.Duration.Companion.seconds
 
-private const val MAX_NAME_LENGTH = 16
-
 val appJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
@@ -61,6 +62,10 @@ fun main() {
 fun Application.module() {
     install(ContentNegotiation) { json(appJson) }
     install(Compression) { gzip() }
+    // So that a sign-in behind a reverse proxy sends people back to the address
+    // they are actually using rather than to the container's own. Nothing else
+    // reads the request's origin, so this is inert on a direct deployment.
+    install(XForwardedHeaders)
     install(WebSockets) {
         pingPeriod = 15.seconds
         timeout = 60.seconds
@@ -73,7 +78,13 @@ fun Application.module() {
         }
     }
 
-    val registry = RoomRegistry(appJson, this)
+    // Accounts and the history that hangs off them. Off unless the operator has
+    // configured both a database and an identity provider — see
+    // `com.letitride.account`, which is where the reasoning for that lives.
+    val accounts = installAccounts(this)
+    monitor.subscribe(io.ktor.server.application.ApplicationStopping) { accounts.close() }
+
+    val registry = RoomRegistry(appJson, this, accounts.recorder)
     val hasBundledFrontend = javaClass.classLoader.getResource("web/index.html") != null
 
     // Off in every shipped image. The end-to-end suite turns it on so a run can
@@ -90,16 +101,24 @@ fun Application.module() {
         route("/api") {
             get("/health") {
                 call.respondText(
-                    """{"status":"ok","rooms":${registry.size()},"testHooks":$testHooks}""",
+                    """{"status":"ok","rooms":${registry.size()},"testHooks":$testHooks,"accounts":${accounts.enabled}}""",
                     io.ktor.http.ContentType.Application.Json,
                 )
             }
 
             get("/catalog") { call.respond(buildCatalog()) }
 
+            accounts.routes(this)
+
             post("/rooms") {
                 val request = runCatching { call.receive<CreateRoomRequest>() }.getOrNull()
-                val name = request?.name?.trim()?.take(MAX_NAME_LENGTH)
+                // A signed-in host opens the table under the name on their
+                // account and not under whatever the tab sent — the same rule
+                // the socket applies below, and for the same reason: a name
+                // somebody else can trust is the whole of what an account buys
+                // at the felt.
+                val name = accounts.of(call)?.name?.take(MAX_NAME_LENGTH)
+                    ?: request?.name?.trim()?.take(MAX_NAME_LENGTH)
                 if (name.isNullOrBlank()) {
                     call.respond(HttpStatusCode.BadRequest, ApiError("a name is required"))
                     return@post
@@ -139,8 +158,15 @@ fun Application.module() {
                 return@webSocket
             }
 
-            val name = call.request.queryParameters["name"]
-                ?.trim()?.take(MAX_NAME_LENGTH)?.takeIf { it.isNotBlank() } ?: "player"
+            // Who the *server* says this is. Cookies ride along with a
+            // WebSocket handshake like any other same-origin request, so the
+            // seat's identity is settled here rather than being taken on trust
+            // from a query parameter anybody can type.
+            val account = accounts.of(call)
+            val name = account?.name?.take(MAX_NAME_LENGTH)
+                ?: call.request.queryParameters["name"]
+                    ?.trim()?.take(MAX_NAME_LENGTH)?.takeIf { it.isNotBlank() }
+                ?: "player"
             val playerId = call.request.queryParameters["playerId"]?.take(64) ?: newPlayerId()
 
             val outbound = Channel<String>(capacity = 64)
@@ -151,7 +177,7 @@ fun Application.module() {
 
             var attached = false
             try {
-                attached = room.attach(playerId, name, connection)
+                attached = room.attach(playerId, name, connection, account?.id)
                 if (!attached) {
                     send(
                         Frame.Text(
